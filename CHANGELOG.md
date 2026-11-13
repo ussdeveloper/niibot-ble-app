@@ -4,6 +4,30 @@ All notable changes to **Niibot Studio** are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project uses [Semantic Versioning](https://semver.org/).
 
+## [0.10.0] — 2026-11-13
+
+### Added
+- **Image cropping**: pictures get *Cover / Contain / Stretch*, a zoom factor and Crop X/Y offsets in
+  millimetres, plus **Fill box / Centre / Reset** buttons and a live print-quality read-out
+  (`source 640 × 480 px · ~813 dpi in this box — sharp`).
+- **Unknown rolls**: when the printer cannot report the size and the catalogue has no entry for the
+  roll code, the label bar shows `size unknown · set it`. One dialog stores the width, height, rows
+  and gap for that roll code (`POST /api/roll-format`), so the next insertion is recognised instantly.
+- **Format catalogue** tab now starts with the roll currently in the printer (with *Set / Edit size*)
+  and its import button is English.
+
+### Changed
+- The canvas preview is again **the exact 1-bit bitmap** the printer receives (`png_print`, nearest
+  neighbour), so what is on screen is literally what prints; the smoothed render is only used for
+  thumbnails.
+- Mirror mode centres, snaps and drags inside the first region only, and elements that spill past
+  the cut are outlined instead of locked.
+
+### Notes
+- The NIIMBOT app keeps **no offline catalogue**: each roll's format is fetched from their cloud by
+  the RFID code and cached per roll. `Import from the NIIMBOT app` imports everything it finds in
+  that cache — opening the vendor app once with the new roll fills it in.
+
 ## [0.9.1] — 2026-11-13
 
 ### Changed

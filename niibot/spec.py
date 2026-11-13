@@ -10,6 +10,9 @@ ELEMENT_TYPES = ("text", "barcode", "qr", "rect", "line", "image")
 
 BARCODE_FORMATS = ("code128", "code39", "ean13", "ean8", "upca", "itf")
 
+#: How an inserted picture is fitted into its box.
+IMAGE_FITS = ("cover", "contain", "stretch")
+
 
 def new_id() -> str:
     return uuid.uuid4().hex[:8]
@@ -52,12 +55,26 @@ class Element(BaseModel):
 
     # image
     image_id: str | None = None
+    #: How the picture fills its box: ``cover`` crops, ``contain`` letterboxes, ``stretch`` distorts.
+    image_fit: str = "cover"
+    #: Extra magnification on top of the fit (1.0 = exactly the fit size).
+    image_zoom: float = 1.0
+    #: Crop window offset in millimetres — moves the picture inside the box.
+    image_offset_x: float = 0.0
+    image_offset_y: float = 0.0
 
     @field_validator("type")
     @classmethod
     def _check_type(cls, value: str) -> str:
         if value not in ELEMENT_TYPES:
             raise ValueError(f"unknown element type: {value}")
+        return value
+
+    @field_validator("image_fit")
+    @classmethod
+    def _check_image_fit(cls, value: str) -> str:
+        if value not in IMAGE_FITS:
+            raise ValueError(f"unknown image fit: {value}")
         return value
 
     @field_validator("rotation")

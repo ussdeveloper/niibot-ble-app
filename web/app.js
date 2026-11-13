@@ -396,7 +396,8 @@ async function requestPreview() {
     const result = await api('/api/preview', 'POST', { spec: state.spec, mirror: mirrorRequest() });
     if (token !== state.previewToken) return;
     state.preview = result;
-    $('#preview').src = `data:image/png;base64,${result.png}`;
+    // The canvas must show exactly the bitmap the printer receives — never a smoothed stand-in.
+    $('#preview').src = `data:image/png;base64,${result.png_print || result.png}`;
     renderWarnings(result.warnings || []);
     layoutStage();
   } catch (error) {
@@ -471,9 +472,18 @@ function renderStageMeta() {
   if (!meta || !state.spec) return;
   const spec = state.spec;
   const geo = paperGeometry();
+  const paper = state.printer?.paper || {};
+  const rollName = paper.sku || paper.catalog?.name || paper.barcode;
+  const known = !!geo.catalog || Number(paper.detected_width_mm) > 0 || !!state.printer?.profile;
   const chips = [`<span class="meta-chip"><b>${round2(spec.width_mm)} × ${round2(spec.height_mm)} mm</b></span>`];
   if (geo.typeName) chips.push(`<span class="meta-chip type">paper: ${escapeHtml(geo.typeName)}</span>`);
-  if (geo.catalog?.name) chips.push(`<span class="meta-chip mono">${escapeHtml(geo.catalog.name)}</span>`);
+  if (rollName) chips.push(`<span class="meta-chip mono">${escapeHtml(rollName)}</span>`);
+  if (state.connected && !known) {
+    chips.push(`<button type="button" class="meta-chip warn" id="meta-roll-size"
+      title="The printer cannot report the format of this roll — enter the size once and it is remembered for this code">
+      <i data-lucide="ruler"></i> size unknown · set it
+    </button>`);
+  }
   if (geo.rows > 1) chips.push(`<span class="meta-chip">${geo.rows} regions × ${round2(spec.height_mm / geo.rows)} mm</span>`);
   if (geo.rows > 1) {
     const on = !!spec.sheet?.mirror;
@@ -489,6 +499,72 @@ function renderStageMeta() {
   }
   meta.innerHTML = chips.join('');
   refreshIcons(meta);
+  const sizeChip = $('#meta-roll-size', meta);
+  if (sizeChip) sizeChip.onclick = () => openRollSizeDialog();
+}
+
+/* A roll the printer/catalogue cannot describe: ask for the size once, remember it per roll code. */
+async function openRollSizeDialog() {
+  const paper = state.printer?.paper || {};
+  const rollName = paper.sku || paper.catalog?.name || paper.barcode || 'this roll';
+  const body = document.createElement('div');
+  body.className = 'print-dialog';
+  body.innerHTML = `
+    <div class="hint">The B1 does not report the label size over Bluetooth, and
+      <code>${escapeHtml(rollName)}</code> is not in the NIIMBOT catalogue on this machine.
+      Enter it once — it is stored for this roll code and reused automatically.</div>
+    <div class="hint">Tip: open the NIIMBOT app once with this roll inserted and then press
+      <strong>Settings → Format catalogue → Import from the NIIMBOT app</strong> — the vendor app fetches the
+      exact format for the roll code and the import picks it up.</div>
+    <div class="grid-2">
+      ${field('Width (mm)', numberInput('roll-width', round2(state.spec.width_mm), 0.5, 5, 108))}
+      ${field('Height (mm)', numberInput('roll-height', round2(state.spec.height_mm), 0.5, 5, 300))}
+    </div>
+    <div class="grid-2">
+      ${field('Rows on the roll', numberInput('roll-rows', paper.catalog?.rows || 1, 1, 1, 8))}
+      ${field('Gap (mm)', numberInput('roll-gap', round2(gapInfoMm()), 0.5, 0, 20))}
+    </div>
+  `;
+  const footer = document.createElement('div');
+  footer.className = 'row';
+  footer.style.cssText = 'justify-content:flex-end;gap:8px';
+  footer.innerHTML = `
+    <button class="btn" data-roll-cancel>Cancel</button>
+    <button class="btn primary" data-roll-save>Remember for this roll</button>`;
+  const modal = openModal({ id: 'roll-size', title: 'Label size for this roll', icon: 'ruler', width: 470, height: 330, body, footer });
+  fitModalToContent(modal, { min: 300, max: 420 });
+
+  $('[data-roll-cancel]', footer).onclick = () => closeModal('roll-size');
+  $('[data-roll-save]', footer).onclick = async () => {
+    const width = Math.max(5, Number($('[data-key="roll-width"]', body).value) || 0);
+    const height = Math.max(5, Number($('[data-key="roll-height"]', body).value) || 0);
+    const rows = Math.max(1, Math.min(8, Number($('[data-key="roll-rows"]', body).value) || 1));
+    const gap = Math.max(0, Number($('[data-key="roll-gap"]', body).value) || 0);
+    closeModal('roll-size');
+    try {
+      const payload = await api('/api/roll-format', 'POST', {
+        barcode: paper.barcode || 'unknown',
+        name: rollName,
+        width_mm: width,
+        height_mm: height,
+        rows,
+        gap_mm: gap,
+        label_type: paper.label_type ?? state.spec.label_type,
+        capacity: paper.capacity ?? null,
+      });
+      applyState(payload);
+      applySize(width, height, { gap_mm: gap, label_type: paper.label_type ?? state.spec.label_type });
+      try {
+        const catalog = await api('/api/catalog');
+        state.catalog = catalog.catalog || [];
+      } catch (_) { /* the list refreshes with the settings tab */ }
+      toast(`Roll ${rollName}: ${round2(width)} × ${round2(height)} mm remembered`, 'ok');
+      schedulePreview();
+      if (isModalOpen('settings')) renderSettingsTab();
+    } catch (error) {
+      toast(error.message, 'error');
+    }
+  };
 }
 
 function toggleMirror() {
@@ -887,9 +963,72 @@ function checkInput(key, label, checked) {
   return `<label class="check"><input type="checkbox" data-key="${key}" ${checked ? 'checked' : ''}> ${label}</label>`;
 }
 
+/* ------------------------------------------------------------ image cropping */
+const imageMetaCache = new Map();
+
+async function imageMeta(imageId) {
+  if (!imageId) return null;
+  if (imageMetaCache.has(imageId)) return imageMetaCache.get(imageId);
+  try {
+    const meta = await api(`/api/uploads/${imageId}/meta`);
+    imageMetaCache.set(imageId, meta);
+    return meta;
+  } catch (_) {
+    return null;
+  }
+}
+
+function applyImageCrop(element, mode) {
+  if (mode === 'fill') {
+    element.image_fit = 'cover';
+    element.image_zoom = 1;
+    element.image_offset_x = 0;
+    element.image_offset_y = 0;
+  } else if (mode === 'centre') {
+    element.image_offset_x = 0;
+    element.image_offset_y = 0;
+  } else if (mode === 'reset') {
+    element.image_fit = 'contain';
+    element.image_zoom = 1;
+    element.image_offset_x = 0;
+    element.image_offset_y = 0;
+  }
+}
+
+/* Tells the user what the crop does to print quality — the label is only 203 dpi. */
+async function renderCropQuality(element) {
+  const target = $('#crop-quality');
+  if (!target || !element.image_id) return;
+  const meta = await imageMeta(element.image_id);
+  if (!meta || !meta.width_px || !meta.height_px) {
+    target.textContent = 'Source resolution unknown.';
+    return;
+  }
+  if (!document.body.contains(target)) return;
+  const printerDpi = Number(state.printer?.info?.dpi) || 203;
+  const fit = element.image_fit === 'contain' ? 'contain' : element.image_fit === 'stretch' ? 'stretch' : 'cover';
+  const zoom = Math.max(0.05, Number(element.image_zoom) || 1);
+  let dpi;
+  if (fit === 'stretch') {
+    dpi = Math.min(25.4 * meta.width_px / Math.max(0.1, element.w), 25.4 * meta.height_px / Math.max(0.1, element.h));
+  } else {
+    const scale = fit === 'cover'
+      ? Math.max(element.w / meta.width_px, element.h / meta.height_px)
+      : Math.min(element.w / meta.width_px, element.h / meta.height_px);
+    dpi = 25.4 * zoom / Math.max(1e-6, scale);
+  }
+  const rounded = Math.round(dpi);
+  const verdict = rounded >= printerDpi * 1.4
+    ? 'sharp'
+    : rounded >= printerDpi
+      ? 'matches the printhead'
+      : 'soft — the picture is upscaled';
+  target.textContent = `Source ${meta.width_px} × ${meta.height_px} px · ~${rounded} dpi in this box (printer ${printerDpi} dpi) — ${verdict}`;
+  target.classList.toggle('warn-text', rounded < printerDpi);
+}
+
 function buildInspector() {
-  const card = $('#inspector-card');
-  const element = selectedElement();
+  const card = $('#inspector-card');  const element = selectedElement();
   if (!element) {
     card.innerHTML = '<div class="panel-empty">Select an element on the label to edit it. Drag it to move, use the bottom-right handle to resize.</div>';
     return;
@@ -953,7 +1092,25 @@ function buildInspector() {
 
   if (element.type === 'image') {
     parts.push(field('Image', `<button id="btn-pick-image" class="btn wide">${element.image_id ? 'Change image' : 'Pick image'}</button>`));
-    if (element.image_id) parts.push(`<img class="thumb" src="/api/uploads/${element.image_id}" alt="obraz">`);
+    if (element.image_id) {
+      parts.push(`<div class="crop-preview"><img class="thumb" src="/api/uploads/${element.image_id}" alt="image"></div>`);
+      parts.push(field('Fill mode', selectInput('image_fit', element.image_fit, [
+        ['cover', 'Cover — crop to the box'],
+        ['contain', 'Contain — whole picture'],
+        ['stretch', 'Stretch — squash to the box'],
+      ])));
+      parts.push(field('Zoom', numberInput('image_zoom', element.image_zoom, 1.0, 0.1, 8, 0.05)));
+      parts.push(`<div class="grid-2">
+        ${field('Crop X (mm)', numberInput('image_offset_x', element.image_offset_x, 0, -200, 200, 0.1))}
+        ${field('Crop Y (mm)', numberInput('image_offset_y', element.image_offset_y, 0, -200, 200, 0.1))}
+      </div>`);
+      parts.push(`<div class="row crop-actions">
+        <button type="button" class="btn" data-crop="fill">Fill box</button>
+        <button type="button" class="btn" data-crop="centre">Centre</button>
+        <button type="button" class="btn" data-crop="reset">Reset</button>
+      </div>`);
+      parts.push(`<div class="hint" id="crop-quality" data-image-id="${escapeHtml(element.image_id)}">Checking the source resolution…</div>`);
+    }
   }
 
   card.innerHTML = parts.join('');
@@ -964,6 +1121,19 @@ function buildInspector() {
       state.pendingImageTarget = element.id;
       $('#file-input').click();
     };
+  }
+
+  if (element.type === 'image' && element.image_id) {
+    $$('[data-crop]', card).forEach((button) => {
+      button.onclick = () => {
+        applyImageCrop(element, button.dataset.crop);
+        pushHistory();
+        renderOverlay();
+        buildInspector();
+        schedulePreview();
+      };
+    });
+    renderCropQuality(element);
   }
 
   const fontPick = $('[data-font-pick]', card);
@@ -1388,6 +1558,7 @@ function renderStatusBar() {
   const paperBits = [];
   if (paper.lid_closed === false) paperBits.push('lid open');
   if (paper.paper_inserted === false) paperBits.push('no paper');
+  if (paper.barcode) paperBits.push(`RFID ${paper.barcode}`);
   if (paper.label_type_name) paperBits.push(paper.label_type_name);
   if (paper.remaining !== null && paper.remaining !== undefined) paperBits.push(`${paper.remaining} left`);
   else if (paper.capacity && paper.used !== null) paperBits.push(`${paper.used}/${paper.capacity}`);
@@ -2530,6 +2701,7 @@ function bindSettingsActions(content) {
       if (action === 'save-fit') await saveFit();
       if (action === 'install-info') showInstallCommand(content);
       if (action === 'import-catalog') await importCatalog(event.target.closest('[data-action]'));
+      if (action === 'roll-format') openRollSizeDialog();
       if (action === 'use-format') {
         const index = Number(event.target.closest('[data-index]').dataset.index);
         const item = state.catalog[index];
@@ -2609,9 +2781,9 @@ function renderPaperTab() {
     ['Lid', paper.lid_closed === true ? '<span class="ok-text">closed</span>' : paper.lid_closed === false ? '<span class="err-text">open</span>' : '—'],
     ['Paper', paper.paper_inserted === true ? '<span class="ok-text">detected</span>' : paper.paper_inserted === false ? '<span class="err-text">missing</span>' : '—'],
     ['RFID tag', paper.rfid_ok === true ? '<span class="ok-text">read</span>' : paper.rfid_ok === false ? '<span class="warn-text">missing</span>' : '—'],
-    ['Rodzaj', escapeHtml(paper.label_type_name || '—')],
+    ['Type', escapeHtml(paper.label_type_name || '—')],
     ['Roll code', `<span class="mono">${escapeHtml(paper.barcode || '—')}</span>`],
-    ['Nr seryjny', `<span class="mono">${escapeHtml(paper.serial || '—')}</span>`],
+    ['Serial number', `<span class="mono">${escapeHtml(paper.serial || '—')}</span>`],
   ];
   if (paper.capacity) {
     const approx = paper.capacity_estimated ? '≈' : '';
@@ -2619,9 +2791,9 @@ function renderPaperTab() {
   }
   if (paper.battery !== null && paper.battery !== undefined) {
     const levels = ['0%', '25%', '50%', '75%', '100%'];
-    flags.push(['Bateria', paper.battery <= 4 ? `${levels[paper.battery]} <span class="hint">(poziom ${paper.battery})</span>` : `${paper.battery}%`]);
+    flags.push(['Battery', paper.battery <= 4 ? `${levels[paper.battery]} <span class="hint">(level ${paper.battery})</span>` : `${paper.battery}%`]);
   }
-  if (paper.temperature !== null && paper.temperature !== undefined) flags.push(['Temperatura', `${paper.temperature}`]);
+  if (paper.temperature !== null && paper.temperature !== undefined) flags.push(['Temperature', `${paper.temperature}`]);
 
   const profile = state.printer?.profile;
   const catalogEntry = paper.catalog;
@@ -2743,12 +2915,28 @@ function renderWindowsTab() {
 
 function renderCatalogTab() {
   const items = state.catalog || [];
+  const paper = state.printer?.paper || {};
+  const current = items.find((item) => item.barcode && item.barcode === paper.barcode);
+  const rollName = paper.sku || paper.catalog?.name || paper.barcode || '';
   return `
     <section>
+      <h3>Roll in the printer</h3>
+      ${state.connected ? `
+        <div class="device">
+          <div>
+            <strong>${rollName ? escapeHtml(rollName) : 'no roll data'}</strong>
+            <small>${current
+              ? `${round2(current.width_mm)} × ${round2(current.height_mm)} mm${current.rows > 1 ? ` · ${current.rows} rows` : ''} · ${current.source}`
+              : 'the printer cannot report this roll — set its size once'}</small>
+          </div>
+          <button class="btn primary" data-action="roll-format"><i data-lucide="ruler"></i> ${current ? 'Edit size' : 'Set size'}</button>
+        </div>` : '<div class="hint">Connect the printer to see the roll and its format.</div>'}
+    </section>
+    <section>
       <h3>Formats in the database (${items.length})</h3>
-      <div class="hint">Built-in formats, formats imported from the NIIMBOT app and manual entries.
+      <div class="hint">Built-in formats, formats imported from the NIIMBOT app and sizes you entered by hand.
         A roll is recognised by the product barcode stored in its RFID tag.</div>
-      <div class="device-list" style="margin-top:10px;max-height:320px">
+      <div class="device-list" style="margin-top:10px;max-height:280px">
         ${items.length ? items.map((item, index) => `
           <div class="device">
             <div>
@@ -2762,9 +2950,11 @@ function renderCatalogTab() {
     <section>
       <h3>Import</h3>
       <div class="row">
-        <button class="btn" data-action="import-catalog"><i data-lucide="download"></i> Importuj z aplikacji NIIMBOT</button>
+        <button class="btn" data-action="import-catalog"><i data-lucide="download"></i> Import from the NIIMBOT app</button>
       </div>
-      <div class="hint" style="margin-top:6px">Reads the vendor app's local cache (roll barcode → format, names, capacity).</div>
+      <div class="hint" style="margin-top:6px">Reads every roll format the vendor app has cached locally
+        (barcode → size, rows, capacity). Rolls the vendor app never saw are not in that cache — enter those once
+        with <strong>Set size</strong> above and they stay in this database.</div>
     </section>
   `;
 }
@@ -3056,7 +3246,7 @@ async function showInstallCommand(root) {
   const info = await api('/api/driver');
   const box = $('#driver-command', root);
   if (!box) return;
-  box.innerHTML = `<pre># jako administrator, w katalogu aplikacji:
+  box.innerHTML = `<pre># as administrator, in the application folder:
 powershell -ExecutionPolicy Bypass -File install-printer.ps1
 
 # or manually:
@@ -3066,7 +3256,7 @@ ${escapeHtml(info.install_command)}</pre>`;
 async function importCatalog(button) {
   if (button) {
     button.disabled = true;
-    button.innerHTML = '<i data-lucide="loader"></i> Czytam cache…';
+    button.innerHTML = '<i data-lucide="loader"></i> Reading the cache…';
     refreshIcons(button);
   }
   try {
@@ -3078,7 +3268,7 @@ async function importCatalog(button) {
   } finally {
     if (button && button.isConnected) {
       button.disabled = false;
-      button.innerHTML = '<i data-lucide="download"></i> Importuj z aplikacji NIIMBOT';
+      button.innerHTML = '<i data-lucide="download"></i> Import from the NIIMBOT app';
       refreshIcons(button);
     }
   }
@@ -3413,7 +3603,12 @@ function applyState(payload) {
   if (freshPaper) {
     state.lastPaperKey = paperKey;
     // RFID of the roll just arrived (connect or a roll swap) — update the whole screen.
-    if (!wasConnected) toast(`Roll detected: ${paper.sku || paper.barcode || 'RFID read'}`, 'ok');
+    const rollName = paper.sku || paper.catalog?.name || paper.barcode || 'RFID read';
+    if (!wasConnected) toast(`Roll detected: ${rollName}`, 'ok');
+    const knownSize = Boolean(paper.catalog || Number(paper.detected_width_mm) > 0 || payload.profile);
+    if (!knownSize && paper.barcode) {
+      toast(`Roll ${paper.barcode}: the printer cannot report its size — set it once in the "size unknown" chip.`, 'error');
+    }
     applyKnownFormat(paper);
     renderStatusBar();
     renderStageMeta();

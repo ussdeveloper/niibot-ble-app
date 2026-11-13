@@ -323,7 +323,7 @@ svg.lucide { width: 16px; height: 16px; stroke-width: 1.7; }
   touch-action: none;
   outline: 1px solid rgba(0, 26, 77, 0.08);
 }
-.stage img { display: block; width: 100%; height: 100%; border-radius: 3px; }
+.stage img { display: block; width: 100%; height: 100%; image-rendering: pixelated; border-radius: 3px; }
 .stage.dragover { outline: 2px dashed var(--teal); outline-offset: 4px; }
 
 /* siatka i linie pomocnicze (subtelne) */
@@ -1157,6 +1157,20 @@ button.btn.wide { width: 100%; }
 .print-copies { width: 104px; padding: 7px 9px; font-size: 13px; text-align: center; }
 .print-summary { font-size: 11.5px; line-height: 1.35; color: var(--ink-muted); }
 .print-rows { font-size: 11px; color: var(--ink-muted); }
+
+/* ------------------------------------------------------------ image cropping */
+.crop-preview {
+  margin-top: 6px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: repeating-conic-gradient(rgba(0, 26, 77, 0.05) 0% 25%, transparent 0% 50%) 50% / 12px 12px;
+  display: flex; align-items: center; justify-content: center;
+}
+.crop-preview img { max-width: 100%; max-height: 96px; border-radius: 4px; }
+.crop-actions { gap: 6px; margin-top: 8px; }
+.crop-actions .btn { flex: 1; padding: 5px 8px; font-size: 11px; }
+.warn-text { color: #a85b17; }
 
 /* -------------------------------------------------------------------- toast */
 #toast {

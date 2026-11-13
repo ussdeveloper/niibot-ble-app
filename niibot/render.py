@@ -531,6 +531,7 @@ def _draw_image(
     layer: Image.Image,
     element: Element,
     loader: Callable[[str], Path | None] | None,
+    dpi: int = 203,
 ) -> None:
     if loader is None or not element.image_id:
         return
@@ -544,10 +545,41 @@ def _draw_image(
         return
     source = source.convert("RGBA")
     width, height = layer.size
-    scale = min(width / source.width, height / source.height)
-    new_size = (max(1, int(source.width * scale)), max(1, int(source.height * scale)))
-    source = source.resize(new_size, Image.LANCZOS)
-    layer.alpha_composite(source, ((width - new_size[0]) // 2, (height - new_size[1]) // 2))
+    fit = element.image_fit if element.image_fit in ("cover", "contain", "stretch") else "cover"
+
+    if fit == "stretch":
+        scaled = source.resize((max(1, width), max(1, height)), Image.LANCZOS)
+        _paste_clipped(layer, scaled, 0, 0)
+        return
+
+    zoom = max(0.05, float(element.image_zoom or 1.0))
+    base = max(width / source.width, height / source.height) if fit == "cover" else min(
+        width / source.width, height / source.height
+    )
+    scale = base * zoom
+    new_size = (max(1, int(round(source.width * scale))), max(1, int(round(source.height * scale))))
+    scaled = source.resize(new_size, Image.LANCZOS)
+
+    offset_x = mm_to_px(element.image_offset_x or 0.0, dpi)
+    offset_y = mm_to_px(element.image_offset_y or 0.0, dpi)
+    left = (width - new_size[0]) / 2 + offset_x
+    top = (height - new_size[1]) / 2 + offset_y
+    if fit == "cover":
+        # Never show a gap: the crop window stays inside the picture.
+        left = min(0, max(width - new_size[0], left))
+        top = min(0, max(height - new_size[1], top))
+    _paste_clipped(layer, scaled, int(round(left)), int(round(top)))
+
+
+def _paste_clipped(target: Image.Image, picture: Image.Image, x: int, y: int) -> None:
+    """Composite *picture* at (x, y) without leaving the target bounds."""
+    left = max(0, -x)
+    top = max(0, -y)
+    right = min(picture.width, target.width - x)
+    bottom = min(picture.height, target.height - y)
+    if right <= left or bottom <= top:
+        return
+    target.alpha_composite(picture.crop((left, top, right, bottom)), (x + left, y + top))
 
 
 def _blend(canvas: Image.Image, layer: Image.Image, x: int, y: int) -> None:
@@ -590,7 +622,7 @@ def _draw_element(
     elif element.type == "line":
         _draw_line(layer, element, dpi)
     elif element.type == "image":
-        _draw_image(layer, element, image_loader)
+        _draw_image(layer, element, image_loader, dpi)
 
     if rotation:
         layer = layer.rotate(-rotation, expand=True, resample=Image.BICUBIC)

@@ -193,6 +193,19 @@ class ProfileRequest(BaseModel):
     capacity: int | None = None
 
 
+class RollFormatRequest(BaseModel):
+    """A roll whose format the printer cannot report and the catalogue does not know."""
+
+    barcode: str
+    name: str = ""
+    width_mm: float = Field(gt=0, le=200)
+    height_mm: float = Field(gt=0, le=400)
+    rows: int = Field(default=1, ge=1, le=8)
+    gap_mm: float = Field(default=0.0, ge=0, le=20)
+    label_type: int = 1
+    capacity: int | None = None
+
+
 class DensityRequest(BaseModel):
     density: int
 
@@ -708,6 +721,43 @@ async def api_stats(recent: int = 10) -> dict:
     return store.print_statistics(recent_limit=max(0, min(100, recent)))
 
 
+@app.post("/api/roll-format")
+async def api_roll_format(request: RollFormatRequest) -> dict:
+    """Store the size of a roll the printer cannot measure (asked once per roll code)."""
+    entry = {
+        "barcode": request.barcode,
+        "name": request.name or request.barcode,
+        "width_mm": request.width_mm,
+        "height_mm": request.height_mm,
+        "paper_type": request.label_type,
+        "rows": request.rows,
+        "capacity": request.capacity,
+        "source": "manual",
+    }
+    store.upsert_consumable(entry)
+    profile_key_value = store.profile_key(request.barcode, None)
+    if profile_key_value:
+        store.save_profile(
+            PaperProfile(
+                key=profile_key_value,
+                name=request.name or f"{request.width_mm:g} × {request.height_mm:g} mm",
+                width_mm=request.width_mm,
+                height_mm=request.height_mm,
+                gap_mm=request.gap_mm,
+                label_type=request.label_type,
+                capacity=request.capacity,
+            )
+        )
+    log.info(
+        "Roll %s remembered as %g × %g mm (%d rows)",
+        request.barcode,
+        request.width_mm,
+        request.height_mm,
+        request.rows,
+    )
+    return _state_payload()
+
+
 @app.post("/api/profiles")
 async def api_profile_save(request: ProfileRequest) -> dict:
     profile = PaperProfile(
@@ -763,7 +813,8 @@ async def api_upload(file: UploadFile = File(...)) -> dict:
         image_id = store.save_upload(file.filename or "image.png", payload)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {"id": image_id, "url": f"/api/uploads/{image_id}"}
+    size = _image_size(payload)
+    return {"id": image_id, "url": f"/api/uploads/{image_id}", "width_px": size[0], "height_px": size[1]}
 
 
 @app.get("/api/uploads/{image_id}")
@@ -773,6 +824,25 @@ async def api_upload_get(image_id: str) -> Response:
         raise HTTPException(status_code=404, detail="File not found.")
     payload, mime = found
     return Response(content=payload, media_type=mime)
+
+
+@app.get("/api/uploads/{image_id}/meta")
+async def api_upload_meta(image_id: str) -> dict:
+    """Source pixel size of an upload — the editor uses it for the print-quality hint."""
+    found = store.upload_bytes(image_id)
+    if found is None:
+        raise HTTPException(status_code=404, detail="File not found.")
+    payload, mime = found
+    width, height = _image_size(payload)
+    return {"id": image_id, "width_px": width, "height_px": height, "mime": mime, "bytes": len(payload)}
+
+
+def _image_size(payload: bytes) -> tuple[int, int]:
+    try:
+        with Image.open(io.BytesIO(payload)) as image:
+            return image.size
+    except Exception:  # pragma: no cover - depends on the file
+        return (0, 0)
 
 
 # -------------------------------------------------------------------- print
