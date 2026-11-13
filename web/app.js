@@ -1634,7 +1634,7 @@ function openIconPicker() {
     <div class="icon-toolbar">
       <input id="icon-search" type="search" placeholder="Search icons (e.g. coffee, arrow, user…)" autocomplete="off">
       <div class="seg" id="icon-sources">
-        <button data-source="all" class="active">Wszystkie</button>
+        <button data-source="all" class="active">All</button>
         <button data-source="lucide">Lucide</button>
         <button data-source="mdi">Material</button>
       </div>
@@ -1646,7 +1646,7 @@ function openIconPicker() {
 
   openModal({
     id: 'icons',
-    title: 'Ikony i cliparty',
+    title: 'Icons & cliparts',
     icon: 'shapes',
     width: Math.min(1520, Math.max(760, window.innerWidth - 96)),
     height: Math.min(1000, Math.max(520, window.innerHeight - 96)),

@@ -11,6 +11,8 @@ project uses [Semantic Versioning](https://semver.org/).
   warnings, IPP responses, CLI help and the installer/uninstaller scripts (the UI already did).
 - Every modal uses the same inner padding (14 px top, 16 px sides and bottom) between the title
   bar, the content and the footer; single-field dialogs are compact instead of full height.
+- Polish, German, French, Spanish and Italian translations cover the template gallery, the icon
+  and font pickers and the new status strings.
 
 ### Fixed
 - Print job messages showed mangled characters for accented text (double-encoded strings).
