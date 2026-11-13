@@ -19,7 +19,7 @@ from typing import Any
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
-from PIL import ImageOps
+from PIL import Image, ImageOps
 from pydantic import BaseModel, Field
 
 from . import ipp as ipp_mod
@@ -159,6 +159,11 @@ class SheetPrintRequest(BaseModel):
 class ElementPreviewRequest(BaseModel):
     spec: LabelSpec
     element_id: str
+
+
+class SpecPreviewRequest(BaseModel):
+    spec: LabelSpec
+    max_width: int = 320
 
 
 class SaveLabelRequest(BaseModel):
@@ -524,6 +529,24 @@ async def api_preview(request: PreviewRequest) -> dict:
         return preview_payload(_with_mirror(request.spec, request.mirror), dpi, printhead, store.upload_path)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/spec-preview")
+async def api_spec_preview(request: SpecPreviewRequest) -> dict:
+    """Small PNG preview of any label spec — used by the template gallery."""
+    dpi, printhead = _geometry()
+    try:
+        rendered = render_label(request.spec, dpi, printhead, store.upload_path)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    image = rendered.image.convert("L")
+    limit = max(80, min(720, request.max_width))
+    if image.width > limit:
+        ratio = limit / image.width
+        image = image.resize((limit, max(1, int(image.height * ratio))), Image.NEAREST)
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    return {"png": base64.b64encode(buffer.getvalue()).decode("ascii"), "width_px": image.width, "height_px": image.height}
 
 
 @app.post("/api/element-preview")

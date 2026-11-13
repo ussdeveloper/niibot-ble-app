@@ -29,6 +29,22 @@ devices (`v4`, e.g. B1 Pro / B21 Pro).
 
 ---
 
+## Screenshots
+
+| Designer | Sheet |
+| --- | --- |
+| ![Designer](docs/screenshots/01-designer.jpg) | ![Sheet](docs/screenshots/02-sheet.jpg) |
+
+| Icon browser | Settings |
+| --- | --- |
+| ![Icons](docs/screenshots/03-icons.jpg) | ![Settings](docs/screenshots/04-settings.jpg) |
+
+**New label** — templates filtered to the roll read from the RFID tag:
+
+![Templates](docs/screenshots/05-templates.jpg)
+
+---
+
 ## Quick start
 
 ```powershell

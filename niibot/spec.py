@@ -107,7 +107,7 @@ class LabelSpec(BaseModel):
 
 def default_spec() -> LabelSpec:
     return LabelSpec(
-        name="Wizytówka",
+        name="Business card",
         width_mm=48,
         height_mm=30,
         elements=[
@@ -117,7 +117,7 @@ def default_spec() -> LabelSpec:
                 y=2,
                 w=44,
                 h=9,
-                text="Nazwa firmy",
+                text="Company name",
                 font="Arial",
                 font_size_pt=14,
                 bold=True,
@@ -129,7 +129,7 @@ def default_spec() -> LabelSpec:
                 y=11,
                 w=44,
                 h=6,
-                text="Jan Kowalski",
+                text="John Smith",
                 font_size_pt=10,
                 align="center",
             ),
@@ -139,7 +139,7 @@ def default_spec() -> LabelSpec:
                 y=17,
                 w=44,
                 h=5,
-                text="tel. 500 100 200",
+                text="tel. 555 010 200",
                 font_size_pt=8,
                 align="center",
             ),
@@ -159,17 +159,17 @@ def default_spec() -> LabelSpec:
 TEMPLATES: dict[str, LabelSpec] = {
     "wizytowka": default_spec(),
     "adres": LabelSpec(
-        name="Etykieta adresowa",
+        name="Address label",
         width_mm=48,
         height_mm=30,
         elements=[
-            Element(type="text", x=2, y=2, w=44, h=5, text="Odbiorca", font_size_pt=9, bold=True),
-            Element(type="text", x=2, y=7, w=44, h=11, text="Firma ABC sp. z o.o.\nul. Przykładowa 1\n00-001 Warszawa", font_size_pt=8),
+            Element(type="text", x=2, y=2, w=44, h=5, text="Recipient", font_size_pt=9, bold=True),
+            Element(type="text", x=2, y=7, w=44, h=11, text="ACME Components Ltd\n12 Example Street\n00-001 Sample City", font_size_pt=8),
             Element(type="qr", x=32, y=19, w=13, h=10, text="https://example.com/paczka/123"),
         ],
     ),
     "kabel": LabelSpec(
-        name="Oznaczenie kabla",
+        name="Cable marker",
         width_mm=12.5,
         height_mm=74,
         elements=[
@@ -178,11 +178,33 @@ TEMPLATES: dict[str, LabelSpec] = {
         ],
     ),
     "qr": LabelSpec(
-        name="Etykieta QR",
+        name="QR label",
         width_mm=30,
         height_mm=30,
         elements=[
             Element(type="qr", x=3, y=3, w=24, h=24, text="https://niimbot.example"),
+        ],
+    ),
+    # 40 × 30 mm roll (two 40 × 15 mm strips) — the most common B1 consumable
+    "produkt40": LabelSpec(
+        name="Product 40×30",
+        width_mm=40,
+        height_mm=30,
+        elements=[
+            Element(type="text", x=2, y=2, w=36, h=6, text="PRODUCT NAME", font="Arial Black", font_size_pt=11, align="center", auto_fit=True),
+            Element(type="text", x=2, y=8.5, w=36, h=4.5, text="SKU 0001 · Batch 01/26", font_size_pt=7.5, align="center", auto_fit=True),
+            Element(type="barcode", x=3, y=14, w=34, h=7, text="SKU-0001", barcode_format="code128", show_text=True, font_size_pt=7),
+        ],
+    ),
+    "adres40": LabelSpec(
+        name="Address 40×30",
+        width_mm=40,
+        height_mm=30,
+        elements=[
+            Element(type="text", x=2, y=2, w=36, h=4.5, text="RECIPIENT", font_size_pt=8, bold=True, auto_fit=True),
+            Element(type="text", x=2, y=6.5, w=25, h=12, text="ACME Components Ltd\n12 Example Street\n00-001 Sample City", font_size_pt=7, line_spacing=1.15, auto_fit=True),
+            Element(type="qr", x=28, y=7, w=10, h=10, text="https://example.com/parcel/0001"),
+            Element(type="text", x=2, y=19, w=36, h=3.5, text="Order 0001 · 1.25 kg", font_size_pt=7, align="center", auto_fit=True),
         ],
     ),
 }

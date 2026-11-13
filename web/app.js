@@ -174,6 +174,45 @@ function pushHistory() {
   state.history.push(snapshot);
   if (state.history.length > 80) state.history.shift();
   state.historyIndex = state.history.length - 1;
+  scheduleAutosave();
+}
+
+/* ---------------------------------------------------------------- autosave */
+let autosaveTimer = null;
+
+function scheduleAutosave() {
+  clearTimeout(autosaveTimer);
+  autosaveTimer = setTimeout(saveDraft, 1200);
+}
+
+function saveDraft() {
+  try {
+    localStorage.setItem('niibot.draft', JSON.stringify({
+      at: Date.now(),
+      labelId: state.labelId,
+      view: state.view,
+      spec: state.spec,
+    }));
+  } catch (_) { /* quota / private mode */ }
+}
+
+function clearDraft() {
+  clearTimeout(autosaveTimer);
+  try { localStorage.removeItem('niibot.draft'); } catch (_) { /* ignore */ }
+}
+
+function restoreDraft() {
+  try {
+    const raw = localStorage.getItem('niibot.draft');
+    if (!raw) return false;
+    const draft = JSON.parse(raw);
+    if (!draft || !draft.spec || !Array.isArray(draft.spec.elements)) return false;
+    setSpec(draft.spec, { labelId: draft.labelId || null });
+    if (draft.view === 'sheet') switchView('sheet');
+    return true;
+  } catch (_) {
+    return false;
+  }
 }
 
 function undo() {
@@ -843,8 +882,8 @@ function buildInspector() {
   parts.push('<div class="grid-2">');
   parts.push(field('X (mm)', numberInput('x', round2(element.x))));
   parts.push(field('Y (mm)', numberInput('y', round2(element.y))));
-  parts.push(field('Szer. (mm)', numberInput('w', round2(element.w))));
-  parts.push(field('Wys. (mm)', numberInput('h', round2(element.h))));
+  parts.push(field('Width (mm)', numberInput('w', round2(element.w))));
+  parts.push(field('Height (mm)', numberInput('h', round2(element.h))));
   parts.push('</div>');
   parts.push(field('Rotation', selectInput('rotation', String(element.rotation), [
     ['0', '0°'], ['90', '90°'], ['180', '180°'], ['270', '270°'],
@@ -1347,6 +1386,129 @@ function renderJobStatus(job) {
   $('#sb-job-text').textContent = job.message || job.state;
 }
 
+/* ============================================================== new label */
+function paperTemplateMatch(detected, spec) {
+  if (!detected || !spec) return false;
+  return Math.abs((spec.width_mm || 0) - detected.w) <= 0.6
+    && Math.abs((spec.height_mm || 0) - detected.h) <= 0.6;
+}
+
+async function openNewLabelDialog() {
+  const paper = state.printer?.paper || {};
+  const detected = paper.detected_width_mm && paper.detected_height_mm
+    ? { w: paper.detected_width_mm, h: paper.detected_height_mm }
+    : (paper.catalog ? { w: paper.catalog.width_mm, h: paper.catalog.height_mm } : null);
+
+  const templates = (state.options?.templates || []).slice();
+  const body = document.createElement('div');
+  body.className = 'tpl-picker';
+  const paperLine = detected
+    ? `<span class="tpl-paper"><i data-lucide="tag"></i> ${round2(detected.w)} × ${round2(detected.h)} mm`
+      + `${paper.label_type_name ? ` · ${escapeHtml(paper.label_type_name)}` : ''}`
+      + `${paper.sku || paper.catalog?.name ? ` · ${escapeHtml(paper.sku || paper.catalog.name)}` : ''}</span>`
+    : '<span class="tpl-paper warn"><i data-lucide="alert-triangle"></i> No roll detected — connect the printer to filter templates</span>';
+
+  body.innerHTML = `
+    <div class="tpl-head">
+      ${paperLine}
+      <label class="sheet-toggle"><input type="checkbox" id="tpl-all"><span>Show all sizes</span></label>
+    </div>
+    <div class="tpl-grid" id="tpl-grid"></div>
+  `;
+
+  const footer = document.createElement('div');
+  footer.className = 'row';
+  footer.style.cssText = 'justify-content:flex-end';
+  footer.innerHTML = '<button class="btn" data-tpl-cancel>Cancel</button>';
+
+  const modal = openModal({ id: 'new-label', title: 'New label', icon: 'file-plus', width: 760, height: 620, body, footer });
+
+  const grid = $('#tpl-grid', body);
+  const showAll = $('#tpl-all', body);
+
+  const fitModalHeight = () => {
+    const titleH = $('.modal-titlebar', modal)?.offsetHeight || 0;
+    const footH = $('.modal-footer', modal)?.offsetHeight || 0;
+    const headH = $('.tpl-head', body)?.offsetHeight || 0;
+    const cards = [...grid.children].filter((node) => node.classList.contains('tpl-card'));
+    const cols = Math.max(1, getComputedStyle(grid).gridTemplateColumns.split(' ').filter(Boolean).length);
+    const rows = Math.max(1, Math.ceil(cards.length / cols));
+    const cardH = cards.length ? Math.max(...cards.map((card) => card.offsetHeight)) : 160;
+    const gridH = rows * cardH + (rows - 1) * 10 + 16;
+    const wanted = Math.min(640, Math.max(330, titleH + headH + footH + gridH + 34));
+    modal.style.height = `${Math.min(wanted, window.innerHeight - 60)}px`;
+    modal.style.top = `${Math.max(16, Math.round((window.innerHeight - wanted) / 2))}px`;
+  };
+
+  const applyTemplate = (spec, label) => {
+    const next = JSON.parse(JSON.stringify(spec));
+    next.sheet = Object.assign({ columns: [], rows: [], mirror: false, mirror_flip: false }, next.sheet || {});
+    setSpec(next);
+    state.labelId = null;
+    if (detected) {
+      applySize(detected.w, detected.h, {
+        gap_mm: paper.detected_gap_mm ?? next.gap_mm,
+        label_type: paper.detected_label_type ?? next.label_type,
+      });
+    }
+    closeModal('new-label');
+    toast(`New label from “${label}”`, 'ok');
+  };
+
+  const cards = [
+    {
+      key: 'empty',
+      name: 'Empty label',
+      spec: { name: 'Label', width_mm: detected?.w || 40, height_mm: detected?.h || 30, gap_mm: 2, label_type: 1, density: 3, copies: 1, elements: [] },
+      empty: true,
+    },
+    ...templates.map((template, index) => ({
+      key: template.id || `tpl-${index}`,
+      name: template.name || 'Template',
+      spec: template.spec,
+      saved: template.source === 'saved',
+    })),
+  ];
+
+  const paint = () => {
+    const anyMatch = cards.some((card) => !card.empty && paperTemplateMatch(detected, card.spec));
+    const all = !!showAll.checked || !anyMatch;
+    if (!anyMatch && !showAll.checked) showAll.checked = true;
+    const visible = cards.filter((card) => all || !detected || card.empty || paperTemplateMatch(detected, card.spec));
+    grid.innerHTML = visible.map((card) => `
+      <button class="tpl-card" data-tpl-key="${escapeHtml(card.key)}">
+        <div class="tpl-thumb" data-tpl-thumb="${escapeHtml(card.key)}"></div>
+        <div class="tpl-name">${escapeHtml(card.name)}</div>
+        <div class="tpl-meta">
+          ${card.empty ? 'Blank canvas' : `${round2(card.spec.width_mm)} × ${round2(card.spec.height_mm)} mm`}
+          ${!card.empty && detected && paperTemplateMatch(detected, card.spec) ? '<span class="tpl-badge ok">fits roll</span>' : ''}
+          ${card.saved ? '<span class="tpl-badge">saved</span>' : ''}
+        </div>
+      </button>`).join('') || '<div class="empty">No templates match this roll — tick “Show all sizes”.</div>';
+
+    $$('.tpl-card', grid).forEach((button) => {
+      const card = visible.find((item) => item.key === button.dataset.tplKey);
+      button.onclick = () => applyTemplate(card.spec, card.name);
+    });
+
+    // previews (server-rendered, lazily)
+    visible.forEach((card) => {
+      const slot = $(`[data-tpl-thumb="${card.key}"]`, grid);
+      if (!slot) return;
+      api('/api/spec-preview', 'POST', { spec: card.spec, max_width: 240 })
+        .then((result) => {
+          slot.innerHTML = `<img src="data:image/png;base64,${result.png}" alt="${escapeHtml(card.name)}">`;
+        })
+        .catch(() => { slot.innerHTML = '<i data-lucide="file-question"></i>'; refreshIcons(slot); });
+    });
+    refreshIcons(grid);
+    setTimeout(fitModalHeight, 0);
+  };
+  showAll.onchange = paint;
+  $('[data-tpl-cancel]', footer).onclick = () => closeModal('new-label');
+  paint();
+}
+
 /* ============================================================= icons + fonts */
 const LUCIDE_VERSION = '0.544.0';
 const iconLib = { ready: false, loading: null, lucide: [], mdi: [], mdiVersion: '', mdiBuilt: '', lucideVersion: LUCIDE_VERSION };
@@ -1469,7 +1631,7 @@ function openIconPicker() {
       </div>
       <span class="icon-count" id="icon-count">—</span>
     </div>
-    <div class="icon-grid" id="icon-grid"><div class="empty">Wczytywanie biblioteki ikon…</div></div>
+    <div class="icon-grid" id="icon-grid"><div class="empty">Loading the icon library…</div></div>
     <div class="icon-status" id="icon-status"></div>
   `;
 
@@ -1500,10 +1662,10 @@ function openIconPicker() {
       <span class="is-sep"></span>
       <span class="is-item"><i data-lucide="shapes"></i> Material Design <b>${mdi.toLocaleString('pl-PL')}</b> <span class="is-dim">v${escapeHtml(iconLib.mdiVersion || '—')}</span></span>
       <span class="is-sep"></span>
-      <span class="is-item"><i data-lucide="layers"></i> razem <b>${total.toLocaleString('pl-PL')}</b></span>
-      ${filtered ? `<span class="is-sep"></span><span class="is-item is-accent">wynik filtra <b>${shown.toLocaleString('pl-PL')}</b></span>` : ''}
+      <span class="is-item"><i data-lucide="layers"></i> total <b>${total.toLocaleString('pl-PL')}</b></span>
+      ${filtered ? `<span class="is-sep"></span><span class="is-item is-accent">filtered <b>${shown.toLocaleString('pl-PL')}</b></span>` : ''}
       <span class="is-spacer"></span>
-      <span class="is-item is-dim">zrzut danych: ${escapeHtml(iconLib.mdiBuilt || '—')}</span>
+      <span class="is-item is-dim">dataset: ${escapeHtml(iconLib.mdiBuilt || '—')}</span>
     `;
     refreshIcons(statusBar);
   };
@@ -1516,7 +1678,7 @@ function openIconPicker() {
     state_.results = query
       ? pool.filter((icon) => icon.search.includes(query) || icon.name.includes(query))
       : pool;
-    countLabel.textContent = `${state_.results.length} ikon`;
+    countLabel.textContent = `${state_.results.length} icons`;
     grid.innerHTML = '';
     state_.shown = 0;
     appendPage();
@@ -2219,12 +2381,12 @@ function askText({ title, label, value = '', okLabel = 'Save', icon = 'pencil', 
 
 /* =============================================================== settings UI */
 const SETTINGS_TABS = [
-  { id: 'printer', label: 'Drukarka', icon: 'bluetooth' },
+  { id: 'printer', label: 'Printer', icon: 'bluetooth' },
   { id: 'paper', label: 'Paper & roll', icon: 'tag' },
-  { id: 'windows', label: 'Wydruk z Windows', icon: 'monitor' },
+  { id: 'windows', label: 'Windows printing', icon: 'monitor' },
   { id: 'catalog', label: 'Format catalogue', icon: 'database' },
-  { id: 'stats', label: 'Statystyki', icon: 'list' },
-  { id: 'about', label: 'O programie', icon: 'info' },
+  { id: 'stats', label: 'Statistics', icon: 'list' },
+  { id: 'about', label: 'About', icon: 'info' },
 ];
 
 let settingsTab = 'printer';
@@ -2331,7 +2493,7 @@ function renderPrinterTab() {
     list = `<div class="device">
       <div><strong>${escapeHtml(payload.info?.model_name || 'drukarka')}</strong><small>${escapeHtml(payload.link?.address || '')}</small></div>
       <div class="row" style="gap:6px">
-        <button class="btn" data-action="test-print"><i data-lucide="printer"></i> Wydruk testowy</button>
+        <button class="btn" data-action="test-print"><i data-lucide="printer"></i> Test print</button>
         <span class="dot ok"></span>
       </div>
     </div>`;
@@ -2352,7 +2514,7 @@ function renderPrinterTab() {
       <div class="row">
         <button class="btn primary" data-action="scan"><i data-lucide="bluetooth"></i> Scan Bluetooth</button>
         <button class="btn" data-action="refresh" ${state.connected ? '' : 'disabled'}><i data-lucide="refresh-cw"></i> Refresh</button>
-        <button class="btn" data-action="test-print" ${state.connected ? '' : 'disabled'}><i data-lucide="scan-line"></i> Wydruk testowy</button>
+        <button class="btn" data-action="test-print" ${state.connected ? '' : 'disabled'}><i data-lucide="scan-line"></i> Test print</button>
         <button class="btn danger" data-action="disconnect" ${state.connected ? '' : 'disabled'}><i data-lucide="power"></i> Disconnect</button>
       </div>
       <div class="device-list" style="margin-top:10px">${list}</div>
@@ -2361,18 +2523,18 @@ function renderPrinterTab() {
     <section>
       <h3>Model</h3>
       <div class="status-line"><span>Model</span><span>${escapeHtml(info.model_name || '—')}</span></div>
-      <div class="status-line"><span>ID modelu</span><span>${info.model_id ?? '—'}</span></div>
+      <div class="status-line"><span>Model ID</span><span>${info.model_id ?? '—'}</span></div>
       <div class="status-line"><span>Resolution</span><span>${info.dpi ? `${info.dpi} dpi` : '—'}</span></div>
       <div class="status-line"><span>Printhead</span><span>${info.printhead_px ? `${info.printhead_px} px` : '—'}</span></div>
       <div class="status-line"><span>Firmware</span><span>${escapeHtml(info.firmware || '—')}</span></div>
       <div class="status-line"><span>Protocol</span><span>${info.protocol_version ?? '—'}</span></div>
-      <div class="status-line"><span>Numer seryjny</span><span class="mono">${escapeHtml(info.serial || '—')}</span></div>
+      <div class="status-line"><span>Serial number</span><span class="mono">${escapeHtml(info.serial || '—')}</span></div>
     </section>
     <section>
-      <h3>Serwis</h3>
+      <h3>Service</h3>
       <div class="row">
         <button class="btn" data-action="calibrate" ${state.connected ? '' : 'disabled'}><i data-lucide="scan-line"></i> Paper calibration</button>
-        <button class="btn" id="btn-test-settings" ${state.connected ? '' : 'disabled'}><i data-lucide="printer"></i> Wydruk testowy</button>
+        <button class="btn" id="btn-test-settings" ${state.connected ? '' : 'disabled'}><i data-lucide="printer"></i> Test print</button>
       </div>
       <div class="hint" style="margin-top:6px">Calibration feeds a few labels — use it when the print is offset against the cuts.</div>
     </section>
@@ -2532,7 +2694,7 @@ function renderCatalogTab() {
           <div class="device">
             <div>
               <strong>${round2(item.width_mm)} × ${round2(item.height_mm)} mm${item.rows > 1 ? ` · ${item.rows} rows` : ''}</strong>
-              <small>${escapeHtml(item.sku || item.name || '')}${item.capacity ? ` · ${item.capacity} etykiet` : ''} · ${item.source}${item.barcode ? ` · ${item.barcode}` : ''}</small>
+              <small>${escapeHtml(item.sku || item.name || '')}${item.capacity ? ` · ${item.capacity} labels` : ''} · ${item.source}${item.barcode ? ` · ${item.barcode}` : ''}</small>
             </div>
             <button class="btn" data-action="use-format" data-index="${index}">Use</button>
           </div>`).join('') : '<div class="empty">No formats</div>'}
@@ -2549,7 +2711,7 @@ function renderCatalogTab() {
 }
 
 function renderStatsTab() {
-  return '<section><h3>Statystyki</h3><div id="stats-body"><div class="empty">wczytywanie…</div></div></section>';
+  return '<section><h3>Statistics</h3><div id="stats-body"><div class="empty">loading…</div></div></section>';
 }
 
 function renderAboutTab() {
@@ -2576,7 +2738,7 @@ const MENUS = {
   file: {
     label: 'File',
     items: [
-      { icon: 'file-plus', label: 'New label', run: () => setSpec(state.options.default_spec) },
+      { icon: 'file-plus', label: 'New label', run: () => openNewLabelDialog() },
       { icon: 'folder-open', label: 'Load label…', run: () => openLabelsModal() },
       { icon: 'save', label: 'Save label', key: 'Ctrl+S', run: () => saveLabel() },
       { icon: 'save-all', label: 'Save label as…', key: 'Ctrl+Shift+S', run: () => saveLabelAs() },
@@ -2828,7 +2990,7 @@ async function saveFit() {
     dither: $('#fit-dither').checked,
     invert: $('#fit-invert').checked,
   });
-  toast('Dopasowanie wydruku z Windows zapisane', 'ok');
+  toast('Windows print fitting saved', 'ok');
 }
 
 async function showInstallCommand(root) {
@@ -2869,11 +3031,11 @@ async function loadStats(root) {
   try {
     const stats = await api('/api/stats?recent=6');
     const rows = [];
-    rows.push(`<div class="status-line"><span>Wydrukowane etykiety</span><span>${stats.labels || 0}</span></div>`);
+    rows.push(`<div class="status-line"><span>Labels printed</span><span>${stats.labels || 0}</span></div>`);
     rows.push(`<div class="status-line"><span>Jobs</span><span>${stats.done || 0} ok · ${stats.failed || 0} failed</span></div>`);
     rows.push(`<div class="status-line"><span>Formats in the database</span><span>${stats.formats || 0}</span></div>`);
     rows.push(`<div class="status-line"><span>Szablony</span><span>${stats.templates || 0}</span></div>`);
-    if (stats.last_ok) rows.push(`<div class="status-line"><span>Ostatni wydruk</span><span>${new Date(stats.last_ok * 1000).toLocaleString('pl-PL')}</span></div>`);
+    if (stats.last_ok) rows.push(`<div class="status-line"><span>Last print</span><span>${new Date(stats.last_ok * 1000).toLocaleString('pl-PL')}</span></div>`);
     for (const item of (stats.by_sku || []).slice(0, 4)) {
       rows.push(`<div class="status-line"><span class="mono">${escapeHtml(String(item.sku))}</span><span>${item.labels}</span></div>`);
     }
@@ -2912,7 +3074,7 @@ async function printLabel() {
 async function testPrint() {
   try {
     await api('/api/test-print', 'POST');
-    renderJobStatus({ state: 'running', progress: 0, message: 'Wydruk testowy…' });
+    renderJobStatus({ state: 'running', progress: 0, message: 'Test print…' });
     pollJob();
   } catch (error) {
     toast(error.message, 'error');
@@ -2950,6 +3112,7 @@ async function saveLabel() {
   const result = await api('/api/labels', 'POST', { id: state.labelId, spec: state.spec });
   state.labelId = result.id;
   toast('Label saved', 'ok');
+  clearDraft();
 }
 
 async function saveLabelAs() {
@@ -2968,6 +3131,7 @@ async function saveLabelAs() {
     const result = await api('/api/labels', 'POST', { id: null, spec: state.spec });
     state.labelId = result.id;
     state.options.labels = result.labels;
+    clearDraft();
     toast(`Saved as “${name}”`, 'ok');
   } catch (error) {
     state.spec.name = previous;
@@ -3227,6 +3391,7 @@ function bindControls() {
     else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'y') { event.preventDefault(); redo(); }
     else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'd') { event.preventDefault(); duplicateSelected(); }
     else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') { event.preventDefault(); saveLabel().catch((error) => toast(error.message, 'error')); }
+    else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'n') { event.preventDefault(); openNewLabelDialog(); }
     else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'p') { event.preventDefault(); printLabel(); }
     else if ((event.ctrlKey || event.metaKey) && event.key === ',') { event.preventDefault(); openSettings('printer'); }
     else if (event.key === 'Delete' || event.key === 'Backspace') { if (state.selectedId) { event.preventDefault(); deleteSelected(); } }
@@ -3271,6 +3436,7 @@ async function init() {
     applyState(payload);
     applyKnownFormat(payload.paper);
     renderStatusBar();
+    if (restoreDraft()) toast('Restored the last unsaved draft', 'ok');
     await requestPreview();
     if (state.connected) startStatusTimer();
     startWatchTimer();

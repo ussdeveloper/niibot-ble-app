@@ -4,6 +4,29 @@ All notable changes to **Niibot Studio** are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project uses [Semantic Versioning](https://semver.org/).
 
+## [0.8.0] — 2026-11-13
+
+### Added
+- **New label dialog is now a template gallery**: it shows the RFID-detected roll
+  (size, label type, barcode) and a preview card for every template that fits it, with a
+  **Show all sizes** toggle. Two new 40 × 30 mm built-ins for the standard B1 roll —
+  *Product 40×30* and *Address 40×30*.
+- **Element previews** (`POST /api/element-preview`): a single element is rendered on its own
+  canvas, so layer thumbnails and drag ghosts no longer show neighbouring elements that happen
+  to overlap the same box.
+- **Autosave draft**: the design is written to `localStorage` 1.2 s after the last change and
+  restored on reload; saving a label explicitly clears the draft.
+- **Screenshots** of the English UI in `docs/screenshots/`.
+
+### Changed
+- The gallery dialog sizes itself to its content instead of always opening at a fixed height.
+
+### Fixed
+- Moving a label element showed the details of every element inside the bounding box; the drag
+  ghost now carries only the dragged element's artwork.
+- Translated strings were re-locked after switching back to English in the language menu.
+- Remaining Polish strings ("Drukuj arkusz", "Wersz", column width/height prompts) translated.
+
 ## [0.7.0] — 2026-11-13
 
 ### Added

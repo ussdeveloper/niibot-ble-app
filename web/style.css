@@ -778,6 +778,48 @@ button.sb-item:hover { background: rgba(0, 194, 194, 0.12); color: var(--teal-de
 .editor-tab:hover { background: rgba(0, 194, 194, 0.12); color: var(--teal-deep); }
 .editor-tab.active { background: rgba(0, 194, 194, 0.18); color: var(--teal-deep); font-weight: 600; }
 
+/* ----------------------------------------------------- galeria szablonów */
+.tpl-picker { display: flex; flex-direction: column; gap: 12px; height: 100%; min-height: 0; flex: 1; }
+.tpl-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; flex: 0 0 auto; }
+.tpl-head .sheet-toggle { white-space: nowrap; flex: 0 0 auto; }
+.tpl-paper {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 11px; border-radius: 999px;
+  background: rgba(0, 194, 194, 0.14);
+  color: var(--teal-deep); font-size: 11.5px;
+}
+.tpl-paper.warn { background: rgba(232, 122, 42, 0.16); color: #a85b17; }
+.tpl-paper svg { width: 12px; height: 12px; }
+.tpl-grid {
+  flex: 1; min-height: 0; overflow: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  grid-auto-rows: max-content;
+  align-content: start;
+  gap: 10px;
+  padding: 2px 4px 12px 2px;
+}
+.tpl-card {
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 10px; border-radius: 10px;
+  border: 1px solid var(--line-strong);
+  background: rgba(255, 255, 255, 0.75);
+  cursor: pointer; text-align: left; color: var(--ink);
+}
+.tpl-card:hover { border-color: rgba(0, 194, 194, 0.65); background: rgba(0, 194, 194, 0.08); }
+.tpl-thumb {
+  height: 108px; border-radius: 7px; background: #fff;
+  border: 1px solid var(--line);
+  display: flex; align-items: center; justify-content: center;
+  overflow: hidden;
+}
+.tpl-thumb img { max-width: 100%; max-height: 100%; image-rendering: pixelated; }
+.tpl-thumb svg { width: 20px; height: 20px; color: var(--ink-muted); }
+.tpl-name { font-size: 12px; font-weight: 600; color: var(--navy); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tpl-meta { display: flex; align-items: center; gap: 6px; font-size: 10.5px; color: var(--ink-muted); flex-wrap: wrap; }
+.tpl-badge { padding: 1px 6px; border-radius: 999px; background: rgba(0, 26, 77, 0.08); font-size: 9.5px; }
+.tpl-badge.ok { background: rgba(0, 194, 194, 0.2); color: var(--teal-deep); }
+
 /* ------------------------------------------------------- ikony i czcionki */
 .icon-picker, .font-picker { display: flex; flex-direction: column; height: 100%; min-height: 0; flex: 1; }
 
