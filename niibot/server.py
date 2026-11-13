@@ -28,7 +28,7 @@ from .bitmap import encode_image
 from .ble import BleLink
 from .consumables import Consumable, builtin_formats, scan_vendor_catalog
 from .fit import FitOptions, fit_to_label
-from .models import MODELS, PAPER_PRESETS, PaperProfile
+from .models import MODELS, PAPER_PRESETS, PaperProfile, Region
 from .paths import resource_dir
 from .printer import NiimbotPrinter
 from .protocol import LABEL_TYPE_NAMES, ProtocolError
@@ -183,6 +183,17 @@ class SaveTemplateRequest(BaseModel):
     spec: LabelSpec
 
 
+class RegionRequest(BaseModel):
+    """One printable cell drawn in the calibrator (millimetres from the page corner)."""
+
+    shape: str = "rect"
+    x: float = Field(default=0.0, ge=-50, le=400)
+    y: float = Field(default=0.0, ge=-50, le=400)
+    w: float = Field(default=30.0, gt=0, le=400)
+    h: float = Field(default=15.0, gt=0, le=400)
+    label: str = ""
+
+
 class ProfileRequest(BaseModel):
     key: str
     name: str = ""
@@ -191,6 +202,7 @@ class ProfileRequest(BaseModel):
     gap_mm: float = 2.0
     label_type: int = 1
     capacity: int | None = None
+    regions: list[RegionRequest] = Field(default_factory=list)
 
 
 class RollFormatRequest(BaseModel):
@@ -201,9 +213,11 @@ class RollFormatRequest(BaseModel):
     width_mm: float = Field(gt=0, le=200)
     height_mm: float = Field(gt=0, le=400)
     rows: int = Field(default=1, ge=1, le=8)
+    cols: int = Field(default=1, ge=1, le=8)
     gap_mm: float = Field(default=0.0, ge=0, le=20)
     label_type: int = 1
     capacity: int | None = None
+    regions: list[RegionRequest] = Field(default_factory=list)
 
 
 class DensityRequest(BaseModel):
@@ -478,7 +492,7 @@ async def api_detect_size() -> dict:
         stored = store.save_profile(
             PaperProfile(
                 key=key,
-                name=f"{geometry.width_mm:g} Ă— {geometry.height_mm:g} mm",
+                name=f"{geometry.width_mm:g} × {geometry.height_mm:g} mm",
                 width_mm=geometry.width_mm or 0.0,
                 height_mm=geometry.height_mm or 0.0,
                 gap_mm=geometry.gap_mm or 0.0,
@@ -703,7 +717,7 @@ async def api_catalog_manual(request: ProfileRequest) -> dict:
     record = store.upsert_consumable(
         {
             "barcode": barcode,
-            "name": request.name or f"{request.width_mm:g} Ă— {request.height_mm:g} mm",
+            "name": request.name or f"{request.width_mm:g} × {request.height_mm:g} mm",
             "sku": request.name or None,
             "width_mm": request.width_mm,
             "height_mm": request.height_mm,
@@ -723,7 +737,12 @@ async def api_stats(recent: int = 10) -> dict:
 
 @app.post("/api/roll-format")
 async def api_roll_format(request: RollFormatRequest) -> dict:
-    """Store the size of a roll the printer cannot measure (asked once per roll code)."""
+    """Store the size (and the drawn cells) of a roll the printer cannot measure."""
+    regions = [
+        Region(shape=item.shape if item.shape in ("rect", "circle") else "rect",
+               x=item.x, y=item.y, w=item.w, h=item.h, label=item.label)
+        for item in request.regions
+    ]
     entry = {
         "barcode": request.barcode,
         "name": request.name or request.barcode,
@@ -731,6 +750,8 @@ async def api_roll_format(request: RollFormatRequest) -> dict:
         "height_mm": request.height_mm,
         "paper_type": request.label_type,
         "rows": request.rows,
+        "cols": request.cols,
+        "regions": [region.to_dict() for region in regions],
         "capacity": request.capacity,
         "source": "manual",
     }
@@ -746,31 +767,39 @@ async def api_roll_format(request: RollFormatRequest) -> dict:
                 gap_mm=request.gap_mm,
                 label_type=request.label_type,
                 capacity=request.capacity,
+                regions=regions,
             )
         )
     log.info(
-        "Roll %s remembered as %g × %g mm (%d rows)",
+        "Roll %s remembered as %g × %g mm (%d rows, %d cells drawn)",
         request.barcode,
         request.width_mm,
         request.height_mm,
         request.rows,
+        len(regions),
     )
     return _state_payload()
 
 
 @app.post("/api/profiles")
 async def api_profile_save(request: ProfileRequest) -> dict:
+    regions = [
+        Region(shape=item.shape if item.shape in ("rect", "circle") else "rect",
+               x=item.x, y=item.y, w=item.w, h=item.h, label=item.label)
+        for item in request.regions
+    ]
     profile = PaperProfile(
         key=request.key,
-        name=request.name or f"{request.width_mm:g} Ă— {request.height_mm:g} mm",
+        name=request.name or f"{request.width_mm:g} × {request.height_mm:g} mm",
         width_mm=request.width_mm,
         height_mm=request.height_mm,
         gap_mm=request.gap_mm,
         label_type=request.label_type,
         capacity=request.capacity,
+        regions=regions,
     )
-    store.save_profile(profile)
-    return {"profile": profile.to_dict(), "profiles": list(store.list_profiles().values())}
+    stored = store.save_profile(profile)
+    return {"profile": stored, "profiles": list(store.list_profiles().values())}
 
 
 @app.delete("/api/profiles/{key}")
@@ -1395,7 +1424,7 @@ async def api_driver() -> dict:
         "port": port,
         "printer_name": printer_name,
         "driver": "Microsoft IPP Class Driver",
-        "media": f"{width_mm:g} Ă— {height_mm:g} mm",
+        "media": f"{width_mm:g} × {height_mm:g} mm",
         "install_command": install_command,
         "connected": state.connected,
     }

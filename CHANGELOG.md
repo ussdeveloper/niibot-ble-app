@@ -4,6 +4,29 @@ All notable changes to **Niibot Studio** are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project uses [Semantic Versioning](https://semver.org/).
 
+## [0.12.0] — 2026-11-13
+
+### Added
+- **Roll calibrator**: an unknown RFID code now always opens the calibrator instead of a size prompt.
+  Set width/height/gap, then draw the printable cells — **Grid from rows × columns** for a regular
+  roll, or **Add rectangle / Add circle** and drag them where the data goes (two circles side by side,
+  four cells in a 2 × 2 block, anything). Everything is stored per roll code, so the next insertion
+  configures itself.
+- **Correct calibration** button in the label bar next to the roll chips — reopen the calibrator at any
+  time, also for rolls that are already known.
+- **Drawn cells are visible while designing** (dashed outlines with numbers over the label) and a
+  **roll × label mismatch** chip offers to fit the label to the roll in one click.
+- The catalogue import also reads the **new Flutter NIIMBOT app** (`niimbot_db.isar`), which stores roll
+  records under the same eight-digit `oneCode` the RFID tag reports. Six vendor formats now resolve
+  automatically, and grid rolls carry their cells (e.g. `T10*20/4L` → four 10 × 20 mm cells on a
+  40 × 20 mm page, `T40*15/2R` → two stacked cells).
+
+### Fixed
+- The calibrator preview keeps the real label proportions (a 50 × 50 mm roll used to be squashed to
+  a 4:3 box, so circles looked like ellipses).
+- A circle cell is now created with equal width and height, and editing one side keeps it round.
+- Modals scroll their body instead of clipping content when it grows.
+
 ## [0.11.0] — 2026-11-13
 
 ### Added

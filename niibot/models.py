@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from .protocol import LabelType
 
@@ -98,6 +98,32 @@ PAPER_PRESETS: tuple[PaperPreset, ...] = (
 
 
 @dataclass
+class Region:
+    """One printable cell the calibrator drew on the roll.
+
+    ``shape`` is ``rect`` or ``circle``; coordinates are millimetres from the
+    top-left corner of the label page, exactly as they print.
+    """
+
+    shape: str = "rect"
+    x: float = 0.0
+    y: float = 0.0
+    w: float = 30.0
+    h: float = 15.0
+    label: str = ""
+
+    def to_dict(self) -> dict:
+        return {
+            "shape": self.shape,
+            "x": self.x,
+            "y": self.y,
+            "w": self.w,
+            "h": self.h,
+            "label": self.label,
+        }
+
+
+@dataclass
 class PaperProfile:
     """Remembered label geometry for a physical roll (keyed by RFID barcode)."""
 
@@ -108,6 +134,8 @@ class PaperProfile:
     gap_mm: float = 2.0
     label_type: int = int(LabelType.WITH_GAPS)
     capacity: int | None = None
+    #: Cells the calibrator drew; empty means "one cell = the whole label".
+    regions: list[Region] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
@@ -118,4 +146,5 @@ class PaperProfile:
             "gap_mm": self.gap_mm,
             "label_type": self.label_type,
             "capacity": self.capacity,
+            "regions": [region.to_dict() for region in self.regions],
         }

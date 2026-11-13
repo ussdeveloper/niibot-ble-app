@@ -33,11 +33,13 @@ TEMPLATE_KEY = "ConsumablesTemplate-"
 INFO_KEY = "ConsumablesInfo-"
 
 #: ``T40*15/2R-460WHITE`` → 40 mm × 15 mm, 2 rows, 460 labels, WHITE
+#: ``T10*20/4L-1200WHITE`` → 10 mm × 20 mm labels, 4 side by side (a 40 mm page)
+#: ``TT40*60-125transparent`` → thermal-transfer roll, the extra ``T`` is packaging.
 SKU_RE = re.compile(
-    r"^[Tt]?\s*(?P<w>\d+(?:[.,]\d+)?)\s*\*\s*(?P<h>\d+(?:[.,]\d+)?)"
-    r"(?:\s*/\s*(?P<rows>\d)\s*[Rr])?"
-    r"(?:\s*-\s*(?P<count>\d+))?"
-    r"(?P<color>[A-Za-z+ ]*)$"
+    r"^[Tt]{1,2}\s*(?P<w>\d+(?:[.,]\d+)?)\s*\*\s*(?P<h>\d+(?:[.,]\d+)?)"
+    r"(?:\s*/\s*(?P<count>\d)\s*(?P<axis>[RrLl]))?"
+    r"(?:\s*-\s*(?P<labels>\d+))?"
+    r"(?P<tail>.*)$"
 )
 
 
@@ -51,6 +53,8 @@ class Consumable:
     height_mm: float = 0.0
     paper_type: int = 1
     rows: int | None = None
+    cols: int | None = None
+    regions: list[dict] = field(default_factory=list)
     capacity: int | None = None
     color: str | None = None
     template_id: int | None = None
@@ -66,7 +70,11 @@ class Consumable:
 
 
 def parse_sku_name(name: str) -> dict:
-    """Decode a Niimbot SKU name such as ``T50*30`` or ``T40*15/2R-460WHITE``."""
+    """Decode a Niimbot SKU name such as ``T50*30`` or ``T40*15/2R-460WHITE``.
+
+    ``rows`` means regions stacked vertically (``/2R``), ``cols`` regions side by
+    side (``/4L``). The returned width/height describe **one** region.
+    """
     match = SKU_RE.match((name or "").strip())
     if not match:
         return {}
@@ -76,14 +84,42 @@ def parse_sku_name(name: str) -> dict:
         result["height_mm"] = float(match.group("h").replace(",", "."))
     except (TypeError, ValueError):
         return {}
-    if match.group("rows"):
-        result["rows"] = int(match.group("rows"))
-    if match.group("count"):
-        result["capacity"] = int(match.group("count"))
-    color = (match.group("color") or "").strip()
-    if color:
-        result["color"] = color
+    count = match.group("count")
+    if count:
+        number = max(1, int(count))
+        if (match.group("axis") or "").lower() == "r":
+            result["rows"] = number
+        else:
+            result["cols"] = number
+    if match.group("labels"):
+        result["capacity"] = int(match.group("labels"))
+    tail = (match.group("tail") or "").strip()
+    color = re.match(r"[A-Za-z+ ]+", tail)
+    if color and color.group().strip():
+        result["color"] = color.group().strip()
     return result
+
+
+def sku_regions(width_mm: float, height_mm: float, rows: int = 1, cols: int = 1) -> list[dict]:
+    """Build the printable cells of a grid roll (rows stacked, columns side by side)."""
+    rows = max(1, int(rows or 1))
+    cols = max(1, int(cols or 1))
+    if rows == 1 and cols == 1:
+        return []
+    cells: list[dict] = []
+    for row in range(rows):
+        for col in range(cols):
+            cells.append(
+                {
+                    "shape": "rect",
+                    "x": round(col * width_mm, 2),
+                    "y": round(row * height_mm, 2),
+                    "w": round(width_mm, 2),
+                    "h": round(height_mm, 2),
+                    "label": f"R{row + 1}C{col + 1}",
+                }
+            )
+    return cells
 
 
 #: Standard Niimbot roll formats, so the picker works without the vendor app.
@@ -265,18 +301,97 @@ def template_to_consumable(barcode: str, template: dict, info: dict | None) -> C
     }
 
     paper_type = template.get("paperType")
+    rows = int(sku.get("rows") or 1)
+    cols = int(sku.get("cols") or 1)
     return Consumable(
         barcode=barcode,
         name=name,
         width_mm=width_mm,
         height_mm=height_mm,
         paper_type=int(paper_type) if isinstance(paper_type, (int, float, str)) and str(paper_type).isdigit() else 1,
-        rows=sku.get("rows"),
+        rows=rows,
+        cols=cols,
+        regions=sku_regions(
+            width_mm / cols if cols else width_mm,
+            height_mm / rows if rows else height_mm,
+            rows,
+            cols,
+        ),
         capacity=capacity,
         color=sku.get("color"),
         template_id=template.get("id"),
         localized=localized,
     )
+
+
+#: The new Flutter NIIMBOT app keeps its label library in an Isar database.
+FLUTTER_DB: tuple[Path, ...] = (
+    Path(os.environ.get("APPDATA", "")) / "niimbot.com" / "NIIMBOT" / "Niimbot" / "niimbot_db.isar",
+    Path(os.environ.get("LOCALAPPDATA", "")) / "niimbot-print" / "niimbot_db.isar",
+)
+
+#: ``08 00 00`` + eight ASCII digits is how Isar stores the roll's ``oneCode`` string.
+_ISAR_CODE_RE = re.compile(rb"\x08\x00\x00(\d{8})")
+_ISAR_NAMES_RE = re.compile(rb'\[\{"languageCode".{0,6000}?\]', re.S)
+_ISAR_NAME_RE = re.compile(rb'"languageCode":"([a-zA-Z-]+)","languageName":"[^"]*","name":"([^"]*)"')
+
+
+def scan_flutter_catalog(extra_files: list[Path] | None = None) -> tuple[dict[str, Consumable], list[str]]:
+    """Read roll formats the new Flutter app cached locally.
+
+    Only the roll records (the ones that carry a multilingual name such as
+    ``T40*15/2R-460WHITE``) are useful: their eight-digit ``oneCode`` is exactly
+    the value the RFID tag reports, so it can key our own catalogue. Design
+    templates stored next to them carry no geometry, so they are skipped.
+    """
+    files = [Path(item) for item in (extra_files or [])]
+    files.extend(path for path in FLUTTER_DB if path.is_file())
+    found: dict[str, Consumable] = {}
+    scanned: list[str] = []
+
+    for path in files:
+        if not path.is_file():
+            continue
+        try:
+            raw = path.read_bytes()
+        except OSError:
+            continue
+        scanned.append(str(path))
+        for match in _ISAR_NAMES_RE.finditer(raw):
+            names = {
+                code.decode("ascii", "replace"): name.decode("utf-8", "replace")
+                for code, name in _ISAR_NAME_RE.findall(match.group())
+                if name
+            }
+            if not names:
+                continue
+            display = names.get("en") or names.get("zh-cn") or next(iter(names.values()))
+            if not display.strip():
+                continue
+            codes = _ISAR_CODE_RE.findall(raw[max(0, match.start() - 260): match.start()])
+            if not codes:
+                continue
+            code = codes[-1].decode("ascii")
+            sku = parse_sku_name(display)
+            if not sku.get("width_mm") or not sku.get("height_mm"):
+                continue
+            rows = int(sku.get("rows") or 1)
+            cols = int(sku.get("cols") or 1)
+            found[code] = Consumable(
+                barcode=code,
+                name=display,
+                width_mm=float(sku["width_mm"]) * cols,
+                height_mm=float(sku["height_mm"]) * rows,
+                paper_type=1,
+                rows=rows,
+                cols=cols,
+                regions=sku_regions(float(sku["width_mm"]), float(sku["height_mm"]), rows, cols),
+                capacity=sku.get("capacity"),
+                color=sku.get("color"),
+                localized=names,
+                source="vendor-flutter",
+            )
+    return found, scanned
 
 
 def scan_vendor_catalog(extra_dirs: list[Path] | None = None) -> tuple[dict[str, Consumable], list[str]]:
@@ -298,5 +413,11 @@ def scan_vendor_catalog(extra_dirs: list[Path] | None = None) -> tuple[dict[str,
                     info = record
                     break
             found[barcode] = template_to_consumable(barcode, template, info)
+
+    # The newer Flutter app stores the same rolls under the code the RFID tag reports.
+    flutter_found, flutter_scanned = scan_flutter_catalog()
+    scanned.extend(flutter_scanned)
+    for code, consumable in flutter_found.items():
+        found.setdefault(code, consumable)
 
     return {key: value for key, value in found.items() if value.is_usable}, scanned

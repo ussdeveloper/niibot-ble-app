@@ -54,6 +54,8 @@ CREATE TABLE IF NOT EXISTS consumables (
     height_mm   REAL NOT NULL DEFAULT 0,
     paper_type  INTEGER NOT NULL DEFAULT 1,
     rows        INTEGER,
+    cols        INTEGER,
+    regions     TEXT,
     capacity    INTEGER,
     color       TEXT,
     template_id INTEGER,
@@ -89,6 +91,7 @@ CREATE TABLE IF NOT EXISTS profiles (
     gap_mm     REAL NOT NULL DEFAULT 2,
     label_type INTEGER NOT NULL DEFAULT 1,
     capacity   INTEGER,
+    regions    TEXT,
     updated_at REAL NOT NULL
 );
 
@@ -153,12 +156,25 @@ def ensure_dirs() -> None:
 def init_db() -> None:
     with connect() as db:
         db.executescript(_SCHEMA)
+        _migrate_schema(db)
         row = db.execute("SELECT value FROM schema_meta WHERE key='version'").fetchone()
         if row is None:
             db.execute("INSERT INTO schema_meta(key, value) VALUES('version', ?)", (str(SCHEMA_VERSION),))
         migrated = db.execute("SELECT value FROM schema_meta WHERE key='legacy_imported'").fetchone()
     if migrated is None:
         _import_legacy_files()
+
+
+def _migrate_schema(db: sqlite3.Connection) -> None:
+    """Add columns introduced after the first release (CREATE TABLE IF NOT EXISTS skips them)."""
+    profile_columns = {row["name"] for row in db.execute("PRAGMA table_info(profiles)").fetchall()}
+    if "regions" not in profile_columns:
+        db.execute("ALTER TABLE profiles ADD COLUMN regions TEXT")
+    consumable_columns = {row["name"] for row in db.execute("PRAGMA table_info(consumables)").fetchall()}
+    if "cols" not in consumable_columns:
+        db.execute("ALTER TABLE consumables ADD COLUMN cols INTEGER")
+    if "regions" not in consumable_columns:
+        db.execute("ALTER TABLE consumables ADD COLUMN regions TEXT")
 
 
 # ----------------------------------------------------------------- migration
@@ -260,6 +276,7 @@ def save_settings(values: dict) -> None:
 # --------------------------------------------------------------- consumables
 def _consumable_row(entry: dict[str, Any]) -> dict[str, Any]:
     localized = entry.get("localized")
+    regions = entry.get("regions")
     return {
         "barcode": entry.get("barcode") or None,
         "sku": entry.get("sku") or entry.get("name") or None,
@@ -268,6 +285,8 @@ def _consumable_row(entry: dict[str, Any]) -> dict[str, Any]:
         "height_mm": float(entry.get("height_mm") or 0),
         "paper_type": int(entry.get("paper_type") or 1),
         "rows": entry.get("rows"),
+        "cols": entry.get("cols"),
+        "regions": json.dumps(regions, ensure_ascii=False) if regions else None,
         "capacity": entry.get("capacity"),
         "color": entry.get("color"),
         "template_id": entry.get("template_id"),
@@ -291,10 +310,10 @@ def upsert_consumable(entry: dict[str, Any]) -> dict[str, Any]:
 
         if existing is None:
             cursor = db.execute(
-                "INSERT INTO consumables(barcode, sku, name, width_mm, height_mm, paper_type, rows, capacity,"
-                " color, template_id, localized, source, created_at, updated_at)"
-                " VALUES(:barcode, :sku, :name, :width_mm, :height_mm, :paper_type, :rows, :capacity,"
-                " :color, :template_id, :localized, :source, :created_at, :updated_at)",
+                "INSERT INTO consumables(barcode, sku, name, width_mm, height_mm, paper_type, rows, cols,"
+                " regions, capacity, color, template_id, localized, source, created_at, updated_at)"
+                " VALUES(:barcode, :sku, :name, :width_mm, :height_mm, :paper_type, :rows, :cols,"
+                " :regions, :capacity, :color, :template_id, :localized, :source, :created_at, :updated_at)",
                 {**row, "created_at": now, "updated_at": now},
             )
             identifier = cursor.lastrowid
@@ -302,8 +321,9 @@ def upsert_consumable(entry: dict[str, Any]) -> dict[str, Any]:
             identifier = existing["id"]
             db.execute(
                 "UPDATE consumables SET sku=:sku, name=:name, width_mm=:width_mm, height_mm=:height_mm,"
-                " paper_type=:paper_type, rows=:rows, capacity=:capacity, color=:color,"
-                " template_id=:template_id, localized=:localized, source=:source, updated_at=:updated_at"
+                " paper_type=:paper_type, rows=:rows, cols=:cols, regions=:regions, capacity=:capacity,"
+                " color=:color, template_id=:template_id, localized=:localized, source=:source,"
+                " updated_at=:updated_at"
                 " WHERE id=:id",
                 {**row, "id": identifier, "updated_at": now},
             )
@@ -313,13 +333,15 @@ def upsert_consumable(entry: dict[str, Any]) -> dict[str, Any]:
 
 def _consumable_dict(row: sqlite3.Row) -> dict[str, Any]:
     data = dict(row)
-    if data.get("localized"):
-        try:
-            data["localized"] = json.loads(data["localized"])
-        except json.JSONDecodeError:
-            data["localized"] = {}
-    else:
-        data["localized"] = {}
+    for key in ("localized", "regions"):
+        raw = data.get(key)
+        if raw:
+            try:
+                data[key] = json.loads(raw)
+            except json.JSONDecodeError:
+                data[key] = {} if key == "localized" else []
+        else:
+            data[key] = {} if key == "localized" else []
     return data
 
 
@@ -478,26 +500,37 @@ def delete_template(template_id: str) -> None:
 
 
 # ------------------------------------------------------------------ profiles
+def _profile_row(row: sqlite3.Row) -> dict[str, Any]:
+    data = dict(row)
+    raw = data.pop("regions", None)
+    try:
+        data["regions"] = json.loads(raw) if raw else []
+    except json.JSONDecodeError:
+        data["regions"] = []
+    return data
+
+
 def list_profiles() -> dict[str, dict[str, Any]]:
     with connect() as db:
         rows = db.execute("SELECT * FROM profiles").fetchall()
-    return {row["key"]: dict(row) for row in rows}
+    return {row["key"]: _profile_row(row) for row in rows}
 
 
 def get_profile(key: str) -> dict | None:
     with connect() as db:
         row = db.execute("SELECT * FROM profiles WHERE key = ?", (key,)).fetchone()
-    return dict(row) if row else None
+    return _profile_row(row) if row else None
 
 
 def upsert_profile(profile: PaperProfile) -> dict[str, Any]:
+    regions = json.dumps([region.to_dict() for region in profile.regions], ensure_ascii=False) if profile.regions else None
     with connect() as db:
         db.execute(
-            "INSERT INTO profiles(key, name, width_mm, height_mm, gap_mm, label_type, capacity, updated_at)"
-            " VALUES(?, ?, ?, ?, ?, ?, ?, ?)"
+            "INSERT INTO profiles(key, name, width_mm, height_mm, gap_mm, label_type, capacity, regions, updated_at)"
+            " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)"
             " ON CONFLICT(key) DO UPDATE SET name=excluded.name, width_mm=excluded.width_mm,"
             " height_mm=excluded.height_mm, gap_mm=excluded.gap_mm, label_type=excluded.label_type,"
-            " capacity=excluded.capacity, updated_at=excluded.updated_at",
+            " capacity=excluded.capacity, regions=excluded.regions, updated_at=excluded.updated_at",
             (
                 profile.key,
                 profile.name,
@@ -506,6 +539,7 @@ def upsert_profile(profile: PaperProfile) -> dict[str, Any]:
                 profile.gap_mm,
                 profile.label_type,
                 profile.capacity,
+                regions,
                 _now(),
             ),
         )

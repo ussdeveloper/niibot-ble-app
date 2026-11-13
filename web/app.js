@@ -478,11 +478,22 @@ function renderStageMeta() {
   const chips = [`<span class="meta-chip"><b>${round2(spec.width_mm)} × ${round2(spec.height_mm)} mm</b></span>`];
   if (geo.typeName) chips.push(`<span class="meta-chip type">paper: ${escapeHtml(geo.typeName)}</span>`);
   if (rollName) chips.push(`<span class="meta-chip mono">${escapeHtml(rollName)}</span>`);
-  if (state.connected && !known) {
-    chips.push(`<button type="button" class="meta-chip warn" id="meta-roll-size"
-      title="The printer cannot report the format of this roll — enter the size once and it is remembered for this code">
-      <i data-lucide="ruler"></i> size unknown · set it
+  if (state.connected) {
+    chips.push(`<button type="button" class="meta-chip${known ? '' : ' warn'}" id="meta-calibrate"
+      title="Size and printable cells of this roll — reopen the calibrator any time">
+      <i data-lucide="ruler"></i> ${known ? 'Correct calibration' : 'Calibrate this roll'}
     </button>`);
+  }
+  const rollProfile = state.printer?.profile;
+  if (rollProfile && rollProfile.width_mm && rollProfile.height_mm) {
+    const headLimit = printheadWidthMm() || rollProfile.width_mm;
+    const effectiveWidth = Math.min(rollProfile.width_mm, headLimit);
+    if (Math.abs(effectiveWidth - spec.width_mm) > 0.6 || Math.abs(rollProfile.height_mm - spec.height_mm) > 0.6) {
+      chips.push(`<button type="button" class="meta-chip bad" id="meta-fit-roll"
+        title="The label is a different size than the roll stored in the calibrator — press to fit it">
+        <i data-lucide="maximize"></i> roll ${round2(rollProfile.width_mm)} × ${round2(rollProfile.height_mm)} mm · fit
+      </button>`);
+    }
   }
   if (geo.rows > 1) chips.push(`<span class="meta-chip">${geo.rows} regions × ${round2(spec.height_mm / geo.rows)} mm</span>`);
   if (geo.rows > 1) {
@@ -501,12 +512,26 @@ function renderStageMeta() {
   refreshIcons(meta);
   const sizeChip = $('#meta-roll-size', meta);
   if (sizeChip) sizeChip.onclick = () => openRollSizeDialog();
+  const calibrateChip = $('#meta-calibrate', meta);
+  if (calibrateChip) calibrateChip.onclick = () => openRollSizeDialog();
+  const fitChip = $('#meta-fit-roll', meta);
+  if (fitChip) {
+    fitChip.onclick = () => {
+      const target = state.printer?.profile;
+      if (!target) return;
+      applySize(target.width_mm, target.height_mm, { gap_mm: target.gap_mm ?? gapInfoMm() });
+      schedulePreview();
+      toast(`Label fitted to the roll: ${round2(state.spec.width_mm)} × ${round2(state.spec.height_mm)} mm`, 'ok');
+    };
+  }
 }
 
-/* A roll the printer/catalogue cannot describe: ask for the size once, remember it per roll code. */
-async function openRollSizeDialog(options = {}) {
+/* A roll the printer/catalogue cannot describe: size it, draw the printable cells once,
+   remember everything per roll code. */
+function openRollSizeDialog(options = {}) {
   const paper = state.printer?.paper || {};
   const rollName = paper.sku || paper.catalog?.name || paper.barcode || 'this roll';
+  const profile = state.printer?.profile || null;
   const presets = (state.options?.paper_presets || []).map((preset) => ({
     label: preset.name || `${round2(preset.width_mm)} × ${round2(preset.height_mm)} mm`,
     width: preset.width_mm,
@@ -514,54 +539,274 @@ async function openRollSizeDialog(options = {}) {
     rows: preset.rows || 1,
     type: preset.label_type,
   }));
+
+  let width = Number(profile?.width_mm) || Number(state.spec?.width_mm) || 40;
+  let height = Number(profile?.height_mm) || Number(state.spec?.height_mm) || 30;
+  let gap = Number(profile?.gap_mm ?? gapInfoMm()) || 0;
+  let rows = Math.max(1, Number(profile?.rows || paper.catalog?.rows) || 1);
+  let cols = Math.max(1, Number(profile?.cols || paper.catalog?.cols) || 1);
+  let cells = (profile?.regions || []).map((cell) => ({ ...cell }));
+  let selected = cells.length ? 0 : -1;
+
   const body = document.createElement('div');
-  body.className = 'print-dialog';
+  body.className = 'calibrator';
   body.innerHTML = `
-    <div class="hint">The B1 does not report the label size over Bluetooth, and
-      <code>${escapeHtml(rollName)}</code> is not in the NIIMBOT catalogue on this machine.
-      Enter it once — it is stored for this roll code and reused automatically.</div>
-    ${presets.length ? `<div class="field"><label for="roll-preset">Start from a common size</label>
-      <select id="roll-preset"><option value="">— pick or type your own —</option>
+    <div class="hint">The B1 cannot report the label size over Bluetooth and
+      <code>${escapeHtml(rollName)}</code> is not in the catalogue on this machine.
+      Set the size, then draw the areas that can hold content — they are remembered for this roll code.</div>
+    <div class="grid-2">
+      ${field('Width (mm)', numberInput('cal-width', round2(width), 0.5, 5, 108))}
+      ${field('Height (mm)', numberInput('cal-height', round2(height), 0.5, 5, 300))}
+    </div>
+    <div class="grid-3">
+      ${field('Rows', numberInput('cal-rows', rows, 1, 1, 8))}
+      ${field('Columns', numberInput('cal-cols', cols, 1, 1, 8))}
+      ${field('Gap (mm)', numberInput('cal-gap', round2(gap), 0.5, 0, 20))}
+    </div>
+    ${presets.length ? `<div class="field"><label for="cal-preset">Start from a common size</label>
+      <select id="cal-preset"><option value="">— pick or type your own —</option>
         ${presets.map((preset, index) => `<option value="${index}">${escapeHtml(preset.label)}${preset.rows > 1 ? ` · ${preset.rows} rows` : ''}</option>`).join('')}
       </select></div>` : ''}
-    <div class="grid-2">
-      ${field('Width (mm)', numberInput('roll-width', round2(state.spec.width_mm), 0.5, 5, 108))}
-      ${field('Height (mm)', numberInput('roll-height', round2(state.spec.height_mm), 0.5, 5, 300))}
+    <div class="cal-toolbar">
+      <button type="button" class="btn" data-cal="grid"><i data-lucide="grid-2x2"></i> Grid from rows × columns</button>
+      <button type="button" class="btn" data-cal="rect"><i data-lucide="square"></i> Add rectangle</button>
+      <button type="button" class="btn" data-cal="circle"><i data-lucide="circle"></i> Add circle</button>
+      <button type="button" class="btn" data-cal="delete"><i data-lucide="trash-2"></i> Delete</button>
     </div>
-    <div class="grid-2">
-      ${field('Rows on the roll', numberInput('roll-rows', paper.catalog?.rows || 1, 1, 1, 8))}
-      ${field('Gap (mm)', numberInput('roll-gap', round2(gapInfoMm()), 0.5, 0, 20))}
+    <div class="cal-stage-wrap">
+      <div class="cal-stage" id="cal-stage"><div class="cal-cells" id="cal-cells"></div></div>
     </div>
-    <div class="hint">Tip: open the NIIMBOT app once with this roll inserted and then press
-      <strong>Settings → Format catalogue → Import from the NIIMBOT app</strong> — the vendor app fetches the
-      exact format for the roll code and the import picks it up.</div>
+    <div class="cal-editor" id="cal-editor"></div>
+    <div class="cal-summary" id="cal-summary"></div>
   `;
+
   const footer = document.createElement('div');
   footer.className = 'row';
   footer.style.cssText = 'justify-content:flex-end;gap:8px';
   footer.innerHTML = `
-    <button class="btn" data-roll-cancel>Cancel</button>
-    <button class="btn primary" data-roll-save>Remember for this roll</button>`;
-  const modal = openModal({ id: 'roll-size', title: 'Label size for this roll', icon: 'ruler', width: 480, height: 420, body, footer });
-  fitModalToContent(modal, { min: 320, max: 520 });
+    <button class="btn" data-cal-cancel>Cancel</button>
+    <button class="btn primary" data-cal-save><i data-lucide="ruler"></i> Save for this roll</button>`;
 
-  const presetSelect = $('#roll-preset', body);
+  const modal = openModal({
+    id: 'roll-size',
+    title: 'Calibrate this roll',
+    icon: 'ruler',
+    width: 560,
+    height: 700,
+    body,
+    footer,
+  });
+  fitModalToContent(modal, { min: 420, max: 780 });
+
+  const stage = $('#cal-stage', body);
+  const cellsBox = $('#cal-cells', body);
+  const editor = $('#cal-editor', body);
+  const summary = $('#cal-summary', body);
+
+  const num = (name) => Math.max(0, Number($(`[data-key="cal-${name}"]`, body)?.value) || 0);
+  let lastFit = -1;
+
+  const readSize = () => {
+    width = Math.max(5, num('width'));
+    height = Math.max(5, num('height'));
+    rows = Math.max(1, Math.min(8, Math.round(num('rows')) || 1));
+    cols = Math.max(1, Math.min(8, Math.round(num('cols')) || 1));
+    gap = Math.max(0, num('gap'));
+  };
+
+  const draw = () => {
+    // Size the preview from the label proportions — a max-height alone would squash it.
+    const maxW = 280;
+    const maxH = 190;
+    const ratio = width / Math.max(0.1, height);
+    let stageW = maxW;
+    let stageH = Math.round(maxW / ratio);
+    if (stageH > maxH) {
+      stageH = maxH;
+      stageW = Math.round(maxH * ratio);
+    }
+    stage.style.width = `${Math.max(80, stageW)}px`;
+    stage.style.height = `${Math.max(40, stageH)}px`;
+    stage.style.aspectRatio = '';
+    cellsBox.innerHTML = cells.map((cell, index) => {
+      const tone = index === selected ? ' selected' : '';
+      const shape = cell.shape === 'circle' ? ' circle' : '';
+      return `<div class="cal-cell${tone}${shape}" data-cell="${index}"
+        style="left:${(cell.x / width) * 100}%;top:${(cell.y / height) * 100}%;
+               width:${(cell.w / width) * 100}%;height:${(cell.h / height) * 100}%">
+        <span>${index + 1}</span></div>`;
+    }).join('');
+
+    if (selected >= 0 && cells[selected]) {
+      const cell = cells[selected];
+      editor.innerHTML = `
+        <div class="cal-editor-head">Cell ${selected + 1} · ${cell.shape === 'circle' ? 'circle' : 'rectangle'}</div>
+        <div class="grid-4">
+          ${field('X (mm)', numberInput('cal-x', round2(cell.x), 0.5, 0, Math.max(0, width - 0.5)))}
+          ${field('Y (mm)', numberInput('cal-y', round2(cell.y), 0.5, 0, Math.max(0, height - 0.5)))}
+          ${field('Width (mm)', numberInput('cal-w', round2(cell.w), 0.5, 0.5, width))}
+          ${field('Height (mm)', numberInput('cal-h', round2(cell.h), 0.5, 0.5, height))}
+        </div>`;
+    } else {
+      editor.innerHTML = '<div class="hint">No cells yet — press <strong>Grid from rows × columns</strong> for a regular roll, '
+        + 'or add rectangles / circles and move them with the mouse.</div>';
+    }
+
+    const perCell = cells.length
+      ? `${round2(cells[0].w)} × ${round2(cells[0].h)} mm each`
+      : 'whole label usable';
+    const headLimit = printheadWidthMm();
+    const clipNote = headLimit && width > headLimit + 0.05
+      ? ` · prints up to ${round2(headLimit)} mm (printhead)`
+      : '';
+    summary.textContent = `${cells.length || 1} ${cells.length === 1 ? 'cell' : 'cells'} · ${perCell}${clipNote}`;
+
+    refreshIcons(body);
+    if (lastFit !== cells.length) {
+      lastFit = cells.length;
+      fitModalToContent(modal, { min: 420, max: 780 });
+    }
+  };
+
+  const selectCell = (index) => {
+    selected = index;
+    draw();
+  };
+
+  cellsBox.addEventListener('pointerdown', (event) => {
+    const node = event.target.closest('.cal-cell');
+    if (!node) return;
+    const index = Number(node.dataset.cell);
+    selectCell(index);
+    const startCell = { ...cells[index] };
+    const box = stage.getBoundingClientRect();
+    const startX = event.clientX;
+    const startY = event.clientY;
+    let moved = false;
+    const snap = (value) => Math.round(value * 2) / 2;
+    const onMove = (moveEvent) => {
+      const dx = ((moveEvent.clientX - startX) / box.width) * width;
+      const dy = ((moveEvent.clientY - startY) / box.height) * height;
+      if (Math.abs(dx) > 0.3 || Math.abs(dy) > 0.3) moved = true;
+      const cell = cells[index];
+      cell.x = Math.min(Math.max(0, snap(startCell.x + dx)), Math.max(0, width - cell.w));
+      cell.y = Math.min(Math.max(0, snap(startCell.y + dy)), Math.max(0, height - cell.h));
+      const node2 = $(`.cal-cell[data-cell="${index}"]`, cellsBox);
+      if (node2) {
+        node2.style.left = `${(cell.x / width) * 100}%`;
+        node2.style.top = `${(cell.y / height) * 100}%`;
+      }
+      if (index === selected) {
+        const xInput = $('[data-key="cal-x"]', body);
+        const yInput = $('[data-key="cal-y"]', body);
+        if (xInput) xInput.value = round2(cell.x);
+        if (yInput) yInput.value = round2(cell.y);
+      }
+    };
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      if (moved) draw();
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    event.preventDefault();
+  });
+
+  const addCell = (shape) => {
+    if (shape === 'circle') {
+      // A circle is a region with equal width and height in millimetres.
+      const side = Math.max(2, Math.round(Math.min(width, height) * 0.45 * 2) / 2);
+      cells.push({
+        shape,
+        x: round2((width - side) / 2),
+        y: round2((height - side) / 2),
+        w: Math.min(side, width),
+        h: Math.min(side, height),
+        label: '',
+      });
+      selectCell(cells.length - 1);
+      return;
+    }
+    const cellW = Math.max(2, Math.round((width / cols) * 2) / 2);
+    const cellH = Math.max(2, Math.round((height / rows) * 2) / 2);
+    cells.push({ shape, x: 0, y: 0, w: Math.min(cellW, width), h: Math.min(cellH, height), label: '' });
+    selectCell(cells.length - 1);
+  };
+
+  $$('[data-cal]', body).forEach((button) => {
+    button.onclick = () => {
+      readSize();
+      const action = button.dataset.cal;
+      if (action === 'grid') {
+        cells = [];
+        const cellW = width / cols;
+        const cellH = height / rows;
+        for (let row = 0; row < rows; row += 1) {
+          for (let col = 0; col < cols; col += 1) {
+            cells.push({
+              shape: 'rect',
+              x: round2(col * cellW),
+              y: round2(row * cellH),
+              w: round2(cellW),
+              h: round2(cellH),
+              label: rows * cols > 1 ? `R${row + 1}C${col + 1}` : '',
+            });
+          }
+        }
+        selectCell(cells.length ? 0 : -1);
+      } else if (action === 'rect' || action === 'circle') {
+        addCell(action);
+      } else if (action === 'delete') {
+        if (selected >= 0) cells.splice(selected, 1);
+        selectCell(cells.length ? Math.min(selected, cells.length - 1) : -1);
+      }
+    };
+  });
+
+  body.addEventListener('input', (event) => {
+    const key = event.target.dataset?.key;
+    if (!key) return;
+    if (['cal-width', 'cal-height', 'cal-rows', 'cal-cols', 'cal-gap'].includes(key)) {
+      readSize();
+      draw();
+      return;
+    }
+    const cell = cells[selected];
+    if (!cell) return;
+    if (key === 'cal-x') cell.x = Math.min(Math.max(0, Number(event.target.value) || 0), Math.max(0, width - cell.w));
+    if (key === 'cal-y') cell.y = Math.min(Math.max(0, Number(event.target.value) || 0), Math.max(0, height - cell.h));
+    if (key === 'cal-w') {
+      cell.w = Math.min(Math.max(0.5, Number(event.target.value) || 0.5), width - cell.x);
+      if (cell.shape === 'circle') cell.h = Math.min(cell.w, height - cell.y);
+    }
+    if (key === 'cal-h') {
+      cell.h = Math.min(Math.max(0.5, Number(event.target.value) || 0.5), height - cell.y);
+      if (cell.shape === 'circle') cell.w = Math.min(cell.h, width - cell.x);
+    }
+    draw();
+  });
+
+  const presetSelect = $('#cal-preset', body);
   if (presetSelect) {
     presetSelect.onchange = () => {
       const preset = presets[Number(presetSelect.value)];
       if (!preset) return;
-      $('[data-key="roll-width"]', body).value = preset.width;
-      $('[data-key="roll-height"]', body).value = preset.height;
-      if (preset.rows) $('[data-key="roll-rows"]', body).value = preset.rows;
+      $('[data-key="cal-width"]', body).value = preset.width;
+      $('[data-key="cal-height"]', body).value = preset.height;
+      $('[data-key="cal-rows"]', body).value = preset.rows || 1;
+      readSize();
+      cells = [];
+      selected = -1;
+      draw();
     };
   }
 
-  $('[data-roll-cancel]', footer).onclick = () => closeModal('roll-size');
-  $('[data-roll-save]', footer).onclick = async () => {
-    const width = Math.max(5, Number($('[data-key="roll-width"]', body).value) || 0);
-    const height = Math.max(5, Number($('[data-key="roll-height"]', body).value) || 0);
-    const rows = Math.max(1, Math.min(8, Number($('[data-key="roll-rows"]', body).value) || 1));
-    const gap = Math.max(0, Number($('[data-key="roll-gap"]', body).value) || 0);
+  draw();
+
+  $('[data-cal-cancel]', footer).onclick = () => closeModal('roll-size');
+  $('[data-cal-save]', footer).onclick = async () => {
+    readSize();
     closeModal('roll-size');
     try {
       const payload = await api('/api/roll-format', 'POST', {
@@ -570,9 +815,18 @@ async function openRollSizeDialog(options = {}) {
         width_mm: width,
         height_mm: height,
         rows,
+        cols,
         gap_mm: gap,
         label_type: paper.label_type ?? state.spec.label_type,
         capacity: paper.capacity ?? null,
+        regions: cells.map((cell, index) => ({
+          shape: cell.shape,
+          x: cell.x,
+          y: cell.y,
+          w: cell.w,
+          h: cell.h,
+          label: cell.label || `Cell ${index + 1}`,
+        })),
       });
       applyState(payload);
       applySize(width, height, { gap_mm: gap, label_type: paper.label_type ?? state.spec.label_type });
@@ -580,7 +834,8 @@ async function openRollSizeDialog(options = {}) {
         const catalog = await api('/api/catalog');
         state.catalog = catalog.catalog || [];
       } catch (_) { /* the list refreshes with the settings tab */ }
-      toast(`Roll ${rollName}: ${round2(width)} × ${round2(height)} mm remembered`, 'ok');
+      toast(`Roll ${rollName}: ${round2(width)} × ${round2(height)} mm, ${cells.length || 1} cell${cells.length === 1 ? '' : 's'} remembered`, 'ok');
+      renderPaperRegions();
       schedulePreview();
       if (isModalOpen('settings')) renderSettingsTab();
     } catch (error) {
@@ -632,6 +887,25 @@ function renderPaperRegions() {
     cut.style.left = `${(geo.headMm / spec.width_mm) * 100}%`;
     layer.appendChild(cut);
   }
+
+  // Cells drawn in the calibrator for this roll: show where content can go.
+  const cells = state.printer?.profile?.regions || [];
+  cells.forEach((cell, index) => {
+    const cellX = Math.max(0, Math.min(Number(cell.x || 0), spec.width_mm));
+    const cellY = Math.max(0, Math.min(Number(cell.y || 0), spec.height_mm));
+    const cellW = Math.min(Number(cell.w || 0), spec.width_mm - cellX);
+    const cellH = Math.min(Number(cell.h || 0), spec.height_mm - cellY);
+    if (cellW <= 0.5 || cellH <= 0.5) return;
+    const box = document.createElement('div');
+    box.className = `paper-cell${cell.shape === 'circle' ? ' circle' : ''}`;
+    box.style.left = `${(cellX / spec.width_mm) * 100}%`;
+    box.style.top = `${(cellY / spec.height_mm) * 100}%`;
+    box.style.width = `${(cellW / spec.width_mm) * 100}%`;
+    box.style.height = `${(cellH / spec.height_mm) * 100}%`;
+    box.innerHTML = `<b>${index + 1}</b>`;
+    box.title = `${cell.label || `Cell ${index + 1}`} — ${round2(cell.w)} × ${round2(cell.h)} mm`;
+    layer.appendChild(box);
+  });
 }
 
 /* ================================================================== overlay */
@@ -3687,15 +3961,16 @@ function applyState(payload) {
     if (!wasConnected) toast(`Roll detected: ${rollName}`, 'ok');
     const knownSize = Boolean(paper.catalog || Number(paper.detected_width_mm) > 0 || payload.profile);
     if (!knownSize && paper.barcode) {
-      // Ask once per roll code — the printer cannot measure it and the catalogue has no entry.
-      let asked = {};
-      try { asked = JSON.parse(localStorage.getItem('niibot.askedRolls') || '{}'); } catch (_) { asked = {}; }
-      if (!asked[paper.barcode]) {
-        asked[paper.barcode] = Date.now();
-        try { localStorage.setItem('niibot.askedRolls', JSON.stringify(asked)); } catch (_) { /* ignore */ }
-        toast(`Roll ${paper.barcode}: the printer cannot report its size — set it once.`, 'error');
-        setTimeout(() => { if (state.connected) openRollSizeDialog(); }, 400);
+      // An unrecognised roll always starts the calibrator — once per insertion, not per poll.
+      if (state.promptedRoll !== paper.barcode) {
+        state.promptedRoll = paper.barcode;
+        toast(`Roll ${paper.barcode}: unknown format — calibrate it once.`, 'error');
+        setTimeout(() => {
+          if (state.connected && !isModalOpen('roll-size')) openRollSizeDialog();
+        }, 400);
       }
+    } else if (knownSize) {
+      state.promptedRoll = null;
     }
     applyKnownFormat(paper);
     renderStatusBar();
