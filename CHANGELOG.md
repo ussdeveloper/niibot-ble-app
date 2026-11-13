@@ -4,6 +4,14 @@ All notable changes to **Niibot Studio** are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project uses [Semantic Versioning](https://semver.org/).
 
+## [0.12.9] — 2026-11-13
+
+### Fixed
+- **Calibrator handles keep their size**: the resize helpers live inside the zoomed canvas, so at 400 % they
+  used to grow to 40 px. They are now counter-scaled and stay 10 px at every zoom level.
+- **Image zoom no longer shows 0** for icons and freshly inserted pictures: the field falls back to 1.0
+  instead of an empty value, so touching it cannot collapse the image to 5 %.
+
 ## [0.12.8] — 2026-11-13
 
 ### Added

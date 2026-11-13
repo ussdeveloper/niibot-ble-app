@@ -1270,6 +1270,7 @@ button.btn.wide { width: 100%; }
 .cal-handle {
   position: absolute; width: 10px; height: 10px; margin: -5px 0 0 -5px;
   background: #fff; border: 2px solid var(--violet-deep); border-radius: 2px; z-index: 2;
+  transform: scale(var(--inv-zoom, 1)); transform-origin: center;
 }
 .cal-handle.nw { left: 0; top: 0; cursor: nwse-resize; }
 .cal-handle.n { left: 50%; top: 0; cursor: ns-resize; }

@@ -717,6 +717,8 @@ function openRollSizeDialog(options = {}) {
 
   const applyView = () => {
     stage.style.transform = `translate(${Math.round(panX)}px, ${Math.round(panY)}px) scale(${zoom})`;
+    // Keep the handles a constant size on screen: they live inside the scaled stage.
+    stage.style.setProperty('--inv-zoom', String(1 / zoom));
     if (zoomLabel) zoomLabel.textContent = `${Math.round(zoom * 100)}%`;
   };
 
@@ -2050,7 +2052,7 @@ function buildInspector() {
         ['contain', 'Contain — whole picture'],
         ['stretch', 'Stretch — squash to the box'],
       ])));
-      parts.push(field('Zoom', numberInput('image_zoom', element.image_zoom, 1.0, 0.1, 8, 0.05)));
+      parts.push(field('Zoom', numberInput('image_zoom', element.image_zoom ?? 1, 1.0, 0.1, 8, 0.05)));
       parts.push(`<div class="grid-2">
         ${field('Crop X (mm)', numberInput('image_offset_x', element.image_offset_x, 0, -200, 200, 0.1))}
         ${field('Crop Y (mm)', numberInput('image_offset_y', element.image_offset_y, 0, -200, 200, 0.1))}
