@@ -486,9 +486,12 @@ function renderStageMeta() {
   }
   const rollProfile = state.printer?.profile;
   if (rollProfile && rollProfile.width_mm && rollProfile.height_mm) {
-    const headLimit = printheadWidthMm() || rollProfile.width_mm;
-    const effectiveWidth = Math.min(rollProfile.width_mm, headLimit);
-    if (Math.abs(effectiveWidth - spec.width_mm) > 0.6 || Math.abs(rollProfile.height_mm - spec.height_mm) > 0.6) {
+    const headLimit = printheadWidthMm() || Math.max(rollProfile.width_mm, rollProfile.height_mm);
+    const rollA = { w: Math.min(rollProfile.width_mm, headLimit), h: rollProfile.height_mm };
+    const closeTo = (a, b) => Math.abs(a - b) <= 0.6;
+    const same = (closeTo(spec.width_mm, rollA.w) && closeTo(spec.height_mm, rollA.h))
+      || (closeTo(spec.width_mm, rollA.h) && closeTo(spec.height_mm, rollA.w));
+    if (!same) {
       chips.push(`<button type="button" class="meta-chip bad" id="meta-fit-roll"
         title="The label is a different size than the roll stored in the calibrator — press to fit it">
         <i data-lucide="maximize"></i> roll ${round2(rollProfile.width_mm)} × ${round2(rollProfile.height_mm)} mm · fit
@@ -504,6 +507,10 @@ function renderStageMeta() {
     </button>`);
   }
   if (geo.gapMm > 0 && hasGapPaper()) chips.push(`<span class="meta-chip">gap ${round2(geo.gapMm)} mm</span>`);
+  chips.push(`<button type="button" class="meta-chip" id="meta-orient"
+    title="Change the orientation — turn the design with the label or just swap the canvas">
+    <i data-lucide="rotate-cw"></i> Orientation
+  </button>`);
   if (geo.headMm) {
     const fits = spec.width_mm <= geo.headMm + 0.05;
     chips.push(`<span class="meta-chip ${fits ? 'ok' : 'bad'}">head ${geo.headMm.toFixed(1)} mm ${fits ? '✓ printable' : '— clipped'}</span>`);
@@ -514,6 +521,8 @@ function renderStageMeta() {
   if (sizeChip) sizeChip.onclick = () => openRollSizeDialog();
   const calibrateChip = $('#meta-calibrate', meta);
   if (calibrateChip) calibrateChip.onclick = () => openRollSizeDialog();
+  const orientChip = $('#meta-orient', meta);
+  if (orientChip) orientChip.onclick = () => openOrientationDialog();
   const fitChip = $('#meta-fit-roll', meta);
   if (fitChip) {
     fitChip.onclick = () => {
@@ -3908,6 +3917,8 @@ const MENUS = {
       { icon: 'magnet', label: 'Snap to grid', key: 'S', checked: () => state.snapToGrid, run: () => toggleSnap() },
       { icon: 'crop', label: 'Print regions', checked: () => state.showRegions, run: () => toggleRegions() },
       { sep: true },
+      { icon: 'rotate-cw', label: 'Orientation…', run: () => openOrientationDialog() },
+      { sep: true },
       { icon: 'scan-line', label: 'Detect roll format', run: () => detectSize(), disabled: () => !state.connected },
       { icon: 'refresh-cw', label: 'Refresh printer state', run: () => refreshPrinter(), disabled: () => !state.connected },
     ],
@@ -4346,6 +4357,77 @@ function openPrintDialog({ fromSheet = false } = {}) {
 
 function printLabel() {
   openPrintDialog({ fromSheet: false });
+}
+
+/* Change the label orientation: turn the whole design 90° with the label, or just swap the canvas. */
+function setOrientation(mode) {
+  const spec = state.spec;
+  if (!spec) return;
+  const w = Number(spec.width_mm) || 0;
+  const h = Number(spec.height_mm) || 0;
+  if (!w || !h) return;
+  const rotate = mode === 'cw' || mode === 'ccw';
+  if (rotate) {
+    for (const element of spec.elements) {
+      const x = element.x;
+      const y = element.y;
+      const ew = element.w;
+      const eh = element.h;
+      if (mode === 'cw') {
+        element.x = round2(h - y - eh);
+        element.y = round2(x);
+      } else {
+        element.x = round2(y);
+        element.y = round2(w - x - ew);
+      }
+      element.w = eh;
+      element.h = ew;
+      element.rotation = ((Number(element.rotation) || 0) + (mode === 'cw' ? 90 : 270)) % 360;
+    }
+  }
+  spec.width_mm = h;
+  spec.height_mm = w;
+  clampElements();
+  syncSpec();
+  layoutStage();
+  pushHistory();
+  schedulePreview();
+  toast(`Label is now ${round2(h)} × ${round2(w)} mm${rotate ? ' — the design turned with it' : ''}`, 'ok');
+}
+
+function openOrientationDialog() {
+  const spec = state.spec;
+  if (!spec) return;
+  const body = document.createElement('div');
+  body.className = 'print-dialog';
+  body.innerHTML = `
+    <div class="hint">Now: <b>${round2(spec.width_mm)} × ${round2(spec.height_mm)} mm</b>.
+      Turning the label makes it <b>${round2(spec.height_mm)} × ${round2(spec.width_mm)} mm</b>.</div>
+    <button type="button" class="btn wide" data-orient="cw"><i data-lucide="rotate-cw"></i> Rotate design 90° right</button>
+    <button type="button" class="btn wide" data-orient="ccw"><i data-lucide="rotate-ccw"></i> Rotate design 90° left</button>
+    <button type="button" class="btn wide" data-orient="swap"><i data-lucide="rectangle-horizontal"></i> Swap the label only (keep the design)</button>
+  `;
+  const footer = document.createElement('div');
+  footer.className = 'row';
+  footer.style.cssText = 'justify-content:flex-end;gap:8px';
+  footer.innerHTML = '<button class="btn" data-orient-cancel>Cancel</button>';
+  const modal = openModal({
+    id: 'orientation',
+    title: 'Label orientation',
+    icon: 'rotate-cw',
+    width: 430,
+    height: 300,
+    body,
+    footer,
+  });
+  fitModalToContent(modal, { min: 220, max: 420 });
+  $('[data-orient-cancel]', footer).onclick = () => closeModal('orientation');
+  $$('[data-orient]', body).forEach((button) => {
+    button.onclick = () => {
+      closeModal('orientation');
+      setOrientation(button.dataset.orient);
+    };
+  });
 }
 
 async function testPrint() {

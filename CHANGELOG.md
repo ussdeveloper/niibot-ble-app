@@ -4,6 +4,18 @@ All notable changes to **Niibot Studio** are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project uses [Semantic Versioning](https://semver.org/).
 
+## [0.12.5] — 2026-11-13
+
+### Added
+- **Label orientation in the main editor**: the *Orientation* chip next to the roll data (and
+  `View → Orientation…`) turns the label between landscape and portrait — either
+  *Rotate design 90° right / left* (elements travel with the label and their own rotation follows)
+  or *Swap the label only* (just exchange width and height and keep the layout). Everything goes through
+  the normal undo history.
+
+### Fixed
+- The roll × label mismatch chip no longer appears when the label is simply the roll turned by 90°.
+
 ## [0.12.4] — 2026-11-13
 
 ### Added
