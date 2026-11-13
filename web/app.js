@@ -567,10 +567,14 @@ function openRollSizeDialog(options = {}) {
       <select id="cal-preset"><option value="">— pick or type your own —</option>
         ${presets.map((preset, index) => `<option value="${index}">${escapeHtml(preset.label)}${preset.rows > 1 ? ` · ${preset.rows} rows` : ''}</option>`).join('')}
       </select></div>` : ''}
+    <div class="cal-tools" role="group" aria-label="Drawing tool">
+      <button type="button" class="cal-tool on" data-tool="select"><i data-lucide="mouse-pointer-2"></i> Select</button>
+      <button type="button" class="cal-tool" data-tool="rect"><i data-lucide="square"></i> Draw rectangle</button>
+      <button type="button" class="cal-tool" data-tool="circle"><i data-lucide="circle"></i> Draw circle</button>
+      <button type="button" class="cal-tool" data-tool="line"><i data-lucide="minus"></i> Draw line</button>
+    </div>
     <div class="cal-toolbar">
       <button type="button" class="btn" data-cal="grid"><i data-lucide="grid-2x2"></i> Grid from rows × columns</button>
-      <button type="button" class="btn" data-cal="rect"><i data-lucide="square"></i> Add rectangle</button>
-      <button type="button" class="btn" data-cal="circle"><i data-lucide="circle"></i> Add circle</button>
       <button type="button" class="btn" data-cal="delete"><i data-lucide="trash-2"></i> Delete</button>
     </div>
     <div class="cal-stage-wrap">
@@ -602,6 +606,8 @@ function openRollSizeDialog(options = {}) {
   const cellsBox = $('#cal-cells', body);
   const editor = $('#cal-editor', body);
   const summary = $('#cal-summary', body);
+  const toolHint = $('.cal-hint-tool', body);
+  let tool = 'select';
 
   const num = (name) => Math.max(0, Number($(`[data-key="cal-${name}"]`, body)?.value) || 0);
   let lastFit = -1;
@@ -630,7 +636,7 @@ function openRollSizeDialog(options = {}) {
     stage.style.aspectRatio = '';
     cellsBox.innerHTML = cells.map((cell, index) => {
       const tone = index === selected ? ' selected' : '';
-      const shape = cell.shape === 'circle' ? ' circle' : '';
+      const shape = cell.shape === 'circle' ? ' circle' : cell.shape === 'line' ? ' line' : '';
       return `<div class="cal-cell${tone}${shape}" data-cell="${index}"
         style="left:${(cell.x / width) * 100}%;top:${(cell.y / height) * 100}%;
                width:${(cell.w / width) * 100}%;height:${(cell.h / height) * 100}%">
@@ -639,8 +645,9 @@ function openRollSizeDialog(options = {}) {
 
     if (selected >= 0 && cells[selected]) {
       const cell = cells[selected];
+      const shapeName = cell.shape === 'circle' ? 'circle' : cell.shape === 'line' ? 'line' : 'rectangle';
       editor.innerHTML = `
-        <div class="cal-editor-head">Cell ${selected + 1} · ${cell.shape === 'circle' ? 'circle' : 'rectangle'}</div>
+        <div class="cal-editor-head">Cell ${selected + 1} · ${shapeName}</div>
         <div class="grid-4">
           ${field('X (mm)', numberInput('cal-x', round2(cell.x), 0.5, 0, Math.max(0, width - 0.5)))}
           ${field('Y (mm)', numberInput('cal-y', round2(cell.y), 0.5, 0, Math.max(0, height - 0.5)))}
@@ -649,7 +656,7 @@ function openRollSizeDialog(options = {}) {
         </div>`;
     } else {
       editor.innerHTML = '<div class="hint">No cells yet — press <strong>Grid from rows × columns</strong> for a regular roll, '
-        + 'or add rectangles / circles and move them with the mouse.</div>';
+        + 'or pick <strong>Draw rectangle / circle / line</strong> and drag on the label.</div>';
     }
 
     const perCell = cells.length
@@ -672,6 +679,99 @@ function openRollSizeDialog(options = {}) {
     selected = index;
     draw();
   };
+
+  const setTool = (next) => {
+    tool = next;
+    $$('.cal-tool', body).forEach((button) => {
+      const on = button.dataset.tool === tool;
+      button.classList.toggle('on', on);
+      button.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+    stage.classList.toggle('drawing', tool !== 'select');
+    stage.dataset.tool = tool;
+  };
+
+  $$('.cal-tool', body).forEach((button) => {
+    button.onclick = () => setTool(button.dataset.tool);
+  });
+
+  /* Drag on empty label space to draw the active shape; a plain click places it at its default size. */
+  stage.addEventListener('pointerdown', (event) => {
+    if (tool === 'select') return;
+    if (event.target.closest('.cal-cell')) return;
+    const box = stage.getBoundingClientRect();
+    const toMm = (clientX, clientY) => ({
+      x: Math.min(width, Math.max(0, ((clientX - box.left) / box.width) * width)),
+      y: Math.min(height, Math.max(0, ((clientY - box.top) / box.height) * height)),
+    });
+    const start = toMm(event.clientX, event.clientY);
+    const draft = document.createElement('div');
+    draft.className = `cal-cell drafting${tool === 'circle' ? ' circle' : ''}${tool === 'line' ? ' line' : ''}`;
+    cellsBox.appendChild(draft);
+
+    const paint = (from, to) => {
+      const x = Math.min(from.x, to.x);
+      const y = Math.min(from.y, to.y);
+      const w = Math.abs(to.x - from.x);
+      const h = Math.abs(to.y - from.y);
+      draft.style.left = `${(x / width) * 100}%`;
+      draft.style.top = `${(y / height) * 100}%`;
+      draft.style.width = `${(w / width) * 100}%`;
+      draft.style.height = `${(h / height) * 100}%`;
+    };
+    paint(start, start);
+
+    const onMove = (moveEvent) => paint(start, toMm(moveEvent.clientX, moveEvent.clientY));
+    const onUp = (upEvent) => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      draft.remove();
+      const end = toMm(upEvent.clientX, upEvent.clientY);
+      let x = Math.min(start.x, end.x);
+      let y = Math.min(start.y, end.y);
+      let w = Math.abs(end.x - start.x);
+      let h = Math.abs(end.y - start.y);
+
+      if (w < 1.5 && h < 1.5) {
+        // A click, not a drag: drop the shape at its default size where the user clicked.
+        w = Math.max(2, width / cols);
+        h = Math.max(2, height / rows);
+        x = Math.min(x, Math.max(0, width - w));
+        y = Math.min(y, Math.max(0, height - h));
+      }
+      if (tool === 'circle') {
+        const side = Math.max(1, Math.min(w, h));
+        x += (w - side) / 2;
+        y += (h - side) / 2;
+        w = side;
+        h = side;
+      }
+      if (tool === 'line') {
+        if (w >= h) {
+          const mid = y + h / 2;
+          h = 0.8;
+          y = Math.max(0, mid - h / 2);
+        } else {
+          const mid = x + w / 2;
+          w = 0.8;
+          x = Math.max(0, mid - w / 2);
+        }
+      }
+      cells.push({
+        shape: tool,
+        x: round2(Math.min(Math.max(0, x), Math.max(0, width - w))),
+        y: round2(Math.min(Math.max(0, y), Math.max(0, height - h))),
+        w: round2(Math.min(w, width)),
+        h: round2(Math.min(h, height)),
+        label: '',
+      });
+      selectCell(cells.length - 1);
+      if (tool !== 'select') setTool(tool);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    event.preventDefault();
+  });
 
   cellsBox.addEventListener('pointerdown', (event) => {
     const node = event.target.closest('.cal-cell');
@@ -755,8 +855,6 @@ function openRollSizeDialog(options = {}) {
           }
         }
         selectCell(cells.length ? 0 : -1);
-      } else if (action === 'rect' || action === 'circle') {
-        addCell(action);
       } else if (action === 'delete') {
         if (selected >= 0) cells.splice(selected, 1);
         selectCell(cells.length ? Math.min(selected, cells.length - 1) : -1);
@@ -895,9 +993,10 @@ function renderPaperRegions() {
     const cellY = Math.max(0, Math.min(Number(cell.y || 0), spec.height_mm));
     const cellW = Math.min(Number(cell.w || 0), spec.width_mm - cellX);
     const cellH = Math.min(Number(cell.h || 0), spec.height_mm - cellY);
-    if (cellW <= 0.5 || cellH <= 0.5) return;
+    if (cellW <= 0.2 || cellH <= 0.2) return;
+    const shapeClass = cell.shape === 'circle' ? ' circle' : cell.shape === 'line' ? ' line' : '';
     const box = document.createElement('div');
-    box.className = `paper-cell${cell.shape === 'circle' ? ' circle' : ''}`;
+    box.className = `paper-cell${shapeClass}`;
     box.style.left = `${(cellX / spec.width_mm) * 100}%`;
     box.style.top = `${(cellY / spec.height_mm) * 100}%`;
     box.style.width = `${(cellW / spec.width_mm) * 100}%`;

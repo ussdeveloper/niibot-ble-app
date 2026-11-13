@@ -4,6 +4,15 @@ All notable changes to **Niibot Studio** are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project uses [Semantic Versioning](https://semver.org/).
 
+## [0.12.1] — 2026-11-13
+
+### Added
+- **Draw the cells with the mouse**: the calibrator has a tool row — *Select*, *Draw rectangle*,
+  *Draw circle*, *Draw line*. Pick a tool and drag on the label to draw the printable area exactly
+  where it sits (a circle is snapped to a round box, a line to a thin rule). A plain click drops the
+  shape at its default size, and the tool stays active so several cells can be drawn in a row.
+- Cells can be lines as well (`shape: "line"`), drawn over the label and honoured by the API.
+
 ## [0.12.0] — 2026-11-13
 
 ### Added

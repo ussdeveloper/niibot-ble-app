@@ -1186,6 +1186,16 @@ button.btn.wide { width: 100%; }
 /* ---------------------------------------------------------- roll calibrator */
 .calibrator { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .calibrator .hint { font-size: 11.5px; line-height: 1.45; color: var(--ink-muted); }
+.cal-tools { display: flex; flex-wrap: wrap; gap: 6px; }
+.cal-tool {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 5px 10px; font-size: 11px; font-weight: 600;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--glass-hi); color: var(--ink-muted);
+}
+.cal-tool svg { width: 13px; height: 13px; }
+.cal-tool:hover { border-color: var(--teal-deep); color: var(--ink); }
+.cal-tool.on { background: var(--teal-deep); border-color: var(--teal-deep); color: #fff; }
+#cal-stage.drawing { cursor: crosshair; }
 .cal-toolbar { display: flex; flex-wrap: wrap; gap: 6px; }
 .cal-toolbar .btn { padding: 5px 9px; font-size: 11px; }
 .cal-stage-wrap { display: flex; justify-content: center; padding: 6px; background: rgba(0, 26, 77, 0.04); border-radius: 10px; }
@@ -1203,6 +1213,8 @@ button.btn.wide { width: 100%; }
 .cal-cell span { font-size: 10px; font-weight: 700; color: var(--teal-deep); }
 .cal-cell.selected { border-style: solid; border-color: var(--violet-deep); background: rgba(139, 92, 246, 0.16); }
 .cal-cell.selected span { color: var(--violet-deep); }
+.cal-cell.line { border-style: dotted; background: rgba(139, 92, 246, 0.2); border-radius: 0; }
+.cal-cell.drafting { border-style: solid; border-color: var(--navy); background: rgba(0, 26, 77, 0.12); pointer-events: none; }
 .cal-editor { display: flex; flex-direction: column; gap: 7px; }
 .cal-editor-head { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--ink-muted); }
 .cal-summary { font-size: 11.5px; color: var(--ink-muted); }
@@ -1213,6 +1225,7 @@ button.btn.wide { width: 100%; }
   border-radius: 3px; background: rgba(0, 194, 194, 0.06);
 }
 .paper-cell.circle { border-radius: 50%; }
+.paper-cell.line { border-style: dotted; background: rgba(139, 92, 246, 0.14); border-color: rgba(139, 92, 246, 0.85); border-radius: 0; }
 .paper-cell b {
   position: absolute; top: -1px; left: 2px; font-size: 9px; font-weight: 700;
   color: var(--teal-deep); background: rgba(255, 255, 255, 0.75); padding: 0 2px; border-radius: 2px;

@@ -739,7 +739,7 @@ async def api_stats(recent: int = 10) -> dict:
 async def api_roll_format(request: RollFormatRequest) -> dict:
     """Store the size (and the drawn cells) of a roll the printer cannot measure."""
     regions = [
-        Region(shape=item.shape if item.shape in ("rect", "circle") else "rect",
+        Region(shape=item.shape if item.shape in ("rect", "circle", "line") else "rect",
                x=item.x, y=item.y, w=item.w, h=item.h, label=item.label)
         for item in request.regions
     ]
@@ -784,7 +784,7 @@ async def api_roll_format(request: RollFormatRequest) -> dict:
 @app.post("/api/profiles")
 async def api_profile_save(request: ProfileRequest) -> dict:
     regions = [
-        Region(shape=item.shape if item.shape in ("rect", "circle") else "rect",
+        Region(shape=item.shape if item.shape in ("rect", "circle", "line") else "rect",
                x=item.x, y=item.y, w=item.w, h=item.h, label=item.label)
         for item in request.regions
     ]
