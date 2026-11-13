@@ -4,6 +4,19 @@ All notable changes to **Niibot Studio** are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project uses [Semantic Versioning](https://semver.org/).
 
+## [0.9.1] — 2026-11-13
+
+### Changed
+- **Text is rasterised 4× larger and averaged down before the 1-bit threshold**, so curves and
+  stems survive the 203 dpi grid instead of stair-stepping (barcode modules stay pixel-identical).
+- **The stage preview is a native 3× grayscale render** (`/api/preview` returns `png` for the
+  screen and `png_print` for the exact print bitmap), so the designer shows smooth glyphs instead
+  of a pixellated 1-bit upscale. PNG export still saves the print bitmap, and thumbnails are
+  downscaled with LANCZOS.
+
+Note: the B1 printhead is 203 dpi with 384 dots — 40 mm of label is 320 dots. That is the
+hardware ceiling; the changes above get the most legible glyphs out of it.
+
 ## [0.9.0] — 2026-11-13
 
 ### Added

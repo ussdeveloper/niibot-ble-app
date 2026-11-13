@@ -549,7 +549,7 @@ async def api_spec_preview(request: SpecPreviewRequest) -> dict:
     limit = max(80, min(720, request.max_width))
     if image.width > limit:
         ratio = limit / image.width
-        image = image.resize((limit, max(1, int(image.height * ratio))), Image.NEAREST)
+        image = image.resize((limit, max(1, int(image.height * ratio))), Image.LANCZOS)
     buffer = io.BytesIO()
     image.save(buffer, format="PNG")
     return {"png": base64.b64encode(buffer.getvalue()).decode("ascii"), "width_px": image.width, "height_px": image.height}

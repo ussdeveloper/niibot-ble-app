@@ -331,17 +331,19 @@ def _draw_text(
     else:
         y = (height - total_height) / 2
 
-    draw = ImageDraw.Draw(layer)
-    for line in lines:
-        line_width = draw.textlength(line, font=font)
-        if element.align == "center":
-            x = (width - line_width) / 2
-        elif element.align == "right":
-            x = width - line_width
-        else:
-            x = 0
-        draw.text((x, y), line, font=font, fill=(0, 0, 0, 255), anchor="la")
-        y += line_height
+    size_px = round(size_pt * dpi / 72)
+    block = _text_block(
+        (width, height),
+        lines,
+        element.font,
+        size_px,
+        bold=element.bold,
+        italic=element.italic,
+        line_height=line_height,
+        start_y=y,
+        align=element.align,
+    )
+    layer.alpha_composite(block)
 
 
 def _barcode_pattern(fmt: str, data: str) -> tuple[str, str]:
@@ -415,16 +417,60 @@ def _draw_barcode(layer: Image.Image, element: Element, dpi: int, warnings: list
             start = None
 
     if element.show_text and font is not None:
-        draw.text(
-            (width / 2, usable),
-            human,
-            font=font,
-            fill=(0, 0, 0, 255),
-            anchor="ma",
+        text_px = max(8, round(height * 0.18))
+        block = _text_block(
+            (width, height),
+            [human],
+            element.font,
+            text_px,
+            bold=element.bold,
+            italic=element.italic,
+            line_height=text_height,
+            start_y=usable,
+            align="center",
         )
+        layer.alpha_composite(block)
 
 
 _EC_LEVELS = {"L": ERROR_CORRECT_L, "M": ERROR_CORRECT_M, "Q": ERROR_CORRECT_Q, "H": ERROR_CORRECT_H}
+
+
+# Glyphs are rasterised this many times larger and averaged down before the 1-bit threshold.
+# At 203 dpi (8 dots/mm) a straight 1:1 raster loses thin strokes and stair-steps curves;
+# the supersampled block keeps the letterforms readable on the finished label.
+TEXT_SUPERSAMPLE = 4
+
+
+def _text_block(
+    size: tuple[int, int],
+    lines: list[str],
+    family: str,
+    size_px: int,
+    *,
+    bold: bool = False,
+    italic: bool = False,
+    line_height: int = 0,
+    start_y: float = 0.0,
+    align: str = "left",
+) -> Image.Image:
+    """Draw text lines into a transparent block, supersampled and averaged back down."""
+    width, height = max(1, size[0]), max(1, size[1])
+    scale = TEXT_SUPERSAMPLE
+    block = Image.new("RGBA", (width * scale, height * scale), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(block)
+    font = load_font(family, max(1, int(round(size_px * scale))), bold, italic)
+    y = start_y
+    for line in lines:
+        line_width = draw.textlength(line, font=font)
+        if align == "center":
+            x = (width * scale - line_width) / 2
+        elif align == "right":
+            x = width * scale - line_width
+        else:
+            x = 0.0
+        draw.text((x, y * scale), line, font=font, fill=(0, 0, 0, 255), anchor="la")
+        y += line_height
+    return block.resize((width, height), Image.LANCZOS)
 
 
 def _draw_qr(layer: Image.Image, element: Element, warnings: list[str]) -> None:
@@ -553,12 +599,13 @@ def _draw_element(
 
 
 # ----------------------------------------------------------------------- API
-def render_label(
+def _render_canvas(
     spec: LabelSpec,
-    dpi: int = 203,
-    printhead_px: int = 384,
+    dpi: int,
+    printhead_px: int,
     image_loader: Callable[[str], Path | None] | None = None,
-) -> RenderedLabel:
+) -> tuple[Image.Image, list[str], int, int, int]:
+    """Draw every element onto an RGBA canvas; returns canvas, warnings and geometry."""
     warnings: list[str] = []
     source_width = max(1, mm_to_px(spec.width_mm, dpi))
     height = max(1, mm_to_px(spec.height_mm, dpi))
@@ -574,7 +621,16 @@ def render_label(
         if element.visible is False:
             continue
         _draw_element(canvas, element, dpi, warnings, image_loader)
+    return canvas, warnings, source_width, width, height
 
+
+def render_label(
+    spec: LabelSpec,
+    dpi: int = 203,
+    printhead_px: int = 384,
+    image_loader: Callable[[str], Path | None] | None = None,
+) -> RenderedLabel:
+    canvas, warnings, source_width, width, height = _render_canvas(spec, dpi, printhead_px, image_loader)
     gray = canvas.convert("L")
     if width != source_width:
         gray = gray.crop((0, 0, width, height))
@@ -587,22 +643,37 @@ def preview_payload(
     dpi: int = 203,
     printhead_px: int = 384,
     image_loader: Callable[[str], Path | None] | None = None,
+    scale: int = 3,
 ) -> dict:
+    """Screen preview plus the exact 1-bit print bitmap.
+
+    The preview is rendered natively at ``scale`` × the print resolution and left in
+    greyscale, so the browser can show smooth glyphs instead of the stair-stepped 1-bit
+    bitmap blown up 2-3 times.
+    """
     rendered = render_label(spec, dpi, printhead_px, image_loader)
-    scale = 2
-    preview = rendered.image.convert("L").resize(
-        (rendered.width_px * scale, rendered.height_px * scale), Image.NEAREST
+    canvas, warnings, source_width, width, height = _render_canvas(
+        spec, dpi * scale, printhead_px * scale, image_loader
     )
+    if width != source_width:
+        canvas = canvas.crop((0, 0, width, height))
+    preview = canvas.convert("L")
     buffer = io.BytesIO()
     preview.save(buffer, format="PNG")
-    return {
+    print_buffer = io.BytesIO()
+    rendered.image.save(print_buffer, format="PNG")
+    payload = {
         "png": base64.b64encode(buffer.getvalue()).decode("ascii"),
+        "png_print": base64.b64encode(print_buffer.getvalue()).decode("ascii"),
         "width_px": rendered.width_px,
         "height_px": rendered.height_px,
+        "display_scale": scale,
+        "print_cols": rendered.cols,
         "cols": rendered.cols,
         "rows": rendered.height_px,
         "dpi": dpi,
         "printed_width_mm": round(rendered.width_px * MM_PER_INCH / dpi, 1),
         "printed_height_mm": round(rendered.height_px * MM_PER_INCH / dpi, 1),
-        "warnings": rendered.warnings,
+        "warnings": warnings or rendered.warnings,
     }
+    return payload

@@ -323,7 +323,7 @@ svg.lucide { width: 16px; height: 16px; stroke-width: 1.7; }
   touch-action: none;
   outline: 1px solid rgba(0, 26, 77, 0.08);
 }
-.stage img { display: block; width: 100%; height: 100%; image-rendering: pixelated; border-radius: 3px; }
+.stage img { display: block; width: 100%; height: 100%; border-radius: 3px; }
 .stage.dragover { outline: 2px dashed var(--teal); outline-offset: 4px; }
 
 /* siatka i linie pomocnicze (subtelne) */
@@ -353,7 +353,6 @@ svg.lucide { width: 16px; height: 16px; stroke-width: 1.7; }
   position: absolute;
   pointer-events: none;
   z-index: 5;
-  image-rendering: pixelated;
   filter: drop-shadow(0 8px 16px rgba(0, 26, 77, 0.22));
   outline: 1px solid rgba(0, 194, 194, 0.55);
   border-radius: 1px;
@@ -815,7 +814,7 @@ button.sb-item:hover { background: rgba(0, 194, 194, 0.12); color: var(--teal-de
   display: flex; align-items: center; justify-content: center;
   overflow: hidden;
 }
-.tpl-thumb img { max-width: 100%; max-height: 100%; image-rendering: pixelated; }
+.tpl-thumb img { max-width: 100%; max-height: 100%; }
 .tpl-thumb svg { width: 20px; height: 20px; color: var(--ink-muted); }
 .tpl-name { font-size: 12px; font-weight: 600; color: var(--navy); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tpl-meta { display: flex; align-items: center; gap: 6px; font-size: 10.5px; color: var(--ink-muted); flex-wrap: wrap; }

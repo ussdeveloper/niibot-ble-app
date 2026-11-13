@@ -3252,7 +3252,8 @@ async function detectSize() {
 function exportPng() {
   if (!state.preview) return;
   const link = document.createElement('a');
-  link.href = `data:image/png;base64,${state.preview.png}`;
+  // Export exactly what the printer gets (1-bit at print resolution), not the smooth screen render.
+  link.href = `data:image/png;base64,${state.preview.png_print || state.preview.png}`;
   link.download = `${(state.spec.name || 'label').replace(/\s+/g, '-')}.png`;
   link.click();
 }
