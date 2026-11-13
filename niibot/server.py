@@ -1,4 +1,4 @@
-"""Local web application: printer control + label designer."""
+﻿"""Local web application: printer control + label designer."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import ipp as ipp_mod
-from . import sheet, store
+from . import sheet, spreadsheet, store
 from .bitmap import encode_image
 from .ble import BleLink
 from .consumables import Consumable, builtin_formats, scan_vendor_catalog
@@ -42,7 +42,7 @@ class Job:
     id: str
     state: str = "running"
     progress: float = 0.0
-    message: str = "Renderowanie etykiety…"
+    message: str = "Renderowanie etykietyâ€¦"
     error: str | None = None
     rows: int = 0
     cols: int = 0
@@ -67,6 +67,8 @@ class AppState:
         self.lock = asyncio.Lock()
         self.job: Job | None = None
         self.job_task: asyncio.Task | None = None
+        self.auto_connect_task: asyncio.Task | None = None
+        self.auto_status: str = "idle"
         self.last_scan: list[dict] = []
 
     @property
@@ -98,10 +100,14 @@ async def lifespan(_app: FastAPI):
         for consumable in entries.values():
             store.upsert_consumable(consumable.to_dict())
         if entries:
-            log.info("Zaimportowano %d formatów z aplikacji NIIMBOT", len(entries))
+            log.info("Zaimportowano %d formatĂłw z aplikacji NIIMBOT", len(entries))
     except Exception as exc:  # pragma: no cover - optional convenience
-        log.debug("Import katalogu producenta nie powiódł się: %s", exc)
+        log.debug("Import katalogu producenta nie powiĂłdĹ‚ siÄ™: %s", exc)
+    # Remembered printer: look for it in the background and connect when it is in range.
+    auto_task = asyncio.create_task(_auto_connect_loop())
+    state.auto_connect_task = auto_task
     yield
+    auto_task.cancel()
     await _shutdown()
 
 
@@ -283,12 +289,89 @@ async def api_options() -> dict:
 
 
 # ------------------------------------------------------------------ devices
+AUTO_CONNECT_RETRY_S = 25.0
+
+
+async def _auto_connect_loop() -> None:
+    """Connect to the remembered printer whenever it appears in range."""
+    await asyncio.sleep(2.5)
+    while True:
+        try:
+            settings = store.load_settings()
+            address = (settings.get("last_address") or "").strip()
+            enabled = str(settings.get("auto_connect", "1")) not in {"0", "false", "False", ""}
+            if enabled and address and not state.connected:
+                state.auto_status = f"Looking for {address}\u2026"
+                in_range = await BleLink.find_by_address(address, timeout=6.0)
+                if in_range:
+                    state.auto_status = f"Connecting to {address}\u2026"
+                    async with state.lock:
+                        await state.printer.connect(address)
+                        store.save_settings({"last_address": address})
+                        try:
+                            await state.printer.refresh()
+                        except Exception:  # pragma: no cover - status is best effort
+                            pass
+                    state.auto_status = "connected"
+                    log.info("Auto-connected to %s", address)
+                    await asyncio.sleep(AUTO_CONNECT_RETRY_S)
+                    continue
+                state.auto_status = "not in range"
+            else:
+                state.auto_status = "connected" if state.connected else "idle"
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - keep the loop alive
+            state.auto_status = f"auto-connect failed: {exc}"
+            log.debug("Automatic connect failed: %s", exc)
+        await asyncio.sleep(AUTO_CONNECT_RETRY_S)
+
+
+@app.post("/api/auto-connect")
+async def api_auto_connect() -> dict:
+    """Trigger an immediate attempt (the UI calls this right after start-up)."""
+    settings = store.load_settings()
+    address = (settings.get("last_address") or "").strip()
+    if not address:
+        raise HTTPException(status_code=409, detail="No printer has been paired yet.")
+    if state.connected:
+        return _state_payload()
+    if not await BleLink.find_by_address(address, timeout=8.0):
+        raise HTTPException(status_code=404, detail=f"Printer {address} is not in range.")
+    async with state.lock:
+        await state.printer.connect(address)
+        try:
+            await state.printer.refresh()
+        except Exception:  # pragma: no cover
+            pass
+    state.auto_status = "connected"
+    return _state_payload()
+
+
+@app.get("/api/settings/auto-connect")
+async def api_auto_connect_state() -> dict:
+    settings = store.load_settings()
+    return {
+        "address": settings.get("last_address"),
+        "enabled": str(settings.get("auto_connect", "1")) not in {"0", "false", "False", ""},
+        "status": getattr(state, "auto_status", "idle"),
+    }
+
+
+@app.post("/api/settings/auto-connect")
+async def api_auto_connect_set(request: Request) -> dict:
+    payload = await request.json()
+    store.save_settings({"auto_connect": "1" if payload.get("enabled", True) else "0"})
+    return {"enabled": bool(payload.get("enabled", True))}
+
+
+# ------------------------------------------------------------------ devices
 @app.post("/api/scan")
 async def api_scan(request: ScanRequest) -> dict:
     try:
         devices = await BleLink.scan(timeout=max(2.0, min(30.0, request.timeout)), show_all=request.show_all)
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Skanowanie nie powiodło się: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Skanowanie nie powiodĹ‚o siÄ™: {exc}") from exc
     state.last_scan = [device.to_dict() for device in devices]
     return {"devices": state.last_scan}
 
@@ -300,14 +383,14 @@ async def api_connect(request: ConnectRequest) -> dict:
             await state.printer.connect(request.address)
         except Exception as exc:
             state.printer.last_error = str(exc)
-            raise HTTPException(status_code=502, detail=f"Nie udało się połączyć: {exc}") from exc
+            raise HTTPException(status_code=502, detail=f"Nie udaĹ‚o siÄ™ poĹ‚Ä…czyÄ‡: {exc}") from exc
         store.save_settings({"last_address": request.address})
         if state.printer.info.model_name and state.printer.info.model_name != "nieznany":
             store.save_settings({"last_model": state.printer.info.model_name})
         try:
             await state.printer.refresh()
         except Exception as exc:  # pragma: no cover - status is best effort
-            log.debug("Odczyt statusu po połączeniu nie powiódł się: %s", exc)
+            log.debug("Odczyt statusu po poĹ‚Ä…czeniu nie powiĂłdĹ‚ siÄ™: %s", exc)
     return _state_payload()
 
 @app.post("/api/disconnect")
@@ -320,7 +403,7 @@ async def api_disconnect() -> dict:
 @app.post("/api/refresh")
 async def api_refresh() -> dict:
     if not state.connected:
-        raise HTTPException(status_code=409, detail="Drukarka nie jest połączona.")
+        raise HTTPException(status_code=409, detail="Drukarka nie jest poĹ‚Ä…czona.")
     async with state.lock:
         try:
             await state.printer.refresh()
@@ -333,7 +416,7 @@ async def api_refresh() -> dict:
 async def api_detect_size() -> dict:
     """Read the label format measured by the printer and store it for this roll."""
     if not state.connected:
-        raise HTTPException(status_code=409, detail="Drukarka nie jest połączona.")
+        raise HTTPException(status_code=409, detail="Drukarka nie jest poĹ‚Ä…czona.")
     async with state.lock:
         try:
             geometry = await state.printer.read_paper_info()
@@ -346,11 +429,11 @@ async def api_detect_size() -> dict:
         if geometry.supported is False:
             detail = (
                 "Ten model nie raportuje formatu przez Bluetooth (B1 nie odpowiada na 0x59). "
-                "Podaj wymiary raz — zapamiętam je dla kodu tej rolki i następne rolki z tej samej "
-                "serii ustawią się same."
+                "Podaj wymiary raz â€” zapamiÄ™tam je dla kodu tej rolki i nastÄ™pne rolki z tej samej "
+                "serii ustawiÄ… siÄ™ same."
             )
         else:
-            detail = "Drukarka nie podała formatu — wpisz wymiary ręcznie."
+            detail = "Drukarka nie podaĹ‚a formatu â€” wpisz wymiary rÄ™cznie."
         return {
             "detected": False,
             "detail": detail,
@@ -364,7 +447,7 @@ async def api_detect_size() -> dict:
         stored = store.save_profile(
             PaperProfile(
                 key=key,
-                name=f"{geometry.width_mm:g} × {geometry.height_mm:g} mm",
+                name=f"{geometry.width_mm:g} Ă— {geometry.height_mm:g} mm",
                 width_mm=geometry.width_mm or 0.0,
                 height_mm=geometry.height_mm or 0.0,
                 gap_mm=geometry.gap_mm or 0.0,
@@ -383,7 +466,7 @@ async def api_detect_size() -> dict:
 @app.post("/api/calibrate")
 async def api_calibrate() -> dict:
     if not state.connected:
-        raise HTTPException(status_code=409, detail="Drukarka nie jest połączona.")
+        raise HTTPException(status_code=409, detail="Drukarka nie jest poĹ‚Ä…czona.")
     async with state.lock:
         try:
             await state.printer.calibrate()
@@ -396,7 +479,7 @@ async def api_calibrate() -> dict:
 @app.post("/api/density")
 async def api_density(request: DensityRequest) -> dict:
     if not state.connected:
-        raise HTTPException(status_code=409, detail="Drukarka nie jest połączona.")
+        raise HTTPException(status_code=409, detail="Drukarka nie jest poĹ‚Ä…czona.")
     async with state.lock:
         try:
             await state.printer.set_density(request.density)
@@ -518,7 +601,7 @@ async def api_catalog_import() -> dict:
     try:
         found, scanned = scan_vendor_catalog()
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Nie udało się odczytać cache aplikacji NIIMBOT: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Nie udaĹ‚o siÄ™ odczytaÄ‡ cache aplikacji NIIMBOT: {exc}") from exc
     for consumable in found.values():
         store.upsert_consumable(consumable.to_dict())
     stats = store.print_statistics(recent_limit=0)
@@ -538,7 +621,7 @@ async def api_catalog_manual(request: ProfileRequest) -> dict:
     record = store.upsert_consumable(
         {
             "barcode": barcode,
-            "name": request.name or f"{request.width_mm:g} × {request.height_mm:g} mm",
+            "name": request.name or f"{request.width_mm:g} Ă— {request.height_mm:g} mm",
             "sku": request.name or None,
             "width_mm": request.width_mm,
             "height_mm": request.height_mm,
@@ -560,7 +643,7 @@ async def api_stats(recent: int = 10) -> dict:
 async def api_profile_save(request: ProfileRequest) -> dict:
     profile = PaperProfile(
         key=request.key,
-        name=request.name or f"{request.width_mm:g} × {request.height_mm:g} mm",
+        name=request.name or f"{request.width_mm:g} Ă— {request.height_mm:g} mm",
         width_mm=request.width_mm,
         height_mm=request.height_mm,
         gap_mm=request.gap_mm,
@@ -578,11 +661,35 @@ async def api_profile_delete(key: str) -> dict:
 
 
 # ------------------------------------------------------------------ uploads
+@app.post("/api/sheet/import")
+async def api_sheet_import(file: UploadFile = File(...)) -> dict:
+    payload = await file.read()
+    if len(payload) > 16 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="File is too large (16 MB limit).")
+    try:
+        table = spreadsheet.read_table(file.filename or "", payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # malformed archive, bad XML, ...
+        raise HTTPException(status_code=400, detail=f"Cannot read the spreadsheet: {exc}") from exc
+    table = [row for row in table if any(cell for cell in row)]
+    if not table:
+        raise HTTPException(status_code=400, detail="The spreadsheet is empty.")
+    header = table[0]
+    rows = table[1:]
+    return {
+        "header": header,
+        "rows": rows,
+        "rows_count": len(rows),
+        "columns_count": max((len(row) for row in table), default=0),
+    }
+
+
 @app.post("/api/upload")
 async def api_upload(file: UploadFile = File(...)) -> dict:
     payload = await file.read()
     if len(payload) > 8 * 1024 * 1024:
-        raise HTTPException(status_code=413, detail="Plik jest za duży (limit 8 MB).")
+        raise HTTPException(status_code=413, detail="Plik jest za duĹĽy (limit 8 MB).")
     try:
         image_id = store.save_upload(file.filename or "image.png", payload)
     except ValueError as exc:
@@ -626,7 +733,7 @@ def _test_spec() -> LabelSpec:
                 y=9,
                 w=width - 24,
                 h=6,
-                text="Gęstość 3 · 203 dpi" if state.printer.info.dpi == 203 else "Gęstość 3",
+                text="GÄ™stoĹ›Ä‡ 3 Â· 203 dpi" if state.printer.info.dpi == 203 else "GÄ™stoĹ›Ä‡ 3",
                 font_size_pt=8,
             ),
             Element(type="barcode", x=2, y=16, w=width - 24, h=11, text="NIIBOT-B1", barcode_format="code128"),
@@ -639,7 +746,7 @@ def _test_spec() -> LabelSpec:
 @app.post("/api/test-print")
 async def api_test_print() -> dict:
     if not state.connected:
-        raise HTTPException(status_code=409, detail="Drukarka nie jest połączona.")
+        raise HTTPException(status_code=409, detail="Drukarka nie jest poĹ‚Ä…czona.")
     _check_ready()
     return await _start_job(_test_spec(), copies=1, density=None, label_type=None, title="Wydruk testowy")
 
@@ -647,10 +754,10 @@ async def api_test_print() -> dict:
 @app.post("/api/print")
 async def api_print(request: PrintRequest) -> dict:
     if not state.connected:
-        raise HTTPException(status_code=409, detail="Drukarka nie jest połączona.")
+        raise HTTPException(status_code=409, detail="Drukarka nie jest poĹ‚Ä…czona.")
     _check_ready()
     if state.job and state.job.state == "running":
-        raise HTTPException(status_code=409, detail="Trwa już wydruk — poczekaj lub anuluj.")
+        raise HTTPException(status_code=409, detail="Trwa juĹĽ wydruk â€” poczekaj lub anuluj.")
     spec = _with_mirror(request.spec, request.mirror)
     copies = request.copies if request.copies is not None else spec.copies
     density = request.density if request.density is not None else spec.density
@@ -665,10 +772,10 @@ async def api_print(request: PrintRequest) -> dict:
 @app.post("/api/print-sheet")
 async def api_print_sheet(request: SheetPrintRequest) -> dict:
     if not state.connected:
-        raise HTTPException(status_code=409, detail="Drukarka nie jest połączona.")
+        raise HTTPException(status_code=409, detail="Drukarka nie jest poĹ‚Ä…czona.")
     _check_ready()
     if state.job and state.job.state == "running":
-        raise HTTPException(status_code=409, detail="Trwa już wydruk — poczekaj lub anuluj.")
+        raise HTTPException(status_code=409, detail="Trwa juĹĽ wydruk â€” poczekaj lub anuluj.")
 
     columns = sheet.sync_columns(request.spec)
     specs = sheet.build_sheet_specs(
@@ -680,7 +787,7 @@ async def api_print_sheet(request: SheetPrintRequest) -> dict:
         flip=request.mirror.flip if request.mirror else False,
     )
     if not specs:
-        raise HTTPException(status_code=400, detail="Arkusz nie ma żadnych wierszy do wydruku.")
+        raise HTTPException(status_code=400, detail="Arkusz nie ma ĹĽadnych wierszy do wydruku.")
 
     density = request.density if request.density is not None else request.spec.density
     label_type = request.label_type
@@ -710,7 +817,7 @@ async def _start_job(
     catalog_entry = store.get_catalog_entry(paper.barcode)
     job = Job(
         id=uuid.uuid4().hex[:8],
-        message=title or "Renderowanie etykiety…",
+        message=title or "Renderowanie etykietyâ€¦",
         copies=max(1, copies),
         density=density,
         label_type=label_type,
@@ -732,7 +839,7 @@ async def _run_print(job: Job, spec: LabelSpec, copies: int, density: int | None
         job.rows = encoded.rows
         job.cols = encoded.cols
         job.packets = encoded.packet_count
-        job.message = "Wysyłanie danych do drukarki…"
+        job.message = "WysyĹ‚anie danych do drukarkiâ€¦"
 
         def progress(value: float, **extra: Any) -> None:
             job.progress = max(0.0, min(1.0, value))
@@ -760,10 +867,10 @@ async def _run_print(job: Job, spec: LabelSpec, copies: int, density: int | None
         job.message = str(exc)
         await state.printer.cancel()
     except Exception as exc:  # pragma: no cover - unexpected
-        log.exception("Wydruk nie powiódł się")
+        log.exception("Wydruk nie powiĂłdĹ‚ siÄ™")
         job.state = "error"
         job.error = str(exc)
-        job.message = f"Błąd: {exc}"
+        job.message = f"BĹ‚Ä…d: {exc}"
         await state.printer.cancel()
     finally:
         _finish_job(job)
@@ -781,7 +888,7 @@ async def _start_sheet_job(
     first = specs[0]
     job = Job(
         id=uuid.uuid4().hex[:8],
-        message=f"Arkusz: {len(specs)} etykiet — renderowanie…",
+        message=f"Arkusz: {len(specs)} etykiet â€” renderowanieâ€¦",
         copies=len(specs) * max(1, copies or 1),
         density=density,
         label_type=label_type,
@@ -808,13 +915,13 @@ async def _run_sheet(job: Job, specs: list[LabelSpec], copies: int, density: int
                 job.cols = encoded.cols
                 job.packets = encoded.packet_count
                 label = f"Arkusz: wiersz {index} / {len(specs)}"
-                job.message = f"{label} — wysyłanie…"
+                job.message = f"{label} â€” wysyĹ‚anieâ€¦"
                 job.progress = max(0.0, min(0.98, sent / total))
 
                 def progress(value: float, **extra: Any) -> None:
                     done = sent + max(0.0, min(1.0, value)) * max(1, copies)
                     job.progress = max(0.0, min(0.98, done / total))
-                    job.message = f"{label} — {int(job.progress * 100)}%"
+                    job.message = f"{label} â€” {int(job.progress * 100)}%"
 
                 await state.printer.print_bitmap(
                     encoded,
@@ -838,10 +945,10 @@ async def _run_sheet(job: Job, specs: list[LabelSpec], copies: int, density: int
         job.message = str(exc)
         await state.printer.cancel()
     except Exception as exc:  # pragma: no cover - unexpected
-        log.exception("Wydruk arkusza nie powiódł się")
+        log.exception("Wydruk arkusza nie powiĂłdĹ‚ siÄ™")
         job.state = "error"
         job.error = str(exc)
-        job.message = f"Błąd: {exc}"
+        job.message = f"BĹ‚Ä…d: {exc}"
         await state.printer.cancel()
     finally:
         _finish_job(job)
@@ -868,7 +975,7 @@ def _finish_job(job: Job) -> None:
             error=job.error,
         )
     except Exception:  # pragma: no cover - statistics must never break printing
-        log.exception("Nie udało się zapisać statystyki wydruku")
+        log.exception("Nie udaĹ‚o siÄ™ zapisaÄ‡ statystyki wydruku")
 
 
 @app.get("/api/job")
@@ -944,10 +1051,10 @@ def _ipp_state() -> ipp_mod.IppPrinterState:
 
 async def _print_ipp_document(payload: bytes, mime: str, copies: int) -> tuple[bool, str]:
     if not state.connected:
-        raise HTTPException(status_code=409, detail="Drukarka nie jest połączona.")
+        raise HTTPException(status_code=409, detail="Drukarka nie jest poĹ‚Ä…czona.")
     image = ipp_mod.decode_document(payload, mime)
     if image is None:
-        return False, f"nieobsługiwany format dokumentu ({mime or 'brak'})"
+        return False, f"nieobsĹ‚ugiwany format dokumentu ({mime or 'brak'})"
 
     width_mm, height_mm, dpi, head_px, width_px, height_px = _label_geometry()
     bitmap = fit_to_label(image, width_px, height_px, dpi, _fit_options())
@@ -956,7 +1063,7 @@ async def _print_ipp_document(payload: bytes, mime: str, copies: int) -> tuple[b
     catalog = store.get_catalog_entry(paper.barcode) or {}
     job = Job(
         id=uuid.uuid4().hex[:8],
-        message="Wydruk z Windows…",
+        message="Wydruk z Windowsâ€¦",
         copies=max(1, min(99, copies)),
         density=state.printer.info.density,
         label_type=paper.label_type,
@@ -985,7 +1092,7 @@ async def _print_ipp_document(payload: bytes, mime: str, copies: int) -> tuple[b
     except Exception as exc:
         job.state = "error"
         job.error = str(exc)
-        job.message = f"Błąd: {exc}"
+        job.message = f"BĹ‚Ä…d: {exc}"
         raise
     finally:
         job.finished = time.time()
@@ -1008,7 +1115,7 @@ async def _print_ipp_document(payload: bytes, mime: str, copies: int) -> tuple[b
                 error=job.error,
             )
         except Exception:  # pragma: no cover
-            log.exception("Nie udało się zapisać statystyki wydruku")
+            log.exception("Nie udaĹ‚o siÄ™ zapisaÄ‡ statystyki wydruku")
 
 
 @app.post("/ipp/print")
@@ -1018,7 +1125,7 @@ async def ipp_print(request: Request) -> Response:
     try:
         ipp_request = ipp_mod.parse_request(body)
     except ValueError as exc:
-        log.warning("Nieprawidłowe żądanie IPP: %s", exc)
+        log.warning("NieprawidĹ‚owe ĹĽÄ…danie IPP: %s", exc)
         return Response(status_code=400, content=str(exc).encode("utf-8"))
 
     base_uri = f"ipp://{request.url.hostname}:{request.url.port or 80}/ipp/print"
@@ -1051,7 +1158,7 @@ async def ipp_print(request: Request) -> Response:
         try:
             ok, message = await _print_ipp_document(document, str(mime), int(copies))
         except Exception as exc:
-            log.exception("Wydruk z Windows nie powiódł się")
+            log.exception("Wydruk z Windows nie powiĂłdĹ‚ siÄ™")
             return Response(
                 content=ipp_mod.build_simple_response(
                     ipp_request, ipp_mod.STATUS_NOT_POSSIBLE, message=str(exc)[:200]
@@ -1099,10 +1206,10 @@ async def ipp_print(request: Request) -> Response:
             content=ipp_mod.build_simple_response(ipp_request), media_type="application/ipp"
         )
 
-    log.info("Nieobsługiwana operacja IPP: 0x%04X", operation)
+    log.info("NieobsĹ‚ugiwana operacja IPP: 0x%04X", operation)
     return Response(
         content=ipp_mod.build_simple_response(
-            ipp_request, ipp_mod.STATUS_NOT_POSSIBLE, message="operacja nieobsługiwana"
+            ipp_request, ipp_mod.STATUS_NOT_POSSIBLE, message="operacja nieobsĹ‚ugiwana"
         ),
         media_type="application/ipp",
     )
@@ -1140,7 +1247,7 @@ async def api_driver() -> dict:
         "port": port,
         "printer_name": printer_name,
         "driver": "Microsoft IPP Class Driver",
-        "media": f"{width_mm:g} × {height_mm:g} mm",
+        "media": f"{width_mm:g} Ă— {height_mm:g} mm",
         "install_command": install_command,
         "connected": state.connected,
     }
@@ -1157,3 +1264,4 @@ app.mount("/static", StaticFiles(directory=str(WEB_DIR)), name="static")
 @app.exception_handler(ProtocolError)
 async def protocol_error_handler(_request, exc: ProtocolError) -> JSONResponse:
     return JSONResponse(status_code=502, content={"detail": str(exc)})
+

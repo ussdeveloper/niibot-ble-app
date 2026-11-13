@@ -285,7 +285,7 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(paper.used, 6)
         self.assertEqual(paper.remaining, 224)
         self.assertEqual(paper.label_type, 1)
-        self.assertEqual(paper.label_type_name, "etykiety z odstępem")
+        self.assertEqual(paper.label_type_name, "labels with gap")
         self.assertEqual(paper.battery, 0x50)
 
     def test_no_rfid_tag_is_not_an_error(self) -> None:

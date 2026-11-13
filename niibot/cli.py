@@ -147,7 +147,11 @@ def _cmd_panel(args: argparse.Namespace) -> int:
         except Exception:  # pragma: no cover
             pass
     print(f"Panel: {url}  (Ctrl+C kończy)")
-    uvicorn.run("niibot.server:app", host=args.host, port=args.port, log_level="info")
+    # Import the app object directly: the frozen EXE has no importable module path
+    # for uvicorn's string form ("niibot.server:app").
+    from .server import app as asgi_app
+
+    uvicorn.run(asgi_app, host=args.host, port=args.port, log_level="info")
     return 0
 
 

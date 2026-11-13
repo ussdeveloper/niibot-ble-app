@@ -153,20 +153,20 @@ class LabelType(IntEnum):
 
 
 LABEL_TYPE_NAMES: dict[int, str] = {
-    0: "nieznany",
-    1: "etykiety z odstępem",
-    2: "znacznik czarny",
-    3: "taśma ciągła",
-    4: "etykiety perforowane",
-    5: "folia przezroczysta",
-    6: "tag PVC",
-    10: "odstęp + czarny znacznik",
-    11: "rurka termokurczliwa",
+    0: "unknown",
+    1: "labels with gap",
+    2: "black mark",
+    3: "continuous tape",
+    4: "perforated labels",
+    5: "transparent film",
+    6: "PVC tag",
+    10: "gap + black mark",
+    11: "heat-shrink tube",
 }
 
 PRINTER_ERRORS: dict[int, str] = {
-    0x01: "otwarta pokrywa",
-    0x02: "brak papieru",
+    0x01: "lid open",
+    0x02: "out of paper",
     0x03: "niski poziom baterii",
     0x04: "błąd baterii",
     0x05: "anulowano przez użytkownika",

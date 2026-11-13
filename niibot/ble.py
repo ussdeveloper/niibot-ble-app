@@ -57,6 +57,15 @@ class BleLink:
 
     # ------------------------------------------------------------------ scan
     @staticmethod
+    async def find_by_address(address: str, timeout: float = 6.0) -> bool:
+        """True when the remembered device answers — much cheaper than a full scan."""
+        try:
+            found = await BleakScanner.find_device_by_address(address, timeout=timeout)
+        except Exception:  # noqa: BLE001 - bad/unknown address simply means "not in range"
+            return False
+        return found is not None
+
+    @staticmethod
     async def scan(timeout: float = 6.0, show_all: bool = False) -> list[DiscoveredDevice]:
         found = await BleakScanner.discover(timeout=timeout, return_adv=True)
         devices: list[DiscoveredDevice] = []

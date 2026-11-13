@@ -200,7 +200,7 @@ function redo() {
 /* ===================================================================== spec */
 function normalizeSpec(spec) {
   const normalized = Object.assign(
-    { name: 'Etykieta', width_mm: 40, height_mm: 30, gap_mm: 2, label_type: 1, density: 3, copies: 1, elements: [] },
+    { name: 'Label', width_mm: 40, height_mm: 30, gap_mm: 2, label_type: 1, density: 3, copies: 1, elements: [] },
     spec,
   );
   normalized.elements = (normalized.elements || []).map((element) => Object.assign(
@@ -269,7 +269,7 @@ function applySize(width, height, extra = {}) {
   let nextWidth = Number(width);
   if (limit && nextWidth > limit) {
     nextWidth = limit;
-    toast(`Obszar zadruku tego modelu to ${limit} mm — szerokość projektu ograniczona.`);
+    toast(`This model prints up to ${limit} mm — the label width was clamped.`);
   }
   state.spec.width_mm = nextWidth;
   state.spec.height_mm = Number(height);
@@ -294,7 +294,7 @@ function clampElements() {
     element.x = x;
     element.y = y;
   }
-  if (moved) toast(`Dopasowano ${moved} element(ów) do nowego formatu.`);
+  if (moved) toast(`Fitted ${moved} element(s) to the new format.`);
 }
 
 function applyKnownFormat(paper) {
@@ -403,7 +403,7 @@ function layoutStage() {
     gapEl.classList.remove('hidden');
     gapEl.style.height = `${gapPx}px`;
     gapEl.style.width = `${width}px`;
-    $('#gap-preview-label').textContent = `odstęp ${round2(gapMm)} mm`;
+    $('#gap-preview-label').textContent = `gap ${round2(gapMm)} mm`;
   } else {
     gapEl.classList.add('hidden');
   }
@@ -430,9 +430,9 @@ function renderStageMeta() {
   const spec = state.spec;
   const geo = paperGeometry();
   const chips = [`<span class="meta-chip"><b>${round2(spec.width_mm)} × ${round2(spec.height_mm)} mm</b></span>`];
-  if (geo.typeName) chips.push(`<span class="meta-chip type">papier: ${escapeHtml(geo.typeName)}</span>`);
+  if (geo.typeName) chips.push(`<span class="meta-chip type">paper: ${escapeHtml(geo.typeName)}</span>`);
   if (geo.catalog?.name) chips.push(`<span class="meta-chip mono">${escapeHtml(geo.catalog.name)}</span>`);
-  if (geo.rows > 1) chips.push(`<span class="meta-chip">${geo.rows} regiony × ${round2(spec.height_mm / geo.rows)} mm</span>`);
+  if (geo.rows > 1) chips.push(`<span class="meta-chip">${geo.rows} regions × ${round2(spec.height_mm / geo.rows)} mm</span>`);
   if (geo.rows > 1) {
     const on = !!spec.sheet?.mirror;
     chips.push(`<button type="button" class="meta-chip mirror ${on ? 'active' : ''}" id="meta-mirror"
@@ -440,10 +440,10 @@ function renderStageMeta() {
       <i data-lucide="flip-vertical-2"></i> Mirror ${geo.rows}×
     </button>`);
   }
-  if (geo.gapMm > 0 && hasGapPaper()) chips.push(`<span class="meta-chip">odstęp ${round2(geo.gapMm)} mm</span>`);
+  if (geo.gapMm > 0 && hasGapPaper()) chips.push(`<span class="meta-chip">gap ${round2(geo.gapMm)} mm</span>`);
   if (geo.headMm) {
     const fits = spec.width_mm <= geo.headMm + 0.05;
-    chips.push(`<span class="meta-chip ${fits ? 'ok' : 'bad'}">głowica ${geo.headMm.toFixed(1)} mm ${fits ? '✓ obszar zadruku' : '— przycięte'}</span>`);
+    chips.push(`<span class="meta-chip ${fits ? 'ok' : 'bad'}">head ${geo.headMm.toFixed(1)} mm ${fits ? '✓ printable' : '— clipped'}</span>`);
   }
   meta.innerHTML = chips.join('');
   refreshIcons(meta);
@@ -482,7 +482,7 @@ function renderPaperRegions() {
       const tagEl = document.createElement('div');
       tagEl.className = 'row-tag';
       tagEl.style.top = `${top}%`;
-      tagEl.textContent = `cięcie ${index}/${geo.rows}`;
+      tagEl.textContent = `cut ${index}/${geo.rows}`;
       layer.appendChild(tagEl);
     }
   }
@@ -527,7 +527,7 @@ function renderOverlay() {  if (!state.spec) return;  const overlay = $('#overla
     box.style.width = `${(element.w / labelWidth) * 100}%`;
     box.style.height = `${(element.h / labelHeight) * 100}%`;
 
-    if (element.visible === false) box.title = 'Warstwa ukryta — nie zostanie wydrukowana';
+    if (element.visible === false) box.title = 'Hidden layer — it will not be printed';
     if (locked) box.title = 'Region generowany przez Mirror — edytuj pierwszy region';
 
     const handle = document.createElement('div');
@@ -576,7 +576,7 @@ function drawLayerThumb(canvas, element) {
   const labelW = img.naturalWidth;
   const labelH = img.naturalHeight;
 
-  // 1. wycinek podglądu dokładnie w obszarze warstwy
+  // 1. preview crop, exactly the layer area
   const sx = Math.max(0, Math.floor((element.x / W) * labelW));
   const sy = Math.max(0, Math.floor((element.y / H) * labelH));
   const sw = Math.max(1, Math.min(labelW - sx, Math.ceil((element.w / W) * labelW)));
@@ -589,7 +589,7 @@ function drawLayerThumb(canvas, element) {
   pctx.imageSmoothingEnabled = false;
   pctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
 
-  // 2. obcinamy puste tło — miniatura pokazuje sam element, nie fragment etykiety
+  // 2. trim the empty background — the thumbnail shows the element, not the label fragment
   let ink = null;
   try {
     const data = pctx.getImageData(0, 0, sw, sh).data;
@@ -605,10 +605,10 @@ function drawLayerThumb(canvas, element) {
       }
     }
     if (maxX >= minX && maxY >= minY) ink = { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 };
-  } catch (_) { /* canvas nieczytelny — zostaje pełny wycinek */ }
+  } catch (_) { /* canvas unreadable — keep the full crop */ }
 
   if (!ink) {
-    // pusta warstwa (np. samo tło) — pokaż ikonę typu
+    // empty layer — show the element type instead
     ctx.fillStyle = 'rgba(0, 26, 77, 0.28)';
     ctx.font = '13px system-ui, sans-serif';
     ctx.textAlign = 'center';
@@ -656,7 +656,7 @@ function renderLayers() {
 
     const eye = document.createElement('button');
     eye.className = 'layer-eye';
-    eye.title = element.visible === false ? 'Pokaż warstwę' : 'Ukryj warstwę';
+    eye.title = element.visible === false ? 'Show layer' : 'Hide layer';
     eye.innerHTML = `<i data-lucide="${element.visible === false ? 'eye-off' : 'eye'}"></i>`;
     eye.onclick = (event) => {
       event.stopPropagation();
@@ -778,7 +778,7 @@ function buildInspector() {
   const card = $('#inspector-card');
   const element = selectedElement();
   if (!element) {
-    card.innerHTML = '<div class="panel-empty">Wybierz element na etykiecie, aby go edytować. Możesz go przeciągać, a uchwyt w prawym dolnym rogu zmienia rozmiar.</div>';
+    card.innerHTML = '<div class="panel-empty">Select an element on the label to edit it. Drag it to move, use the bottom-right handle to resize.</div>';
     return;
   }
 
@@ -789,57 +789,57 @@ function buildInspector() {
   parts.push(field('Szer. (mm)', numberInput('w', round2(element.w))));
   parts.push(field('Wys. (mm)', numberInput('h', round2(element.h))));
   parts.push('</div>');
-  parts.push(field('Obrót', selectInput('rotation', String(element.rotation), [
+  parts.push(field('Rotation', selectInput('rotation', String(element.rotation), [
     ['0', '0°'], ['90', '90°'], ['180', '180°'], ['270', '270°'],
   ])));
 
   if (element.type === 'text') {
-    parts.push(field('Treść', `<textarea data-key="text">${escapeHtml(element.text || '')}</textarea>`));
-    parts.push(field('Czcionka', `<button type="button" class="btn wide font-pick" data-font-pick="1" style="font-family:${fontCss(element.font)}">
+    parts.push(field('Text', `<textarea data-key="text">${escapeHtml(element.text || '')}</textarea>`));
+    parts.push(field('Font', `<button type="button" class="btn wide font-pick" data-font-pick="1" style="font-family:${fontCss(element.font)}">
       <i data-lucide="type"></i><span>${escapeHtml(element.font)}</span><i data-lucide="chevron-down"></i>
     </button>`));
     parts.push('<div class="grid-2">');
-    parts.push(field('Rozmiar (pt)', numberInput('font_size_pt', element.font_size_pt, 0.5, 1, 200)));
-    parts.push(field('Interlinia', numberInput('line_spacing', element.line_spacing, 0.05, 0.6, 3)));
+    parts.push(field('Size (pt)', numberInput('font_size_pt', element.font_size_pt, 0.5, 1, 200)));
+    parts.push(field('Line height', numberInput('line_spacing', element.line_spacing, 0.05, 0.6, 3)));
     parts.push('</div>');
     parts.push('<div class="grid-2">');
-    parts.push(field('Wyrównanie', selectInput('align', element.align, [['left', 'lewo'], ['center', 'środek'], ['right', 'prawo']])));
-    parts.push(field('Pion', selectInput('valign', element.valign, [['top', 'góra'], ['middle', 'środek'], ['bottom', 'dół']])));
+    parts.push(field('Align', selectInput('align', element.align, [['left', 'left'], ['center', 'centre'], ['right', 'right']])));
+    parts.push(field('Vertical', selectInput('valign', element.valign, [['top', 'top'], ['middle', 'middle'], ['bottom', 'bottom']])));
     parts.push('</div>');
     parts.push('<div class="row" style="margin-top:8px;gap:12px">');
-    parts.push(checkInput('bold', 'Pogrubienie', element.bold));
-    parts.push(checkInput('italic', 'Kursywa', element.italic));
-    parts.push(checkInput('auto_fit', 'Dopasuj', element.auto_fit));
+    parts.push(checkInput('bold', 'Bold', element.bold));
+    parts.push(checkInput('italic', 'Italic', element.italic));
+    parts.push(checkInput('auto_fit', 'Auto fit', element.auto_fit));
     parts.push('</div>');
   }
 
   if (element.type === 'barcode') {
-    parts.push(field('Dane', `<input data-key="text" value="${escapeHtml(element.text || '')}">`));
+    parts.push(field('Data', `<input data-key="text" value="${escapeHtml(element.text || '')}">`));
     const formats = (state.options?.barcode_formats || ['code128'])
       .map((format) => `<option value="${format}" ${format === element.barcode_format ? 'selected' : ''}>${String(format).toUpperCase()}</option>`)
       .join('');
     parts.push(field('Format', `<select data-key="barcode_format">${formats}</select>`));
-    parts.push(`<div class="row" style="margin-top:8px">${checkInput('show_text', 'Tekst pod kodem', element.show_text)}</div>`);
+    parts.push(`<div class="row" style="margin-top:8px">${checkInput('show_text', 'Text under code', element.show_text)}</div>`);
   }
 
   if (element.type === 'qr') {
-    parts.push(field('Dane', `<textarea data-key="text">${escapeHtml(element.text || '')}</textarea>`));
-    parts.push(field('Korekcja błędów', selectInput('ec_level', element.ec_level, [
+    parts.push(field('Data', `<textarea data-key="text">${escapeHtml(element.text || '')}</textarea>`));
+    parts.push(field('Error correction', selectInput('ec_level', element.ec_level, [
       ['L', 'L (7%)'], ['M', 'M (15%)'], ['Q', 'Q (25%)'], ['H', 'H (30%)'],
     ])));
   }
 
   if (element.type === 'rect') {
-    parts.push(field('Grubość linii (mm)', numberInput('thickness_mm', element.thickness_mm, 0.1, 0.1, 3)));
-    parts.push(`<div class="row" style="margin-top:8px">${checkInput('fill', 'Wypełnij', element.fill)}</div>`);
+    parts.push(field('Line width (mm)', numberInput('thickness_mm', element.thickness_mm, 0.1, 0.1, 3)));
+    parts.push(`<div class="row" style="margin-top:8px">${checkInput('fill', 'Fill', element.fill)}</div>`);
   }
 
   if (element.type === 'line') {
-    parts.push(field('Grubość (mm)', numberInput('thickness_mm', element.thickness_mm, 0.1, 0.1, 3)));
+    parts.push(field('Thickness (mm)', numberInput('thickness_mm', element.thickness_mm, 0.1, 0.1, 3)));
   }
 
   if (element.type === 'image') {
-    parts.push(field('Obraz', `<button id="btn-pick-image" class="btn wide">${element.image_id ? 'Zmień obraz' : 'Wybierz obraz'}</button>`));
+    parts.push(field('Image', `<button id="btn-pick-image" class="btn wide">${element.image_id ? 'Change image' : 'Pick image'}</button>`));
     if (element.image_id) parts.push(`<img class="thumb" src="/api/uploads/${element.image_id}" alt="obraz">`);
   }
 
@@ -987,7 +987,7 @@ async function uploadImage(file) {
   const data = new FormData();
   data.append('file', file);
   const response = await fetch('/api/upload', { method: 'POST', body: data });
-  if (!response.ok) throw new Error('Nie udało się wgrać obrazu');
+  if (!response.ok) throw new Error('Could not upload the image');
   const result = await response.json();
   const target = state.spec.elements.find((element) => element.id === state.pendingImageTarget);
   if (target) {
@@ -1087,7 +1087,7 @@ function paintGhost(ghost, element, drag) {
   ghost.style.height = `${(element.h / labelHeight) * 100}%`;
 
   if (drag && drag.mode === 'resize' && drag.ghostOrigin) {
-    // rozciągnij wycinek razem z ramką
+    // stretch the crop together with the frame
     const stage = $('#stage');
     const sx = (element.w / Math.max(0.01, drag.ghostOrigin.w));
     const sy = (element.h / Math.max(0.01, drag.ghostOrigin.h));
@@ -1230,22 +1230,22 @@ function renderStatusBar() {
   } else {
     connBox.classList.remove('ok');
     connBox.classList.add('err');
-    connText.textContent = 'nie połączono';
+    connText.textContent = 'not connected';
   }
 
   const dot = $('#conn-dot');
   dot.className = `dot ${state.connected ? 'ok' : 'err'}`;
   $('#conn-text').textContent = state.connected
     ? `${info.model_name || 'drukarka'} · ${payload.link?.name || ''}`.trim()
-    : 'nie połączono';
+    : 'not connected';
 
   const paperBits = [];
   if (paper.lid_closed === false) paperBits.push('pokrywa otwarta');
-  if (paper.paper_inserted === false) paperBits.push('brak papieru');
+  if (paper.paper_inserted === false) paperBits.push('no paper');
   if (paper.label_type_name) paperBits.push(paper.label_type_name);
-  if (paper.remaining !== null && paper.remaining !== undefined) paperBits.push(`zostało ${paper.remaining}`);
+  if (paper.remaining !== null && paper.remaining !== undefined) paperBits.push(`${paper.remaining} left`);
   else if (paper.capacity && paper.used !== null) paperBits.push(`${paper.used}/${paper.capacity}`);
-  $('#sb-paper-text').textContent = paperBits.length ? paperBits.join(' · ') : (state.connected ? 'brak danych o rolce' : 'brak papieru');
+  $('#sb-paper-text').textContent = paperBits.length ? paperBits.join(' · ') : (state.connected ? 'no roll data' : 'no paper');
   $('#sb-paper').classList.toggle('err', paper.lid_closed === false || paper.paper_inserted === false);
 
   $('#sb-format-text').textContent = state.spec
@@ -1308,7 +1308,7 @@ async function loadIconLibrary() {
         search: `${name.replace(/-/g, ' ')} ${tags[name] || ''}`,
       }));
     } catch (error) {
-      toast(`Nie udało się wczytać biblioteki Material Design Icons: ${error.message}`, 'error');
+      toast(`Could not load the Material Design Icons library: ${error.message}`, 'error');
     }
     iconLib.ready = true;
     return iconLib;
@@ -1337,7 +1337,7 @@ async function rasterizeIcon(icon, sizePx = 384) {
   const image = new Image();
   await new Promise((resolve, reject) => {
     image.onload = resolve;
-    image.onerror = () => reject(new Error('Nie udało się wygenerować obrazu ikony'));
+    image.onerror = () => reject(new Error('Could not render the icon'));
     image.src = url;
   });
   const canvas = document.createElement('canvas');
@@ -1346,7 +1346,7 @@ async function rasterizeIcon(icon, sizePx = 384) {
   const ctx = canvas.getContext('2d');
   ctx.drawImage(image, 0, 0, sizePx, sizePx);
   return new Promise((resolve, reject) => {
-    canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('Nie udało się zapisać PNG'))), 'image/png');
+    canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('Could not encode the PNG'))), 'image/png');
   });
 }
 
@@ -1355,7 +1355,7 @@ async function insertIcon(icon) {
   const data = new FormData();
   data.append('file', new File([blob], `${icon.name}.png`, { type: 'image/png' }));
   const response = await fetch('/api/upload', { method: 'POST', body: data });
-  if (!response.ok) throw new Error('Nie udało się wgrać ikony');
+  if (!response.ok) throw new Error('Could not upload the icon');
   const uploaded = await response.json();
 
   const { width_mm: labelWidth, height_mm: labelHeight } = state.spec;
@@ -1378,7 +1378,7 @@ async function insertIcon(icon) {
   renderOverlay();
   buildInspector();
   schedulePreview();
-  toast(`Dodano ikonę: ${icon.name.replace(/-/g, ' ')}`);
+  toast(`Icon added: ${icon.name.replace(/-/g, ' ')}`);
 }
 
 function openIconPicker() {
@@ -1451,7 +1451,7 @@ function openIconPicker() {
   const appendPage = () => {
     const slice = state_.results.slice(state_.shown, state_.shown + PAGE);
     if (!slice.length) {
-      if (!state_.results.length) grid.innerHTML = '<div class="empty">Brak wyników</div>';
+      if (!state_.results.length) grid.innerHTML = '<div class="empty">No results</div>';
       return;
     }
     const fragment = document.createDocumentFragment();
@@ -1517,10 +1517,10 @@ function openFontPicker(element) {
   body.innerHTML = `
     <div class="icon-toolbar">
       <input id="font-search" type="search" placeholder="Szukaj czcionki…" autocomplete="off">
-      <span class="icon-count" id="font-count">${catalog.length} krojów</span>
+      <span class="icon-count" id="font-count">${catalog.length} families</span>
     </div>
     <div class="font-list" id="font-list"></div>
-    <div class="font-hint">Własne pliki .ttf/.otf wystarczy wrzucić do <code>data\\fonts</code> — pojawią się na tej liście po odświeżeniu.</div>
+    <div class="font-hint">Drop your own .ttf/.otf files into <code>data\\fonts</code> — they appear here after a refresh.</div>
   `;
 
   openModal({ id: 'fonts', title: 'Czcionki', icon: 'type', width: 620, height: 560, body });
@@ -1531,7 +1531,7 @@ function openFontPicker(element) {
   const paint = (query = '') => {
     const needle = query.trim().toLowerCase();
     const items = catalog.filter((entry) => !needle || entry.name.toLowerCase().includes(needle));
-    $('#font-count', body).textContent = `${items.length} krojów`;
+    $('#font-count', body).textContent = `${items.length} families`;
     list.innerHTML = items.map((entry) => {
       const selected = entry.name === element.font;
       const badges = ['bold', 'italic', 'bold-italic']
@@ -1543,7 +1543,7 @@ function openFontPicker(element) {
         <span class="font-name">${escapeHtml(entry.name)}</span>
         <span class="font-styles">${badges}</span>
       </button>`;
-    }).join('') || '<div class="empty">Brak wyników</div>';
+    }).join('') || '<div class="empty">No results</div>';
 
     $$('.font-row', list).forEach((row) => {
       row.onclick = () => {
@@ -1625,16 +1625,16 @@ function renderSheet() {
   const regions = sheetRegions();
   const elements = valueElements();
 
-  const headCells = columns.map((column) => {
+  const headCells = columns.map((column, index) => {
     const element = state.spec.elements.find((item) => item.id === column.element_id);
     const type = element ? element.type : 'text';
     const options = elements.map((item) => `<option value="${item.id}" ${item.id === column.element_id ? 'selected' : ''}>
       ${TYPE_NAMES[item.type] || item.type}: ${escapeHtml(elementTitle(item)).slice(0, 26)}
     </option>`).join('');
-    return `<th class="sheet-col">
+    return `<th class="sheet-col" draggable="true" data-col-index="${index}">
       <div class="col-head">
-        <input class="col-name" data-col="${column.id}" value="${escapeHtml(column.name)}" placeholder="Nazwa kolumny">
-        <button class="col-del" data-col-del="${column.id}" title="Usuń kolumnę z arkusza"><i data-lucide="x"></i></button>
+        <span class="col-title" data-col-title="${column.id}" title="Double-click to rename, drag to reorder">${escapeHtml(column.name)}</span>
+        <button class="col-del" data-col-del="${column.id}" title="Remove column from the sheet"><i data-lucide="x"></i></button>
       </div>
       <div class="col-meta"><i data-lucide="${TYPE_ICONS[type] || 'type'}"></i><span>${TYPE_NAMES[type] || type}</span></div>
       <select class="col-element" data-col-element="${column.id}">${options}</select>
@@ -1650,7 +1650,7 @@ function renderSheet() {
     const cells = columns.map((column) => `<td><input class="cell-value" data-cell-row="${index}" data-cell-col="${column.id}" value="${escapeHtml(row[column.id] ?? '')}"></td>`).join('');
     return `<tr class="sheet-row" data-row="${index}">
       <th class="row-head"><span class="row-num">${index + 2}</span>
-        <button class="row-del" data-row-del="${index}" title="Usuń wiersz"><i data-lucide="x"></i></button>
+        <button class="row-del" data-row-del="${index}" title="Delete row"><i data-lucide="x"></i></button>
       </th>
       ${cells}
     </tr>`;
@@ -1674,12 +1674,84 @@ function renderSheet() {
   $('#sheet-mirror-wrap').classList.toggle('disabled', regions < 2);
 
   const total = (sheet.rows.length + 1) * Math.max(1, state.spec.copies || 1);
-  $('#sheet-print').innerHTML = `<i data-lucide="printer"></i> Drukuj arkusz (${total})`;
+  $('#sheet-print').innerHTML = `<i data-lucide="printer"></i> Print sheet (${total})`;
   $('#sheet-hint').textContent = regions > 1
-    ? `Ta rolka ma ${regions} regionów na szablon. Mirror: edytujesz tylko pierwszy, pozostałe wypełni wydruk${sheet.mirror ? ' — włączone' : ''} (${regions} × przy każdym wierszu).`
-    : 'Wiersz 1 to bieżąca etykieta — edycja działa od razu na projekcie. Kolejne wiersze są drukowane po kolei.';
+    ? `This roll has ${regions} regions per template. Mirror: edit the first one only, the print fills the rest${sheet.mirror ? ' — on' : ''} (${regions} × per row).`
+    : 'Row 1 is the current label — editing it updates the design right away. The other rows print in order.';
   refreshIcons(table);
   refreshIcons($('#sheet-toolbar') || document);
+
+  // sorting: column list in the toolbar
+  const sortSelect = $('#sheet-sort');
+  const previousSort = sortSelect.value;
+  sortSelect.innerHTML = '<option value="">Sort…</option>'
+    + columns.map((column) => `<option value="${column.id}">${escapeHtml(column.name)}</option>`).join('');
+  sortSelect.value = columns.some((column) => column.id === previousSort) ? previousSort : '';
+
+  // drag & drop column order
+  $$('.sheet-col', table).forEach((th) => {
+    th.addEventListener('dragstart', (event) => {
+      event.dataTransfer.setData('text/plain', String(Number(th.dataset.colIndex)));
+      event.dataTransfer.effectAllowed = 'move';
+      th.classList.add('dragging');
+    });
+    th.addEventListener('dragend', () => th.classList.remove('dragging'));
+    th.addEventListener('dragover', (event) => { event.preventDefault(); th.classList.add('drop-target'); });
+    th.addEventListener('dragleave', () => th.classList.remove('drop-target'));
+    th.addEventListener('drop', (event) => {
+      event.preventDefault();
+      th.classList.remove('drop-target');
+      const from = Number(event.dataTransfer.getData('text/plain'));
+      const to = Number(th.dataset.colIndex);
+      if (Number.isFinite(from) && Number.isFinite(to) && from !== to) moveSheetColumn(from, to);
+    });
+
+    // dwuklik na nazwie — edycja w miejscu
+    const title = $('.col-title', th);
+    title.addEventListener('dblclick', () => {
+      const column = state.spec.sheet.columns.find((item) => item.id === title.dataset.colTitle);
+      if (!column) return;
+      const input = document.createElement('input');
+      input.className = 'col-name';
+      input.value = column.name;
+      title.replaceWith(input);
+      input.focus();
+      input.select();
+      const commit = () => {
+        const value = input.value.trim();
+        if (value) column.name = value;
+        pushHistory();
+        renderSheet();
+      };
+      input.addEventListener('blur', commit);
+      input.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') { event.preventDefault(); input.blur(); }
+        if (event.key === 'Escape') { event.preventDefault(); renderSheet(); }
+      });
+    });
+  });
+}
+
+function moveSheetColumn(fromIndex, toIndex) {
+  const columns = state.spec.sheet.columns;
+  if (fromIndex < 0 || fromIndex >= columns.length || toIndex < 0 || toIndex >= columns.length) return;
+  const [moved] = columns.splice(fromIndex, 1);
+  columns.splice(toIndex, 0, moved);
+  pushHistory();
+  renderSheet();
+}
+
+function sortSheetRows(columnId, direction) {
+  const sheet = state.spec.sheet;
+  if (!columnId) return;
+  const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+  sheet.rows.sort((left, right) => {
+    const a = (left[columnId] ?? '').toString();
+    const b = (right[columnId] ?? '').toString();
+    return direction === 'desc' ? collator.compare(b, a) : collator.compare(a, b);
+  });
+  pushHistory();
+  renderSheet();
 }
 
 function readSheetColumns() {
@@ -1692,12 +1764,62 @@ function removeSheetColumn(columnId) {
   sheet.rows.forEach((row) => { delete row[columnId]; });
 }
 
-function addSheetColumn() {
+async function importSheetFile(file) {
+  const form = new FormData();
+  form.append('file', file);
+  const response = await fetch('/api/sheet/import', { method: 'POST', body: form });
+  if (!response.ok) {
+    let detail = `${response.status} ${response.statusText}`;
+    try { detail = (await response.json()).detail || detail; } catch (_) { /* ignore */ }
+    throw new Error(detail);
+  }
+  const data = await response.json();
   const sheet = state.spec.sheet;
+  syncSheetColumns();
+
+  const byName = new Map(sheet.columns.map((column) => [column.name.trim().toLowerCase(), column]));
+  const header = (data.header || []).map((cell, index) => (cell || `Column ${index + 1}`).toString());
+  let skipped = 0;
+
+  const mapping = header.map((name) => {
+    const existing = byName.get(name.trim().toLowerCase());
+    if (existing) return existing.id;
+    const bound = new Set(sheet.columns.map((column) => column.element_id));
+    const free = valueElements().find((element) => !bound.has(element.id));
+    if (!free) {
+      skipped += 1;
+      return null;
+    }
+    const column = { id: uid(), element_id: free.id, name: name.trim() };
+    sheet.columns.push(column);
+    byName.set(name.trim().toLowerCase(), column);
+    return column.id;
+  });
+
+  sheet.rows = (data.rows || []).map((row) => {
+    const record = {};
+    mapping.forEach((columnId, index) => {
+      if (columnId) record[columnId] = (row[index] ?? '').toString();
+    });
+    return record;
+  });
+
+  pushHistory();
+  renderSheet();
+  schedulePreview();
+  toast(
+    skipped
+      ? `Imported ${data.rows_count} rows — ${skipped} column(s) skipped (no free element to bind)`
+      : `Imported ${data.rows_count} rows from ${file.name}`,
+    skipped ? 'error' : 'ok',
+  );
+}
+
+function addSheetColumn() {  const sheet = state.spec.sheet;
   const bound = new Set(sheet.columns.map((column) => column.element_id));
   const next = valueElements().find((element) => !bound.has(element.id));
   if (!next) {
-    toast('Wszystkie elementy tekstowe są już kolumnami — zwiąż kolumnę z elementem w nagłówku.', 'error');
+    toast('Every text element is already a column — re-bind a column in the header instead.', 'error');
     return;
   }
   sheet.columns.push({
@@ -1727,6 +1849,29 @@ function bindSheetControls() {
     renderSheet();
   };
   $('#sheet-print').onclick = () => printSheet();
+  $('#sheet-sort').onchange = (event) => {
+    const columnId = event.target.value;
+    if (columnId) sortSheetRows(columnId, state.sheetSortDir || 'asc');
+  };
+  $('#sheet-sort-dir').onclick = () => {
+    state.sheetSortDir = (state.sheetSortDir || 'asc') === 'asc' ? 'desc' : 'asc';
+    const button = $('#sheet-sort-dir');
+    button.innerHTML = `<i data-lucide="${state.sheetSortDir === 'asc' ? 'arrow-down-a-z' : 'arrow-up-z-a'}"></i>`;
+    refreshIcons(button);
+    const columnId = $('#sheet-sort').value;
+    if (columnId) sortSheetRows(columnId, state.sheetSortDir);
+  };
+  $('#sheet-import').onclick = () => $('#sheet-file').click();
+  $('#sheet-file').onchange = async (event) => {
+    const file = event.target.files[0];
+    event.target.value = '';
+    if (!file) return;
+    try {
+      await importSheetFile(file);
+    } catch (error) {
+      toast(error.message, 'error');
+    }
+  };
   $('#sheet-mirror').onchange = (event) => {
     state.spec.sheet.mirror = event.target.checked;
     if (!state.spec.sheet.mirror) state.spec.sheet.mirror_flip = false;
@@ -1795,7 +1940,7 @@ function paintCellToElement(columnId, value) {
 
 async function printSheet() {
   if (!state.connected) {
-    toast('Najpierw połącz się z drukarką.', 'error');
+    toast('Connect the printer first.', 'error');
     return;
   }
   try {
@@ -1807,7 +1952,7 @@ async function printSheet() {
       density: state.spec.density || 3,
       mirror: mirrorRequest(),
     });
-    renderJobStatus(result.job || { state: 'running', progress: 0, message: 'Arkusz w kolejce…' });
+    renderJobStatus(result.job || { state: 'running', progress: 0, message: 'Sheet queued…' });
     pollJob();
   } catch (error) {
     toast(error.message, 'error');
@@ -1836,7 +1981,7 @@ function openModal({ id, title, icon = 'settings', width, height, body, footer, 
       <i data-lucide="${icon}"></i>
       <span>${escapeHtml(title)}</span>
       <div class="spacer"></div>
-      <button class="modal-close" data-close="${escapeHtml(id)}" title="Zamknij"><i data-lucide="x"></i></button>
+      <button class="modal-close" data-close="${escapeHtml(id)}" title="Close"><i data-lucide="x"></i></button>
     </div>
     <div class="modal-body"></div>
     ${footer ? '<div class="modal-footer"></div>' : ''}
@@ -1937,9 +2082,9 @@ function askText({ title, label, value = '', okLabel = 'Save', icon = 'pencil', 
 /* =============================================================== settings UI */
 const SETTINGS_TABS = [
   { id: 'printer', label: 'Drukarka', icon: 'bluetooth' },
-  { id: 'paper', label: 'Papier i rolka', icon: 'tag' },
+  { id: 'paper', label: 'Paper & roll', icon: 'tag' },
   { id: 'windows', label: 'Wydruk z Windows', icon: 'monitor' },
-  { id: 'catalog', label: 'Katalog formatów', icon: 'database' },
+  { id: 'catalog', label: 'Format catalogue', icon: 'database' },
   { id: 'stats', label: 'Statystyki', icon: 'list' },
   { id: 'about', label: 'O programie', icon: 'info' },
 ];
@@ -1965,11 +2110,11 @@ function openSettings(tab) {
     <div class="modal-content" id="settings-content"></div>
   `;
   const footer = document.createElement('div');
-  footer.innerHTML = '<span class="hint" id="settings-hint">Ustawienia zapisują się w bazie SQLite.</span>';
+  footer.innerHTML = '<span class="hint" id="settings-hint">Settings are stored in the SQLite database.</span>';
 
   const modal = openModal({
     id: 'settings',
-    title: 'Ustawienia',
+    title: 'Settings',
     icon: 'settings',
     width: 820,
     height: 600,
@@ -2031,7 +2176,7 @@ function bindSettingsActions(content) {
         const item = state.catalog[index];
         if (item) {
           applySize(item.width_mm, item.height_mm, { label_type: item.paper_type ?? state.spec.label_type });
-          toast(`Ustawiono ${item.width_mm} × ${item.height_mm} mm`, 'ok');
+          toast(`Set to ${item.width_mm} × ${item.height_mm} mm`, 'ok');
         }
       }
     } catch (error) {
@@ -2056,42 +2201,42 @@ function renderPrinterTab() {
     list = devices.map((device) => `
       <div class="device">
         <div><strong>${escapeHtml(device.name)}</strong><small>${escapeHtml(device.address)}${device.rssi ? ` · ${device.rssi} dBm` : ''}</small></div>
-        <button class="btn" data-action="connect" data-address="${escapeHtml(device.address)}">Połącz</button>
+        <button class="btn" data-action="connect" data-address="${escapeHtml(device.address)}">Connect</button>
       </div>`).join('');
   } else {
-    list = '<div class="empty">Włącz drukarkę i naciśnij „Skanuj”.</div>';
+    list = '<div class="empty">Turn the printer on and press “Scan”.</div>';
   }
 
   const info = payload.info || {};
   return `
     <section>
-      <h3>Połączenie</h3>
+      <h3>Connection</h3>
       <div class="row">
-        <button class="btn primary" data-action="scan"><i data-lucide="bluetooth"></i> Skanuj Bluetooth</button>
-        <button class="btn" data-action="refresh" ${state.connected ? '' : 'disabled'}><i data-lucide="refresh-cw"></i> Odśwież</button>
+        <button class="btn primary" data-action="scan"><i data-lucide="bluetooth"></i> Scan Bluetooth</button>
+        <button class="btn" data-action="refresh" ${state.connected ? '' : 'disabled'}><i data-lucide="refresh-cw"></i> Refresh</button>
         <button class="btn" data-action="test-print" ${state.connected ? '' : 'disabled'}><i data-lucide="scan-line"></i> Wydruk testowy</button>
-        <button class="btn danger" data-action="disconnect" ${state.connected ? '' : 'disabled'}><i data-lucide="power"></i> Rozłącz</button>
+        <button class="btn danger" data-action="disconnect" ${state.connected ? '' : 'disabled'}><i data-lucide="power"></i> Disconnect</button>
       </div>
       <div class="device-list" style="margin-top:10px">${list}</div>
-      <div class="hint" style="margin-top:6px">Wydruk testowy drukuje krótką próbkę na aktualnie wykrytym formacie papieru — najszybszy sposób, żeby sprawdzić połączenie i jakość.</div>
+      <div class="hint" style="margin-top:6px">The test print sends a small sample using the detected paper format — the quickest way to verify the connection and the print quality.</div>
     </section>
     <section>
       <h3>Model</h3>
       <div class="status-line"><span>Model</span><span>${escapeHtml(info.model_name || '—')}</span></div>
       <div class="status-line"><span>ID modelu</span><span>${info.model_id ?? '—'}</span></div>
-      <div class="status-line"><span>Rozdzielczość</span><span>${info.dpi ? `${info.dpi} dpi` : '—'}</span></div>
-      <div class="status-line"><span>Głowica</span><span>${info.printhead_px ? `${info.printhead_px} px` : '—'}</span></div>
+      <div class="status-line"><span>Resolution</span><span>${info.dpi ? `${info.dpi} dpi` : '—'}</span></div>
+      <div class="status-line"><span>Printhead</span><span>${info.printhead_px ? `${info.printhead_px} px` : '—'}</span></div>
       <div class="status-line"><span>Firmware</span><span>${escapeHtml(info.firmware || '—')}</span></div>
-      <div class="status-line"><span>Protokół</span><span>${info.protocol_version ?? '—'}</span></div>
+      <div class="status-line"><span>Protocol</span><span>${info.protocol_version ?? '—'}</span></div>
       <div class="status-line"><span>Numer seryjny</span><span class="mono">${escapeHtml(info.serial || '—')}</span></div>
     </section>
     <section>
       <h3>Serwis</h3>
       <div class="row">
-        <button class="btn" data-action="calibrate" ${state.connected ? '' : 'disabled'}><i data-lucide="scan-line"></i> Kalibracja papieru</button>
+        <button class="btn" data-action="calibrate" ${state.connected ? '' : 'disabled'}><i data-lucide="scan-line"></i> Paper calibration</button>
         <button class="btn" id="btn-test-settings" ${state.connected ? '' : 'disabled'}><i data-lucide="printer"></i> Wydruk testowy</button>
       </div>
-      <div class="hint" style="margin-top:6px">Kalibracja przesuwa kilka etykiet — użyj, gdy wydruk jest przesunięty względem nacięć.</div>
+      <div class="hint" style="margin-top:6px">Calibration feeds a few labels — use it when the print is offset against the cuts.</div>
     </section>
   `;
 }
@@ -2102,8 +2247,8 @@ function renderPaperTab() {
     ? { w: paper.detected_width_mm, h: paper.detected_height_mm, gap: paper.detected_gap_mm, type: paper.detected_label_type }
     : null;
   const flags = [
-    ['Pokrywa', paper.lid_closed === true ? '<span class="ok-text">zamknięta</span>' : paper.lid_closed === false ? '<span class="err-text">otwarta</span>' : '—'],
-    ['Papier', paper.paper_inserted === true ? '<span class="ok-text">wykryty</span>' : paper.paper_inserted === false ? '<span class="err-text">brak</span>' : '—'],
+    ['Lid', paper.lid_closed === true ? '<span class="ok-text">closed</span>' : paper.lid_closed === false ? '<span class="err-text">open</span>' : '—'],
+    ['Paper', paper.paper_inserted === true ? '<span class="ok-text">detected</span>' : paper.paper_inserted === false ? '<span class="err-text">missing</span>' : '—'],
     ['Tag RFID', paper.rfid_ok === true ? '<span class="ok-text">odczytany</span>' : paper.rfid_ok === false ? '<span class="warn-text">brak</span>' : '—'],
     ['Rodzaj', escapeHtml(paper.label_type_name || '—')],
     ['Kod rolki', `<span class="mono">${escapeHtml(paper.barcode || '—')}</span>`],
@@ -2111,7 +2256,7 @@ function renderPaperTab() {
   ];
   if (paper.capacity) {
     const approx = paper.capacity_estimated ? '≈' : '';
-    flags.push(['Zużycie rolki', `${paper.used ?? 0} / ${approx}${paper.capacity}${paper.remaining !== null && paper.remaining !== undefined ? ` · zostało ${approx}${paper.remaining}` : ''}`]);
+    flags.push(['Roll usage', `${paper.used ?? 0} / ${approx}${paper.capacity}${paper.remaining !== null && paper.remaining !== undefined ? ` · ${approx}${paper.remaining} left` : ''}`]);
   }
   if (paper.battery !== null && paper.battery !== undefined) {
     const levels = ['0%', '25%', '50%', '75%', '100%'];
@@ -2124,7 +2269,7 @@ function renderPaperTab() {
 
   return `
     <section>
-      <h3>Stan papieru</h3>
+      <h3>Paper status</h3>
       ${flags.map(([label, value]) => `<div class="status-line"><span>${label}</span><span>${value}</span></div>`).join('')}
     </section>
     <section>
@@ -2132,29 +2277,29 @@ function renderPaperTab() {
       ${detected ? `<div class="status-line"><span>${paper.geometry_source === 'catalog' ? 'Z katalogu' : 'Z drukarki'}</span><span class="ok-text">${detected.w} × ${detected.h} mm</span></div>` : ''}
       ${catalogEntry?.name ? `<div class="status-line"><span>Symbol</span><span class="mono">${escapeHtml(catalogEntry.name)}</span></div>` : ''}
       <div class="row" style="margin-top:8px">
-        <button class="btn" data-action="detect" ${state.connected ? '' : 'disabled'}><i data-lucide="scan-line"></i> Wykryj format</button>
-        <button class="btn primary" data-action="apply-format" ${detected ? '' : 'disabled'}>Użyj wykrytego</button>
+        <button class="btn" data-action="detect" ${state.connected ? '' : 'disabled'}><i data-lucide="scan-line"></i> Detect format</button>
+        <button class="btn primary" data-action="apply-format" ${detected ? '' : 'disabled'}>Use detected</button>
       </div>
       <div class="grid-2" style="margin-top:10px">
-        <div class="field"><label for="roll-width">Szerokość (mm)</label><input type="number" id="roll-width" step="0.5" value="${round2(state.spec.width_mm)}"></div>
-        <div class="field"><label for="roll-height">Wysokość (mm)</label><input type="number" id="roll-height" step="0.5" value="${round2(state.spec.height_mm)}"></div>
+        <div class="field"><label for="roll-width">Width (mm)</label><input type="number" id="roll-width" step="0.5" value="${round2(state.spec.width_mm)}"></div>
+        <div class="field"><label for="roll-height">Height (mm)</label><input type="number" id="roll-height" step="0.5" value="${round2(state.spec.height_mm)}"></div>
       </div>
       <div class="row" style="margin-top:8px">
-        <button class="btn" data-action="save-roll" ${paper.barcode || paper.uuid ? '' : 'disabled'}><i data-lucide="database"></i> Zapisz rozmiar dla rolki</button>
+        <button class="btn" data-action="save-roll" ${paper.barcode || paper.uuid ? '' : 'disabled'}><i data-lucide="database"></i> Save size for this roll</button>
       </div>
       ${profile ? `<div class="hint" style="margin-top:6px">Zapisany profil: ${profile.width_mm} × ${profile.height_mm} mm</div>` : ''}
     </section>
     <section>
-      <h3>Projekt</h3>
+      <h3>Design</h3>
       <div class="grid-2">
-        <div class="field"><label for="label-width">Szerokość (mm)</label><input type="number" id="label-width" min="5" max="110" step="0.5" value="${round2(state.spec.width_mm)}"></div>
-        <div class="field"><label for="label-height">Wysokość (mm)</label><input type="number" id="label-height" min="5" max="300" step="0.5" value="${round2(state.spec.height_mm)}"></div>
+        <div class="field"><label for="label-width">Width (mm)</label><input type="number" id="label-width" min="5" max="110" step="0.5" value="${round2(state.spec.width_mm)}"></div>
+        <div class="field"><label for="label-height">Height (mm)</label><input type="number" id="label-height" min="5" max="300" step="0.5" value="${round2(state.spec.height_mm)}"></div>
       </div>
-      <div class="field"><label for="label-type">Rodzaj papieru</label>
+      <div class="field"><label for="label-type">Paper type</label>
         <select id="label-type">${(state.options?.label_types || []).map((type) => `<option value="${type.value}" ${Number(state.spec.label_type) === Number(type.value) ? 'selected' : ''}>${escapeHtml(type.name)}</option>`).join('')}</select>
       </div>
       <div class="grid-2">
-        <div class="field"><label for="label-gap">Odstęp (mm)</label><input type="number" id="label-gap" min="0" max="20" step="0.5" value="${state.spec.gap_mm}"></div>
+        <div class="field"><label for="label-gap">Gap (mm)</label><input type="number" id="label-gap" min="0" max="20" step="0.5" value="${state.spec.gap_mm}"></div>
         <div class="field"><label for="label-preset">Gotowy rozmiar</label>
           <select id="label-preset"><option value="">— wybierz —</option>${(state.options?.paper_presets || []).map((preset, index) => `<option value="${index}">${escapeHtml(preset.name)}</option>`).join('')}</select>
         </div>
@@ -2204,33 +2349,33 @@ function renderWindowsTab() {
       <div class="field">
         <label for="fit-mode">Tryb</label>
         <select id="fit-mode">
-          <option value="contain">Zmieść całość (bez kadrowania)</option>
-          <option value="cover">Wypełnij i przytnij</option>
-          <option value="stretch">Rozciągnij do formatu</option>
+          <option value="contain">Fit whole page (no crop)</option>
+          <option value="cover">Fill and crop</option>
+          <option value="stretch">Stretch to format</option>
         </select>
       </div>
       <div class="grid-2">
-        <div class="field"><label for="fit-dx">Przesunięcie X (mm)</label><input type="number" id="fit-dx" step="0.5" value="0"></div>
-        <div class="field"><label for="fit-dy">Przesunięcie Y (mm)</label><input type="number" id="fit-dy" step="0.5" value="0"></div>
-        <div class="field"><label for="fit-rot">Obrót</label><select id="fit-rot"><option value="0">0°</option><option value="90">90°</option><option value="180">180°</option><option value="270">270°</option></select></div>
+        <div class="field"><label for="fit-dx">Offset X (mm)</label><input type="number" id="fit-dx" step="0.5" value="0"></div>
+        <div class="field"><label for="fit-dy">Offset Y (mm)</label><input type="number" id="fit-dy" step="0.5" value="0"></div>
+        <div class="field"><label for="fit-rot">Rotation</label><select id="fit-rot"><option value="0">0°</option><option value="90">90°</option><option value="180">180°</option><option value="270">270°</option></select></div>
         <div class="field"><label for="fit-scale">Skala</label><input type="number" id="fit-scale" step="0.05" value="1"></div>
         <div class="field"><label for="fit-margin">Margines (mm)</label><input type="number" id="fit-margin" step="0.5" value="0"></div>
-        <div class="field"><label for="fit-threshold">Próg (0–255)</label><input type="number" id="fit-threshold" step="5" value="128"></div>
+        <div class="field"><label for="fit-threshold">Threshold (0–255)</label><input type="number" id="fit-threshold" step="5" value="128"></div>
       </div>
       <div class="row" style="margin-top:8px">
-        <label class="check"><input type="checkbox" id="fit-dither"> rozstrzelenie (zdjęcia)</label>
+        <label class="check"><input type="checkbox" id="fit-dither"> dithering (photos)</label>
         <label class="check"><input type="checkbox" id="fit-invert"> negatyw</label>
       </div>
       <div class="row" style="margin-top:10px">
-        <button class="btn primary" data-action="save-fit"><i data-lucide="save"></i> Zapisz dopasowanie</button>
+        <button class="btn primary" data-action="save-fit"><i data-lucide="save"></i> Save fit</button>
       </div>
     </section>
     <section>
       <h3>Kolejka Windows (IPP)</h3>
-      <div class="hint">Drukarka pojawia się w systemie jako zwykła kolejka — bez sterownika jądra.
-        Rejestracja wymaga jednorazowych uprawnień administratora.</div>
+      <div class="hint">The printer shows up as a regular queue — no kernel driver involved.
+        Registration needs one-time administrator rights.</div>
       <div class="row" style="margin-top:8px">
-        <button class="btn" data-action="install-info"><i data-lucide="terminal"></i> Pokaż polecenie instalacji</button>
+        <button class="btn" data-action="install-info"><i data-lucide="terminal"></i> Show install command</button>
       </div>
       <div id="driver-command"></div>
     </section>
@@ -2241,18 +2386,18 @@ function renderCatalogTab() {
   const items = state.catalog || [];
   return `
     <section>
-      <h3>Formaty w bazie (${items.length})</h3>
-      <div class="hint">Formaty wbudowane, zaimportowane z aplikacji NIIMBOT i dodane ręcznie.
-        Rozpoznawanie rolki działa po kodzie produktu z taga RFID.</div>
+      <h3>Formats in the database (${items.length})</h3>
+      <div class="hint">Built-in formats, formats imported from the NIIMBOT app and manual entries.
+        A roll is recognised by the product barcode stored in its RFID tag.</div>
       <div class="device-list" style="margin-top:10px;max-height:320px">
         ${items.length ? items.map((item, index) => `
           <div class="device">
             <div>
-              <strong>${round2(item.width_mm)} × ${round2(item.height_mm)} mm${item.rows > 1 ? ` · ${item.rows} rzędy` : ''}</strong>
+              <strong>${round2(item.width_mm)} × ${round2(item.height_mm)} mm${item.rows > 1 ? ` · ${item.rows} rows` : ''}</strong>
               <small>${escapeHtml(item.sku || item.name || '')}${item.capacity ? ` · ${item.capacity} etykiet` : ''} · ${item.source}${item.barcode ? ` · ${item.barcode}` : ''}</small>
             </div>
-            <button class="btn" data-action="use-format" data-index="${index}">Użyj</button>
-          </div>`).join('') : '<div class="empty">Brak formatów</div>'}
+            <button class="btn" data-action="use-format" data-index="${index}">Use</button>
+          </div>`).join('') : '<div class="empty">No formats</div>'}
       </div>
     </section>
     <section>
@@ -2260,7 +2405,7 @@ function renderCatalogTab() {
       <div class="row">
         <button class="btn" data-action="import-catalog"><i data-lucide="download"></i> Importuj z aplikacji NIIMBOT</button>
       </div>
-      <div class="hint" style="margin-top:6px">Czyta lokalny cache aplikacji producenta (barcode rolki → format, nazwy, pojemność).</div>
+      <div class="hint" style="margin-top:6px">Reads the vendor app's local cache (roll barcode → format, names, capacity).</div>
     </section>
   `;
 }
@@ -2273,17 +2418,17 @@ function renderAboutTab() {
   return `
     <section>
       <h3>Niibot Studio</h3>
-      <div class="hint" style="margin-bottom:10px">Niezależny panel do drukarki Niimbot B1 przez Bluetooth LE.
+      <div class="hint" style="margin-bottom:10px">Standalone panel for the Niimbot B1 printer over Bluetooth LE.
         Dane trzymane lokalnie w jednej bazie SQLite — bez chmury.</div>
-      <div class="status-line"><span>Protokół</span><span>Niimbot BLE (0x55 0x55 … 0xAA 0xAA)</span></div>
-      <div class="status-line"><span>Formaty</span><span>${(state.catalog || []).length} w bazie</span></div>
-      <div class="status-line"><span>Interfejs</span><span>Lucide + Roboto, układ VS Code</span></div>
+      <div class="status-line"><span>Protocol</span><span>Niimbot BLE (0x55 0x55 … 0xAA 0xAA)</span></div>
+      <div class="status-line"><span>Formats</span><span>${(state.catalog || []).length} stored</span></div>
+      <div class="status-line"><span>Interface</span><span>Lucide + Roboto, VS Code layout</span></div>
       <div class="status-line"><span>Drukarka Windows</span><span>kolejka IPP (Microsoft IPP Class Driver)</span></div>
-      <h4>Skróty</h4>
-      <div class="status-line"><span>Cofnij / ponów</span><span class="mono">Ctrl+Z / Ctrl+Y</span></div>
-      <div class="status-line"><span>Duplikuj / usuń</span><span class="mono">Ctrl+D / Del</span></div>
-      <div class="status-line"><span>Przesuń</span><span class="mono">strzałki (Shift = 0,2 mm)</span></div>
-      <div class="status-line"><span>Drukuj</span><span class="mono">Ctrl+P</span></div>
+      <h4>Shortcuts</h4>
+      <div class="status-line"><span>Undo / redo</span><span class="mono">Ctrl+Z / Ctrl+Y</span></div>
+      <div class="status-line"><span>Duplicate / delete</span><span class="mono">Ctrl+D / Del</span></div>
+      <div class="status-line"><span>Nudge</span><span class="mono">arrows (Shift = 0.2 mm)</span></div>
+      <div class="status-line"><span>Print</span><span class="mono">Ctrl+P</span></div>
     </section>
   `;
 }
@@ -2291,70 +2436,70 @@ function renderAboutTab() {
 /* ================================================================ menus */
 const MENUS = {
   file: {
-    label: 'Plik',
+    label: 'File',
     items: [
-      { icon: 'file-plus', label: 'Nowa etykieta', run: () => setSpec(state.options.default_spec) },
-      { icon: 'folder-open', label: 'Wczytaj etykietę…', run: () => openLabelsModal() },
-      { icon: 'save', label: 'Zapisz etykietę', key: 'Ctrl+S', run: () => saveLabel() },
-      { icon: 'save-all', label: 'Zapisz etykietę jako…', key: 'Ctrl+Shift+S', run: () => saveLabelAs() },
-      { icon: 'layout-template', label: 'Zapisz jako szablon…', run: () => saveAsTemplate() },
+      { icon: 'file-plus', label: 'New label', run: () => setSpec(state.options.default_spec) },
+      { icon: 'folder-open', label: 'Load label…', run: () => openLabelsModal() },
+      { icon: 'save', label: 'Save label', key: 'Ctrl+S', run: () => saveLabel() },
+      { icon: 'save-all', label: 'Save label as…', key: 'Ctrl+Shift+S', run: () => saveLabelAs() },
+      { icon: 'layout-template', label: 'Save as template…', run: () => saveAsTemplate() },
       { sep: true },
-      { icon: 'download', label: 'Eksport PNG', run: () => exportPng() },
+      { icon: 'download', label: 'Export PNG', run: () => exportPng() },
       { sep: true },
-      { icon: 'printer', label: 'Drukuj', key: 'Ctrl+P', run: () => printLabel() },
-      { icon: 'scan-line', label: 'Wydruk testowy', run: () => testPrint(), disabled: () => !state.connected },
+      { icon: 'printer', label: 'Print', key: 'Ctrl+P', run: () => printLabel() },
+      { icon: 'scan-line', label: 'Test print', run: () => testPrint(), disabled: () => !state.connected },
       { sep: true },
-      { icon: 'x', label: 'Zamknij okno', run: () => window.close() },
+      { icon: 'x', label: 'Close window', run: () => window.close() },
     ],
   },
   edit: {
-    label: 'Edycja',
+    label: 'Edit',
     items: [
-      { icon: 'undo-2', label: 'Cofnij', key: 'Ctrl+Z', run: () => undo() },
-      { icon: 'redo-2', label: 'Ponów', key: 'Ctrl+Y', run: () => redo() },
+      { icon: 'undo-2', label: 'Undo', key: 'Ctrl+Z', run: () => undo() },
+      { icon: 'redo-2', label: 'Redo', key: 'Ctrl+Y', run: () => redo() },
       { sep: true },
-      { icon: 'copy', label: 'Duplikuj element', key: 'Ctrl+D', run: () => duplicateSelected(), disabled: () => !state.selectedId },
-      { icon: 'trash-2', label: 'Usuń element', key: 'Del', run: () => deleteSelected(), disabled: () => !state.selectedId },
+      { icon: 'copy', label: 'Duplicate element', key: 'Ctrl+D', run: () => duplicateSelected(), disabled: () => !state.selectedId },
+      { icon: 'trash-2', label: 'Delete element', key: 'Del', run: () => deleteSelected(), disabled: () => !state.selectedId },
       { sep: true },
-      { icon: 'align-center-horizontal', label: 'Wyśrodkuj poziomo', run: () => alignSelected('h'), disabled: () => !state.selectedId },
-      { icon: 'align-center-vertical', label: 'Wyśrodkuj pionowo', run: () => alignSelected('v'), disabled: () => !state.selectedId },
+      { icon: 'align-center-horizontal', label: 'Centre horizontally', run: () => alignSelected('h'), disabled: () => !state.selectedId },
+      { icon: 'align-center-vertical', label: 'Centre vertically', run: () => alignSelected('v'), disabled: () => !state.selectedId },
       { sep: true },
-      { icon: 'shapes', label: 'Wstaw ikonę / clipart…', run: () => openIconPicker() },
+      { icon: 'shapes', label: 'Insert icon / clipart…', run: () => openIconPicker() },
       {
         icon: 'type',
-        label: 'Czcionka…',
+        label: 'Font…',
         run: () => { const element = selectedElement(); if (element && element.type === 'text') openFontPicker(element); },
         disabled: () => selectedElement()?.type !== 'text',
       },
     ],
   },
   view: {
-    label: 'Widok',
+    label: 'View',
     items: [
-      { icon: 'grid-3x3', label: 'Siatka na etykiecie', key: 'G', checked: () => state.showGrid, run: () => toggleGrid() },
-      { icon: 'magnet', label: 'Przyciąganie do siatki', key: 'S', checked: () => state.snapToGrid, run: () => toggleSnap() },
-      { icon: 'crop', label: 'Regiony wydruku', checked: () => state.showRegions, run: () => toggleRegions() },
+      { icon: 'grid-3x3', label: 'Grid on label', key: 'G', checked: () => state.showGrid, run: () => toggleGrid() },
+      { icon: 'magnet', label: 'Snap to grid', key: 'S', checked: () => state.snapToGrid, run: () => toggleSnap() },
+      { icon: 'crop', label: 'Print regions', checked: () => state.showRegions, run: () => toggleRegions() },
       { sep: true },
-      { icon: 'scan-line', label: 'Wykryj format rolki', run: () => detectSize(), disabled: () => !state.connected },
-      { icon: 'refresh-cw', label: 'Odśwież stan drukarki', run: () => refreshPrinter(), disabled: () => !state.connected },
+      { icon: 'scan-line', label: 'Detect roll format', run: () => detectSize(), disabled: () => !state.connected },
+      { icon: 'refresh-cw', label: 'Refresh printer state', run: () => refreshPrinter(), disabled: () => !state.connected },
     ],
   },
   settings: {
-    label: 'Ustawienia',
+    label: 'Settings',
     items: [
-      { icon: 'settings', label: 'Ustawienia…', key: 'Ctrl+,', run: () => openSettings('printer') },
-      { icon: 'tag', label: 'Papier i rolka…', run: () => openSettings('paper') },
-      { icon: 'monitor', label: 'Wydruk z Windows…', run: () => openSettings('windows') },
+      { icon: 'settings', label: 'Settings…', key: 'Ctrl+,', run: () => openSettings('printer') },
+      { icon: 'tag', label: 'Paper & roll…', run: () => openSettings('paper') },
+      { icon: 'monitor', label: 'Print from Windows…', run: () => openSettings('windows') },
       { sep: true },
-      { icon: 'download', label: 'Importuj katalog NIIMBOT', run: () => importCatalog() },
-      { icon: 'list', label: 'Statystyki…', run: () => openSettings('stats') },
+      { icon: 'download', label: 'Import NIIMBOT catalogue', run: () => importCatalog() },
+      { icon: 'list', label: 'Statistics…', run: () => openSettings('stats') },
     ],
   },
   help: {
-    label: 'Pomoc',
+    label: 'Help',
     items: [
-      { icon: 'info', label: 'O programie…', run: () => openSettings('about') },
-      { icon: 'book-open', label: 'Dokumentacja (README)', run: () => window.open('/../README.md', '_blank') },
+      { icon: 'info', label: 'About…', run: () => openSettings('about') },
+      { icon: 'book-open', label: 'Documentation (README)', run: () => window.open('/../README.md', '_blank') },
     ],
   },
 };
@@ -2402,7 +2547,7 @@ function toggleMenu(key) {
 function toggleRegions() {
   state.showRegions = !state.showRegions;
   layoutStage();
-  toast(state.showRegions ? 'Regiony wydruku: włączone' : 'Regiony wydruku: wyłączone');
+  toast(state.showRegions ? 'Print regions: on' : 'Print regions: off');
 }
 
 function saveViewPrefs() {
@@ -2435,14 +2580,14 @@ function toggleGrid(force) {
   applyGridSize();
   syncViewToggles();
   saveViewPrefs();
-  toast(state.showGrid ? 'Siatka: włączona' : 'Siatka: wyłączona');
+  toast(state.showGrid ? 'Grid: on' : 'Grid: off');
 }
 
 function toggleSnap(force) {
   state.snapToGrid = typeof force === 'boolean' ? force : !state.snapToGrid;
   syncViewToggles();
   saveViewPrefs();
-  toast(state.snapToGrid ? 'Przyciąganie do siatki: włączone' : 'Przyciąganie wyłączone (Alt = swobodnie)');
+  toast(state.snapToGrid ? 'Snap to grid: on' : 'Snapping off (Alt = free movement)');
 }
 
 /* ================================================================ actions */
@@ -2457,7 +2602,7 @@ async function scanDevices(button) {
     const { devices } = await api('/api/scan', 'POST', { timeout: 6, show_all: false });
     state.lastDevices = devices;
     renderSettingsTab();
-    if (!devices.length) toast('Nie znaleziono drukarek — sprawdź, czy są włączone.', 'error');
+    if (!devices.length) toast('No printers found — check that they are switched on.', 'error');
   } finally {
     if (button && button.isConnected) {
       button.disabled = false;
@@ -2470,7 +2615,7 @@ async function scanDevices(button) {
 async function disconnectPrinter() {
   const payload = await api('/api/disconnect', 'POST');
   applyState(payload);
-  toast('Rozłączono');
+  toast('Disconnected');
 }
 
 async function refreshPrinter() {
@@ -2479,10 +2624,10 @@ async function refreshPrinter() {
 }
 
 async function calibratePrinter() {
-  toast('Kalibracja — drukarka przesunie papier…');
+  toast('Calibration — the printer will feed a few labels…');
   const payload = await api('/api/calibrate', 'POST');
   applyState(payload);
-  toast('Kalibracja zakończona', 'ok');
+  toast('Calibration finished', 'ok');
 }
 
 function applyDetectedFormat() {
@@ -2492,7 +2637,7 @@ function applyDetectedFormat() {
       gap_mm: paper.detected_gap_mm ?? state.spec.gap_mm,
       label_type: paper.detected_label_type ?? state.spec.label_type,
     });
-    toast('Zastosowano wykryty format', 'ok');
+    toast('Detected format applied', 'ok');
   }
 }
 
@@ -2501,7 +2646,7 @@ async function saveRollSize() {
   const width = Number($('#roll-width')?.value) || state.spec.width_mm;
   const height = Number($('#roll-height')?.value) || state.spec.height_mm;
   const key = paper.barcode ? `bc:${paper.barcode}` : (paper.uuid ? `uid:${paper.uuid}` : null);
-  if (!key) throw new Error('Brak identyfikatora rolki');
+  if (!key) throw new Error('The roll has no identifier yet');
   await api('/api/profiles', 'POST', {
     key,
     name: `${width} × ${height} mm`,
@@ -2555,7 +2700,7 @@ async function showInstallCommand(root) {
   box.innerHTML = `<pre># jako administrator, w katalogu aplikacji:
 powershell -ExecutionPolicy Bypass -File install-printer.ps1
 
-# albo ręcznie:
+# or manually:
 ${escapeHtml(info.install_command)}</pre>`;
 }
 
@@ -2570,7 +2715,7 @@ async function importCatalog(button) {
     state.catalog = result.catalog;
     applyState(result.state);
     renderSettingsTab();
-    toast(result.imported ? `Zaimportowano ${result.imported} format(ów)` : 'Nie znaleziono nowych formatów', result.imported ? 'ok' : 'error');
+    toast(result.imported ? `Imported ${result.imported} format(s)` : 'No new formats found', result.imported ? 'ok' : 'error');
   } finally {
     if (button && button.isConnected) {
       button.disabled = false;
@@ -2587,8 +2732,8 @@ async function loadStats(root) {
     const stats = await api('/api/stats?recent=6');
     const rows = [];
     rows.push(`<div class="status-line"><span>Wydrukowane etykiety</span><span>${stats.labels || 0}</span></div>`);
-    rows.push(`<div class="status-line"><span>Zadania</span><span>${stats.done || 0} ok · ${stats.failed || 0} błędów</span></div>`);
-    rows.push(`<div class="status-line"><span>Formaty w bazie</span><span>${stats.formats || 0}</span></div>`);
+    rows.push(`<div class="status-line"><span>Jobs</span><span>${stats.done || 0} ok · ${stats.failed || 0} failed</span></div>`);
+    rows.push(`<div class="status-line"><span>Formats in the database</span><span>${stats.formats || 0}</span></div>`);
     rows.push(`<div class="status-line"><span>Szablony</span><span>${stats.templates || 0}</span></div>`);
     if (stats.last_ok) rows.push(`<div class="status-line"><span>Ostatni wydruk</span><span>${new Date(stats.last_ok * 1000).toLocaleString('pl-PL')}</span></div>`);
     for (const item of (stats.by_sku || []).slice(0, 4)) {
@@ -2609,7 +2754,7 @@ async function loadStats(root) {
 
 async function printLabel() {
   if (!state.connected) {
-    toast('Najpierw połącz się z drukarką.', 'error');
+    toast('Connect the printer first.', 'error');
     return;
   }
   try {
@@ -2619,7 +2764,7 @@ async function printLabel() {
       density: state.spec.density || 3,
       mirror: mirrorRequest(),
     });
-    renderJobStatus({ state: 'running', progress: 0, message: 'Zlecenie przyjęte…' });
+    renderJobStatus({ state: 'running', progress: 0, message: 'Job accepted…' });
     pollJob();
   } catch (error) {
     toast(error.message, 'error');
@@ -2645,7 +2790,7 @@ async function detectSize() {
       applySize(geo.width_mm, geo.height_mm, { gap_mm: geo.gap_mm ?? state.spec.gap_mm, label_type: geo.label_type ?? state.spec.label_type });
       toast(`Wykryto format ${geo.width_mm} × ${geo.height_mm} mm`, 'ok');
     } else {
-      toast(result.detail || 'Drukarka nie podała formatu.', 'error');
+      toast(result.detail || 'The printer did not report a format.', 'error');
     }
   } catch (error) {
     toast(error.message, 'error');
@@ -2656,7 +2801,7 @@ function exportPng() {
   if (!state.preview) return;
   const link = document.createElement('a');
   link.href = `data:image/png;base64,${state.preview.png}`;
-  link.download = `${(state.spec.name || 'etykieta').replace(/\s+/g, '-')}.png`;
+  link.download = `${(state.spec.name || 'label').replace(/\s+/g, '-')}.png`;
   link.click();
 }
 
@@ -2731,11 +2876,11 @@ async function openLabelsModal() {
     ? `<div class="device-list">${labels.map((label) => `
         <div class="device">
           <div><strong>${escapeHtml(label.name)}</strong><small>${label.width_mm} × ${label.height_mm} mm</small></div>
-          <button class="btn" data-id="${escapeHtml(label.id)}">Otwórz</button>
+          <button class="btn" data-id="${escapeHtml(label.id)}">Open</button>
         </div>`).join('')}</div>`
-    : '<div class="empty">Brak zapisanych etykiet</div>';
+    : '<div class="empty">No saved labels yet</div>';
 
-  openModal({ id: 'labels', title: 'Wczytaj etykietę', icon: 'folder-open', width: 520, height: 420, body });
+  openModal({ id: 'labels', title: 'Load label', icon: 'folder-open', width: 520, height: 420, body });
   $$('button[data-id]', body).forEach((button) => {
     button.onclick = async () => {
       const data = await api(`/api/labels/${button.dataset.id}`);
@@ -2755,10 +2900,10 @@ function pollJob() {
       if (job && ['done', 'error', 'cancelled'].includes(job.state)) {
         clearInterval(state.jobTimer);
         if (job.state === 'done') {
-          toast('Wydrukowano etykietę', 'ok');
+          toast('Label printed', 'ok');
           setTimeout(() => refreshPrinter().catch(() => {}), 1200);
         } else if (job.state === 'error') {
-          toast(job.error || 'Błąd wydruku', 'error');
+          toast(job.error || 'Print failed', 'error');
         }
       }
     } catch (error) {
@@ -2772,7 +2917,7 @@ function pollJob() {
 async function connect(address) {
   const payload = await api('/api/connect', 'POST', { address });
   applyState(payload);
-  toast(`Połączono: ${payload.info.model_name}`, 'ok');
+  toast(`Connected: ${payload.info.model_name}`, 'ok');
   const paper = payload.paper || {};
   if (!applyKnownFormat(paper) && payload.profile) {
     applySize(payload.profile.width_mm, payload.profile.height_mm, {
@@ -2787,7 +2932,7 @@ async function connect(address) {
 
 function captureSettingFromModel() {
   const model = state.printer?.info?.model_name;
-  if (model && model !== 'nieznany') storeLocal('lastModel', model);
+  if (model && model !== 'unknown') storeLocal('lastModel', model);
 }
 
 function storeLocal(key, value) {
@@ -2796,6 +2941,7 @@ function storeLocal(key, value) {
 
 /* =================================================================== state */
 function applyState(payload) {
+  const wasConnected = state.connected;
   state.printer = payload;
   state.connected = Boolean(payload.connected);
   renderStatusBar();
@@ -2805,6 +2951,22 @@ function applyState(payload) {
   if (state.connected) startStatusTimer(); else stopStatusTimer();
   if (state.spec) layoutStage();
   if (isModalOpen('settings')) renderSettingsTab();
+
+  const paper = payload.paper || {};
+  const paperKey = [paper.barcode, paper.detected_width_mm, paper.detected_height_mm, paper.label_type].join('|');
+  const freshPaper = state.connected && paperKey !== state.lastPaperKey;
+  if (freshPaper) {
+    state.lastPaperKey = paperKey;
+    // RFID of the roll just arrived (connect or a roll swap) — update the whole screen.
+    if (!wasConnected) toast(`Roll detected: ${paper.sku || paper.barcode || 'RFID read'}`, 'ok');
+    applyKnownFormat(paper);
+    renderStatusBar();
+    renderStageMeta();
+    if (state.view === 'sheet') renderSheet();
+    schedulePreview();
+    if (isModalOpen('settings')) renderSettingsTab();
+  }
+  if (!state.connected) state.lastPaperKey = null;
 }
 
 async function refreshState() {
@@ -2823,6 +2985,22 @@ function startStatusTimer() {
       applyState(payload);
     } catch (_) { /* transient */ }
   }, 25000);
+}
+
+/* Picks up a background auto-connect (the server connects to the remembered printer
+   on its own), and keeps the paper panel fresh until that happens. */
+function startWatchTimer() {
+  if (state.watchTimer) return;
+  state.watchTimer = setInterval(async () => {
+    if (state.connected) return;
+    try {
+      const payload = await api('/api/state');
+      if (payload.connected) {
+        applyState(payload);
+        toast('Printer connected automatically', 'ok');
+      }
+    } catch (_) { /* ignore */ }
+  }, 4000);
 }
 
 function stopStatusTimer() {
@@ -2956,9 +3134,10 @@ async function init() {
     renderStatusBar();
     await requestPreview();
     if (state.connected) startStatusTimer();
+    startWatchTimer();
     refreshIcons();
   } catch (error) {
-    toast(`Nie udało się uruchomić aplikacji: ${error.message}`, 'error');
+    toast(`Could not start the application: ${error.message}`, 'error');
   }
 }
 

@@ -114,6 +114,50 @@ svg.lucide { width: 16px; height: 16px; stroke-width: 1.7; }
 }
 .menu-item:hover, .menu-item.active { background: rgba(0, 194, 194, 0.12); }
 .menu-spacer { flex: 1; }
+/* język / language switcher */
+.lang-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.7);
+  cursor: pointer;
+  color: var(--ink-muted);
+}
+.lang-button:hover { background: rgba(0, 194, 194, 0.12); color: var(--teal-deep); border-color: rgba(0, 194, 194, 0.3); }
+.lang-button svg { width: 12px; height: 12px; }
+.lang-flag { font-size: 15px; line-height: 1; }
+.lang-menu {
+  position: fixed;
+  z-index: 300;
+  min-width: 190px;
+  padding: 5px;
+  border-radius: 10px;
+  border: 1px solid var(--line-strong);
+  background: #fff;
+  box-shadow: 0 14px 34px rgba(0, 26, 77, 0.2);
+}
+.lang-menu button {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 7px 9px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink);
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+}
+.lang-menu button:hover { background: rgba(0, 194, 194, 0.12); }
+.lang-menu button.active { background: rgba(0, 194, 194, 0.16); color: var(--teal-deep); font-weight: 600; }
+.lang-menu .lang-label { flex: 1; }
+.lang-menu .lang-code { font-size: 10px; color: var(--ink-muted); letter-spacing: 0.06em; }
+
 .menu-conn {
   display: flex;
   align-items: center;
@@ -602,7 +646,21 @@ button.sb-item:hover { background: rgba(0, 194, 194, 0.12); color: var(--teal-de
 .row-num { font-size: 11px; color: var(--ink-muted); }
 .row-num.current { color: var(--teal-deep); font-weight: 600; }
 
-.col-head { display: flex; align-items: center; gap: 2px; padding: 5px 6px 2px; }
+.col-head { display: flex; align-items: center; gap: 2px; padding: 5px 6px 2px; cursor: grab; }
+.sheet-col.dragging { opacity: 0.45; }
+.sheet-col.drop-target { outline: 2px dashed rgba(0, 194, 194, 0.75); outline-offset: -2px; }
+.col-title {
+  flex: 1; min-width: 0;
+  font-size: 11.5px; font-weight: 600; color: var(--navy);
+  padding: 3px 4px; border-radius: 5px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.col-title:hover { background: rgba(0, 194, 194, 0.12); }
+.sheet-select {
+  padding: 6px 8px; font-size: 11.5px;
+  border: 1px solid var(--line-strong); border-radius: 8px;
+  background: #fff; color: var(--ink); max-width: 170px;
+}
 .col-name {
   flex: 1; min-width: 0;
   border: none; background: transparent;

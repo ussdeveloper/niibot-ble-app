@@ -24,6 +24,7 @@ hiddenimports = (
     + collect_submodules("bleak")
     + collect_submodules("fastapi")
     + collect_submodules("pydantic")
+    + collect_submodules("niibot")
     + ["pypdfium2", "qrcode", "barcode", "multipart", "PIL._tkinter_finder"]
 )
 
