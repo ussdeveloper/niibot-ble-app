@@ -15,22 +15,22 @@ from .spec import Element, LabelSpec
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(prog="niibot", description="Niimbot B1 - narzędzia")
+    parser = argparse.ArgumentParser(prog="niibot", description="Niimbot B1 - tools")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    scan = sub.add_parser("scan", help="wyszukaj drukarki w pobliżu")
+    scan = sub.add_parser("scan", help="look for nearby printers")
     scan.add_argument("--timeout", type=float, default=6.0)
-    scan.add_argument("--all", action="store_true", help="pokaż wszystkie urządzenia BLE")
+    scan.add_argument("--all", action="store_true", help="show every BLE device")
 
-    info = sub.add_parser("info", help="połącz się i pokaż stan drukarki oraz papieru")
+    info = sub.add_parser("info", help="connect and show the printer and paper state")
     info.add_argument("address")
 
-    panel = sub.add_parser("panel", help="otwórz panel WWW (domyślnie http://127.0.0.1:8765)")
+    panel = sub.add_parser("panel", help="open the web panel (http://127.0.0.1:8765 by default)")
     panel.add_argument("--host", default="127.0.0.1")
     panel.add_argument("--port", type=int, default=8765)
     panel.add_argument("--no-browser", action="store_true")
 
-    printer = sub.add_parser("print", help="wydrukuj prostą etykietę z tekstem")
+    printer = sub.add_parser("print", help="print a simple text label")
     printer.add_argument("address")
     printer.add_argument("--text", default="Test")
     printer.add_argument("--width-mm", type=float, default=50.0)
@@ -39,8 +39,8 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     printer.add_argument("--copies", type=int, default=1)
     printer.add_argument("--density", type=int, default=3)
     printer.add_argument("--label-type", type=int, default=1)
-    printer.add_argument("--barcode", default=None, help="dodaj kod kreskowy CODE128")
-    printer.add_argument("--qr", default=None, help="dodaj kod QR z podanym tekstem")
+    printer.add_argument("--barcode", default=None, help="add a CODE128 barcode")
+    printer.add_argument("--qr", default=None, help="add a QR code with the given text")
 
     return parser.parse_args(argv)
 
@@ -50,9 +50,9 @@ async def _cmd_scan(args: argparse.Namespace) -> int:
 
     devices = await BleLink.scan(args.timeout, args.all)
     if not devices:
-        print("Nie znaleziono urządzeń. Sprawdź, czy drukarka jest włączona i sparowana.")
+        print("No devices found. Check that the printer is on and paired.")
         return 1
-    print(f"{'adres':<40} {'RSSI':>5}  nazwa")
+    print(f"{'address':<40} {'RSSI':>5}  name")
     for device in devices:
         print(f"{device.address:<40} {('' if device.rssi is None else device.rssi):>5}  {device.name}")
     return 0
@@ -63,7 +63,7 @@ async def _cmd_info(args: argparse.Namespace) -> int:
     try:
         info = await printer.connect(args.address)
     except Exception as exc:
-        print(f"Błąd połączenia: {exc}", file=sys.stderr)
+        print(f"Connection error: {exc}", file=sys.stderr)
         return 2
     try:
         paper = await printer.refresh()
@@ -115,15 +115,15 @@ async def _cmd_print(args: argparse.Namespace) -> int:
     try:
         await printer.connect(args.address)
     except Exception as exc:
-        print(f"Błąd połączenia: {exc}", file=sys.stderr)
+        print(f"Connection error: {exc}", file=sys.stderr)
         return 2
     try:
         info = printer.info
         rendered = render_label(spec, info.dpi, info.printhead_px)
         for warning in rendered.warnings:
-            print(f"uwaga: {warning}", file=sys.stderr)
+            print(f"warning: {warning}", file=sys.stderr)
         encoded = encode_image(rendered.image)
-        print(f"Druk: {encoded.rows} wierszy, {encoded.cols} px szerokości, {encoded.packet_count} pakietów")
+        print(f"Print: {encoded.rows} rows, {encoded.cols} px wide, {encoded.packet_count} packets")
         await printer.print_bitmap(
             encoded,
             copies=args.copies,
@@ -131,7 +131,7 @@ async def _cmd_print(args: argparse.Namespace) -> int:
             label_type=args.label_type,
             on_progress=lambda value, **_: print(f"\r{value * 100:5.1f}%", end="", flush=True),
         )
-        print("\nGotowe.")
+        print("\nDone.")
     finally:
         await printer.disconnect()
     return 0
@@ -146,7 +146,7 @@ def _cmd_panel(args: argparse.Namespace) -> int:
             webbrowser.open(url)
         except Exception:  # pragma: no cover
             pass
-    print(f"Panel: {url}  (Ctrl+C kończy)")
+    print(f"Panel: {url}  (Ctrl+C stops it)")
     # Import the app object directly: the frozen EXE has no importable module path
     # for uvicorn's string form ("niibot.server:app").
     from .server import app as asgi_app

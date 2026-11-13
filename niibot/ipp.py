@@ -118,7 +118,7 @@ def _decode_value(attribute: IppAttribute) -> str:
 # ------------------------------------------------------------------- parsing
 def parse_request(body: bytes) -> IppRequest:
     if len(body) < 8:
-        raise ValueError("żądanie IPP jest za krótkie")
+        raise ValueError("IPP request is too short")
     major, minor, operation, request_id = struct.unpack(">BBHI", body[:8])
     request = IppRequest(version=(major, minor), operation=operation, request_id=request_id)
     index = 8
@@ -369,7 +369,7 @@ def decode_document(payload: bytes, mime: str) -> Image.Image | None:
         image.load()
         return image
     except Exception as exc:  # pragma: no cover - depends on input
-        log.warning("Nie udało się zdekodować dokumentu (%s): %s", mime, exc)
+        log.warning("Could not decode the document (%s): %s", mime, exc)
         return None
 
 
@@ -377,7 +377,7 @@ def decode_pdf(payload: bytes) -> Image.Image | None:
     try:  # optional dependency, only needed for PDF jobs
         import pypdfium2 as pdfium
     except ImportError:
-        log.warning("Brak pypdfium2 — nie mogę wydrukować PDF-a z Windows")
+        log.warning("pypdfium2 is missing — cannot print a PDF from Windows")
         return None
     try:
         document = pdfium.PdfDocument(payload)
@@ -386,7 +386,7 @@ def decode_pdf(payload: bytes) -> Image.Image | None:
         bitmap = page.render(scale=203 / 72)
         return bitmap.to_pil()
     except Exception as exc:  # pragma: no cover
-        log.warning("Renderowanie PDF nie powiodło się: %s", exc)
+        log.warning("PDF rendering failed: %s", exc)
         return None
 
 

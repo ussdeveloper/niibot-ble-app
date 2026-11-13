@@ -155,7 +155,7 @@ class IppTests(unittest.TestCase):
         from niibot import ipp
 
         request = ipp.parse_request(self._request(ipp.OP_VALIDATE_JOB))
-        payload = ipp.build_simple_response(request, ipp.STATUS_NOT_POSSIBLE, message="brak drukarki")
+        payload = ipp.build_simple_response(request, ipp.STATUS_NOT_POSSIBLE, message="no printer")
         self.assertEqual(struct.unpack(">H", payload[2:4])[0], ipp.STATUS_NOT_POSSIBLE)
         self.assertIn(b"status-message", payload)
 
@@ -183,8 +183,8 @@ class PwgRasterTests(unittest.TestCase):
         image = ipp.decode_pwg_raster(raster)
         self.assertIsNotNone(image)
         self.assertEqual(image.size, (8, 2))
-        self.assertFalse(bool(image.getpixel((0, 0))), "pierwszy piksel ma być czarny")
-        self.assertTrue(bool(image.getpixel((1, 0))), "reszta wiersza ma być biała")
+        self.assertFalse(bool(image.getpixel((0, 0))), "the first pixel is black")
+        self.assertTrue(bool(image.getpixel((1, 0))), "the rest of the row is white")
         self.assertTrue(bool(image.getpixel((0, 1))))
 
     def test_repeat_count_expands_rows(self) -> None:
@@ -200,7 +200,7 @@ class PwgRasterTests(unittest.TestCase):
         image = ipp.decode_pwg_raster(raster)
         self.assertEqual(image.size, (8, 3))
         for y in range(3):
-            self.assertFalse(bool(image.getpixel((0, y))), f"wiersz {y} ma być czarny na x=0")
+            self.assertFalse(bool(image.getpixel((0, y))), f"row {y} is black at x=0")
 
 
 class FitTests(unittest.TestCase):

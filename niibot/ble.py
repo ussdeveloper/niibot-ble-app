@@ -105,11 +105,11 @@ class BleLink:
         self.last_error = None
 
         await client.start_notify(CHAR_UUID, self._on_notify)
-        log.info("Połączono z %s (%s)", self.name, address)
+        log.info("Connected to %s (%s)", self.name, address)
 
     async def pair(self) -> None:
         if not self._client:
-            raise RuntimeError("Drukarka nie jest połączona")
+            raise RuntimeError("The printer is not connected")
         await self._client.pair()
 
     async def disconnect(self) -> None:
@@ -125,7 +125,7 @@ class BleLink:
 
     def _on_disconnect(self, _client: BleakClient) -> None:
         self.connected = False
-        self.last_error = "rozłączono z drukarką"
+        self.last_error = "disconnected from the printer"
         if self._loop and not self._loop.is_closed():
             self._loop.call_soon_threadsafe(self._event.set)
 
@@ -153,7 +153,7 @@ class BleLink:
 
     async def _write(self, payload: bytes) -> None:
         if not self._client or not self.connected:
-            raise RuntimeError("Drukarka nie jest połączona")
+            raise RuntimeError("The printer is not connected")
         chunk_size = self._chunk_size()
         self._record("tx", payload)
         for offset in range(0, len(payload), chunk_size):

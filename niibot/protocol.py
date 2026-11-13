@@ -167,31 +167,31 @@ LABEL_TYPE_NAMES: dict[int, str] = {
 PRINTER_ERRORS: dict[int, str] = {
     0x01: "lid open",
     0x02: "out of paper",
-    0x03: "niski poziom baterii",
-    0x04: "błąd baterii",
-    0x05: "anulowano przez użytkownika",
-    0x06: "błąd danych",
-    0x07: "przegrzanie głowicy",
-    0x08: "papier się skończył",
-    0x09: "drukarka zajęta",
-    0x0A: "brak głowicy",
-    0x0B: "zbyt niska temperatura",
-    0x0C: "głowica luźna",
-    0x0D: "brak taśmy",
-    0x0E: "nieprawidłowa taśma",
-    0x0F: "zużyta taśma",
-    0x10: "nieprawidłowy papier",
-    0x11: "nie udało się ustawić papieru",
-    0x13: "nie udało się ustawić gęstości",
-    0x16: "błąd komunikacji",
-    0x17: "rozłączono",
-    0x18: "błąd parametrów obrazu",
-    0x1C: "sprawdź papier",
-    0x1D: "tag RFID nie został zapisany",
-    0x1E: "gęstość nieobsługiwana",
-    0x20: "błąd materiału etykiety",
-    0x32: "nieprawidłowa strona",
-    0x34: "przekroczono czas transmisji",
+    0x03: "battery level low",
+    0x04: "battery error",
+    0x05: "cancelled by the user",
+    0x06: "data error",
+    0x07: "printhead overheat",
+    0x08: "paper ran out",
+    0x09: "printer busy",
+    0x0A: "printhead missing",
+    0x0B: "temperature too low",
+    0x0C: "printhead loose",
+    0x0D: "no ribbon",
+    0x0E: "invalid ribbon",
+    0x0F: "ribbon used up",
+    0x10: "invalid paper",
+    0x11: "could not set the paper",
+    0x13: "could not set the density",
+    0x16: "communication error",
+    0x17: "disconnected",
+    0x18: "invalid image parameters",
+    0x1C: "check the paper",
+    0x1D: "the RFID tag was not written",
+    0x1E: "density not supported",
+    0x20: "label material error",
+    0x32: "invalid page",
+    0x34: "transmission timeout",
 }
 
 
@@ -204,7 +204,7 @@ class PrinterError(ProtocolError):
 
     def __init__(self, code: int):
         self.code = code
-        super().__init__(f"Drukarka zgłosiła błąd: {PRINTER_ERRORS.get(code, hex(code))} (0x{code:02X})")
+        super().__init__(f"The printer reported an error: {PRINTER_ERRORS.get(code, hex(code))} (0x{code:02X})")
 
 
 @dataclass(frozen=True)

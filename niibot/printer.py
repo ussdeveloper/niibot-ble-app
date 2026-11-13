@@ -30,7 +30,7 @@ log = logging.getLogger(__name__)
 class PrinterInfo:
     model_id: int | None = None
     model_key: str = "UNKNOWN"
-    model_name: str = "nieznany"
+    model_name: str = "unknown"
     dpi: int = 203
     printhead_px: int = 384
     print_task: str = "b1"
@@ -139,7 +139,7 @@ class NiimbotPrinter:
             raise
         self.link.write_delay = 0.01 if self.info.print_task == "b1" else 0.0
         log.info(
-            "Połączono: %s (id=%s, dpi=%s, głowica=%s px, protokół=%s, zadanie=%s)",
+            "Connected: %s (id=%s, dpi=%s, head=%s px, protocol=%s, task=%s)",
             self.info.model_name,
             self.info.model_id,
             self.info.dpi,
@@ -159,7 +159,7 @@ class NiimbotPrinter:
     async def _send_connect(self) -> Frame | None:
         frame = await self.link.send_raw(build_connect_frame(), timeout=6.0)
         if frame is None:
-            raise ProtocolError("Drukarka nie odpowiedziała na pakiet połączenia.")
+            raise ProtocolError("The printer did not answer the connect packet.")
         return frame
 
     async def identify(self) -> None:
@@ -430,9 +430,9 @@ class NiimbotPrinter:
     async def _expect(self, cmd: Cmd, data: bytes = b"\x01", timeout: float = 5.0) -> Frame:
         frame = await self.link.send(cmd, data, timeout=timeout)
         if frame is None:
-            raise ProtocolError(f"Brak odpowiedzi na polecenie 0x{int(cmd):02X}")
+            raise ProtocolError(f"No answer to command 0x{int(cmd):02X}")
         if frame.cmd == Resp.NOT_SUPPORTED:
-            raise ProtocolError(f"Drukarka nie obsługuje polecenia 0x{int(cmd):02X}")
+            raise ProtocolError(f"The printer does not support command 0x{int(cmd):02X}")
         return frame
 
     async def set_density(self, density: int) -> None:
@@ -452,7 +452,7 @@ class NiimbotPrinter:
         try:
             await self.link.send(Cmd.CANCEL_PRINT, b"\x01", timeout=3.0)
         except Exception as exc:  # pragma: no cover - best effort
-            log.debug("Anulowanie nie powiodło się: %s", exc)
+            log.debug("Cancelling failed: %s", exc)
 
     # ---------------------------------------------------------------- print
     async def print_bitmap(
@@ -465,7 +465,7 @@ class NiimbotPrinter:
         on_progress=None,
     ) -> None:
         if not self.connected:
-            raise ProtocolError("Drukarka nie jest połączona.")
+            raise ProtocolError("The printer is not connected.")
         copies = max(1, min(999, int(copies)))
         task = self.info.print_task
         self.link.write_delay = 0.01 if task == "b1" else 0.0
@@ -521,7 +521,7 @@ class NiimbotPrinter:
                 if page >= copies:
                     return
             await asyncio.sleep(0.3)
-        raise ProtocolError("Drukarka nie potwierdziła zakończenia wydruku (timeout).")
+        raise ProtocolError("The printer did not confirm the end of the print (timeout).")
 
 
 def _to_int(data: bytes) -> int | None:

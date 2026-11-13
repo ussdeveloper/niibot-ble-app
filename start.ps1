@@ -1,9 +1,9 @@
-# Uruchamia panel Niibot Studio (tworzy .venv przy pierwszym starcie).
+# Starts the Niibot Studio panel (creates .venv on the first run).
 $ErrorActionPreference = 'Stop'
 Set-Location -Path $PSScriptRoot
 
 if (-not (Test-Path '.venv\Scripts\python.exe')) {
-    Write-Host '[Niibot] Tworzę środowisko wirtualne .venv ...' -ForegroundColor Cyan
+    Write-Host '[Niibot] Creating the .venv virtual environment ...' -ForegroundColor Cyan
     python -m venv .venv
     & .\.venv\Scripts\python.exe -m pip install --quiet --upgrade pip
     & .\.venv\Scripts\pip.exe install --quiet -r requirements.txt

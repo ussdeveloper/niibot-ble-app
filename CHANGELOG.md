@@ -4,6 +4,22 @@ All notable changes to **Niibot Studio** are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project uses [Semantic Versioning](https://semver.org/).
 
+## [0.8.1] — 2026-11-13
+
+### Changed
+- The whole backend speaks English now: printer/ protocol errors, print-job messages, renderer
+  warnings, IPP responses, CLI help and the installer/uninstaller scripts (the UI already did).
+- Every modal uses the same inner padding (14 px top, 16 px sides and bottom) between the title
+  bar, the content and the footer; single-field dialogs are compact instead of full height.
+
+### Fixed
+- Print job messages showed mangled characters for accented text (double-encoded strings).
+- Sheet job messages pluralise correctly ("Printed 1 label from the sheet.").
+- The template gallery could show a scrollbar because the dialog height ignored its own padding
+  and border.
+- Static assets are served with `Cache-Control: no-cache`, so an updated app never keeps running
+  a stale `app.js`/`style.css` from the browser cache.
+
 ## [0.8.0] — 2026-11-13
 
 ### Added

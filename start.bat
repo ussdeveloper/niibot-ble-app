@@ -3,7 +3,7 @@ setlocal
 cd /d "%~dp0"
 
 if not exist ".venv\Scripts\python.exe" (
-  echo [Niibot] Tworze srodowisko wirtualne .venv ...
+  echo [Niibot] Creating the .venv virtual environment ...
   python -m venv .venv
   if errorlevel 1 goto :error
   ".venv\Scripts\python.exe" -m pip install --quiet --upgrade pip
@@ -20,6 +20,6 @@ goto :eof
 
 :error
 echo.
-echo [Niibot] Instalacja nie powiodla sie. Sprawdz, czy Python 3.10+ jest w PATH.
+echo [Niibot] The installation failed. Check that Python 3.10+ is on the PATH.
 pause
 exit /b 1

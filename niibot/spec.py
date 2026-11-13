@@ -57,7 +57,7 @@ class Element(BaseModel):
     @classmethod
     def _check_type(cls, value: str) -> str:
         if value not in ELEMENT_TYPES:
-            raise ValueError(f"nieznany typ elementu: {value}")
+            raise ValueError(f"unknown element type: {value}")
         return value
 
     @field_validator("rotation")
@@ -93,7 +93,7 @@ class SheetData(BaseModel):
 class LabelSpec(BaseModel):
     model_config = {"extra": "ignore"}
 
-    name: str = "Nowa etykieta"
+    name: str = "New label"
     width_mm: float = 50.0
     height_mm: float = 30.0
     gap_mm: float = 2.0

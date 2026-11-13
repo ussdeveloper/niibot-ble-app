@@ -51,7 +51,7 @@ MODELS: tuple[PrinterModel, ...] = (
 
 MODEL_BY_ID: dict[int, PrinterModel] = {model_id: model for model in MODELS for model_id in model.ids}
 
-UNKNOWN_MODEL = PrinterModel("UNKNOWN", "nieznany", (), 203, 384, "b1")
+UNKNOWN_MODEL = PrinterModel("UNKNOWN", "unknown", (), 203, 384, "b1")
 
 #: Models whose firmware inverts the "lid closed" bit of the heartbeat.
 INVERTED_LID_MODELS = frozenset({512, 513, 514, 272, 273, 274, 1792, 2304, 2560, 3584, 3840, 4352, 5120})
@@ -93,7 +93,7 @@ PAPER_PRESETS: tuple[PaperPreset, ...] = (
     PaperPreset("12,5 × 74 mm", 12.5, 74.0),
     PaperPreset("12 × 40 mm", 12.0, 40.0),
     PaperPreset("12 × 22 mm", 12.0, 22.0),
-    PaperPreset("taśma ciągła 50 mm", 50.0, 40.0, int(LabelType.CONTINUOUS), 0.0),
+    PaperPreset("continuous tape 50 mm", 50.0, 40.0, int(LabelType.CONTINUOUS), 0.0),
 )
 
 

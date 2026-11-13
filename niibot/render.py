@@ -313,10 +313,10 @@ def _draw_text(
         if fits:
             break
         if not element.auto_fit:
-            warnings.append(f"„{label}”: tekst nie mieści się w polu.")
+            warnings.append(f"“{label}”: the text does not fit the box.")
             break
         if size_pt <= 2.0:
-            warnings.append(f"„{label}”: tekst jest zbyt długi, został pomniejszony do minimum.")
+            warnings.append(f"“{label}”: the text is too long and was shrunk to the minimum.")
             break
         size_pt *= 0.92
 
@@ -350,14 +350,14 @@ def _barcode_pattern(fmt: str, data: str) -> tuple[str, str]:
     try:
         cls = pybarcode.get_barcode_class(fmt)
     except Exception as exc:  # pragma: no cover - guarded by the UI
-        raise ValueError(f"nieobsługiwany format kodu: {fmt}") from exc
+        raise ValueError(f"unsupported barcode format: {fmt}") from exc
     try:
         kwargs = {"add_checksum": False} if fmt.lower() == "code39" else {}
         instance = cls(data, **kwargs)
     except TypeError:
         instance = cls(data)
     except Exception as exc:
-        raise ValueError(f"nieprawidłowa treść kodu {fmt}: {exc}") from exc
+        raise ValueError(f"invalid data for barcode {fmt}: {exc}") from exc
     pattern = "".join(instance.build())
     human = data
     getter = getattr(instance, "get_fullcode", None)
@@ -396,8 +396,8 @@ def _draw_barcode(layer: Image.Image, element: Element, dpi: int, warnings: list
         module_w = width / modules
         offset_x = 0
         warnings.append(
-            f"Kod {element.barcode_format} ma {modules} modułów — jest za szeroki na to pole "
-            f"({width:.0f} px). Zwiększ szerokość lub skróć treść."
+            f"Barcode {element.barcode_format} has {modules} modules — too wide for this box "
+            f"({width:.0f} px). Increase the width or shorten the data."
         )
 
     draw = ImageDraw.Draw(layer)
@@ -443,7 +443,7 @@ def _draw_qr(layer: Image.Image, element: Element, warnings: list[str]) -> None:
     module = max(1, min(width, height) // count)
     size = module * count
     if size > min(width, height):
-        warnings.append("Kod QR jest zbyt gęsty dla tego pola — zwiększ rozmiar.")
+        warnings.append("The QR code is too dense for this box — make it larger.")
         size = min(width, height)
         module = max(1, size // count)
         size = module * count
@@ -566,7 +566,7 @@ def render_label(
     if source_width > printhead_px:
         cut_mm = (source_width - printhead_px) * MM_PER_INCH / dpi
         warnings.append(
-            f"Etykieta jest szersza niż głowica drukarki — prawe {cut_mm:.1f} mm zostanie obcięte."
+            f"The label is wider than the printhead — the right {cut_mm:.1f} mm will be cut off."
         )
 
     canvas = Image.new("RGBA", (source_width, height), (255, 255, 255, 255))

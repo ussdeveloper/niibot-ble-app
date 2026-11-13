@@ -1,14 +1,15 @@
+#Requires -Version 5.1
 <#
 .SYNOPSIS
-    Rejestruje Niimbota jako normalną drukarkę Windows (kolejka IPP) i uruchamia
-    usługę Niibot Studio przy logowaniu.
+    Registers the printer as a normal Windows print queue (IPP) and starts the
+    Niibot Studio service at logon.
 
 .DESCRIPTION
-    Nie instaluje sterownika jądra — używa wbudowanego, podpisanego przez Microsoft
-    "Microsoft IPP Class Driver". Dzięki temu nie trzeba certyfikatu EV ani trybu
-    testowego, a drukarka pojawia się w "Urządzenia i drukarki" jak każda inna.
+    It does not install a kernel driver - it uses the inbox, Microsoft-signed
+    "Microsoft IPP Class Driver". That way no EV certificate or test mode is
+    needed and the printer shows up under "Devices and Printers" like any other.
 
-    Wymaga uprawnień administratora (skrypt podnosi się sam).
+    Requires administrator rights (the script elevates itself).
 
 .EXAMPLE
     .\install-printer.ps1
@@ -30,11 +31,11 @@ $python = Join-Path $root ".venv\Scripts\python.exe"
 function Write-Step($text) { Write-Host "==> $text" -ForegroundColor Cyan }
 function Write-Ok($text) { Write-Host "    $text" -ForegroundColor Green }
 
-# ---------------------------------------------------------------- elevacja
+# ------------------------------------------------------------- elevation
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $principal = New-Object Security.Principal.WindowsPrincipal($identity)
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    Write-Host "Potrzebne są uprawnienia administratora - uruchamiam ponownie..." -ForegroundColor Yellow
+    Write-Host "Administrator rights are required - restarting elevated..." -ForegroundColor Yellow
     $args = @(
         "-NoProfile", "-ExecutionPolicy", "Bypass",
         "-File", "`"$PSCommandPath`"",
@@ -45,9 +46,9 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
     exit
 }
 
-Write-Step "Sprawdzam środowisko"
+Write-Step "Checking the environment"
 if (-not (Test-Path $python)) {
-    Write-Host "Brak .venv - uruchom najpierw start.bat, żeby zainstalować zależności." -ForegroundColor Red
+    Write-Host "No .venv found - run start.bat first to install the dependencies." -ForegroundColor Red
     exit 1
 }
 if (-not (Test-Path $pythonw)) { $pythonw = $python }
@@ -55,20 +56,20 @@ Write-Ok "Python: $python"
 
 $driver = Get-PrinterDriver -Name "Microsoft IPP Class Driver" -ErrorAction SilentlyContinue
 if (-not $driver) {
-    Write-Host "Brak sterownika 'Microsoft IPP Class Driver' (Windows 10 1809+). Zaktualizuj system." -ForegroundColor Red
+    Write-Host "The 'Microsoft IPP Class Driver' is missing (Windows 10 1809+). Update the system." -ForegroundColor Red
     exit 1
 }
-Write-Ok "Sterownik IPP: $($driver.Name)"
+Write-Ok "IPP driver: $($driver.Name)"
 
-# ------------------------------------------------------- autostart usługi
-Write-Step "Rejestruję uruchamianie Niibot Studio przy logowaniu"
+# ------------------------------------------------------- service autostart
+Write-Step "Registering the Niibot Studio start-up task"
 $action = New-ScheduledTaskAction -Execute $pythonw -Argument "-m niibot panel --port $Port --no-browser" -WorkingDirectory $root
 $trigger = New-ScheduledTaskTrigger -AtLogOn
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
 Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -Force | Out-Null
-Write-Ok "Zadanie: $taskName"
+Write-Ok "Task: $taskName"
 
-Write-Step "Uruchamiam usługę teraz"
+Write-Step "Starting the service now"
 Get-ScheduledTask -TaskName $taskName | Start-ScheduledTask
 $ready = $false
 for ($i = 0; $i -lt 40; $i++) {
@@ -79,35 +80,35 @@ for ($i = 0; $i -lt 40; $i++) {
     } catch { }
 }
 if (-not $ready) {
-    Write-Host "Usługa jeszcze nie odpowiada na porcie $Port - sprawdź panel: http://127.0.0.1:$Port" -ForegroundColor Yellow
+    Write-Host "The service does not answer on port $Port yet - check the panel: http://127.0.0.1:$Port" -ForegroundColor Yellow
 } else {
-    Write-Ok "Panel działa: http://127.0.0.1:$Port"
+    Write-Ok "Panel is running: http://127.0.0.1:$Port"
 }
 
-# ------------------------------------------------------------- kolejka IPP
-Write-Step "Tworzę port IPP: $portName"
+# --------------------------------------------------------- IPP print queue
+Write-Step "Creating the IPP port: $portName"
 if (-not (Get-PrinterPort -Name $portName -ErrorAction SilentlyContinue)) {
     Add-PrinterPort -Name $portName
 }
-Write-Ok "Port gotowy"
+Write-Ok "Port ready"
 
-Write-Step "Tworzę drukarkę '$PrinterName'"
+Write-Step "Creating the printer '$PrinterName'"
 $existing = Get-Printer -Name $PrinterName -ErrorAction SilentlyContinue
 if ($existing) {
-    Write-Ok "Drukarka już istnieje - aktualizuję port"
+    Write-Ok "The printer already exists - updating the port"
     Set-Printer -Name $PrinterName -PortName $portName
 } else {
     Add-Printer -Name $PrinterName -DriverName "Microsoft IPP Class Driver" -PortName $portName
 }
 Start-Sleep -Seconds 2
-Write-Ok "Drukarka zarejestrowana"
+Write-Ok "Printer registered"
 
 $printer = Get-Printer -Name $PrinterName
 Write-Host ""
-Write-Host "Gotowe." -ForegroundColor Green
-Write-Host "  Drukarka : $($printer.Name)  (port $($printer.PortName))"
-Write-Host "  Panel    : http://127.0.0.1:$Port"
+Write-Host "Done." -ForegroundColor Green
+Write-Host "  Printer : $($printer.Name)  (port $($printer.PortName))"
+Write-Host "  Panel   : http://127.0.0.1:$Port"
 Write-Host ""
-Write-Host "Wybierz '$PrinterName' w dowolnej aplikacji - obraz zostanie przeskalowany"
-Write-Host "do formatu wykrytego na rolce (RFID). Kadrowanie i przesunięcie ustawisz"
-Write-Host "w panelu, w karcie 'Drukarka Windows'."
+Write-Host "Pick '$PrinterName' in any application - the image is scaled to the"
+Write-Host "format detected on the roll (RFID). Cropping and offset are set in"
+Write-Host "the panel, on the 'Windows printer' tab."

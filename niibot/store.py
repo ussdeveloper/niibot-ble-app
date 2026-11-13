@@ -406,7 +406,7 @@ def load_label(label_id: str) -> dict | None:
 
 def save_label(label_id: str | None, spec: Any) -> str:
     payload = spec.model_dump() if hasattr(spec, "model_dump") else dict(spec)
-    name = str(payload.get("name") or "Etykieta")
+    name = str(payload.get("name") or "Label")
     identifier = (label_id or f"{slugify(name)}-{uuid.uuid4().hex[:4]}").strip()
     now = _now()
     with connect() as db:
@@ -544,7 +544,7 @@ _MIME = {
 def save_upload(filename: str, payload: bytes) -> str:
     suffix = Path(filename).suffix.lower()
     if suffix not in ALLOWED_SUFFIXES:
-        raise ValueError(f"nieobsługiwany format obrazu: {suffix or 'brak'}")
+        raise ValueError(f"unsupported image format: {suffix or 'none'}")
     identifier = uuid.uuid4().hex[:12] + suffix
     with connect() as db:
         db.execute(
@@ -630,7 +630,7 @@ def print_statistics(recent_limit: int = 10) -> dict[str, Any]:
             " FROM print_jobs"
         ).fetchone()
         by_sku = db.execute(
-            "SELECT COALESCE(sku, paper_barcode, 'nieznana') AS sku,"
+            "SELECT COALESCE(sku, paper_barcode, 'unknown') AS sku,"
             " COALESCE(SUM(copies), 0) AS labels, COUNT(*) AS jobs"
             " FROM print_jobs WHERE state='done' GROUP BY 1 ORDER BY labels DESC LIMIT 8"
         ).fetchall()
@@ -658,4 +658,4 @@ _SAFE = re.compile(r"[^A-Za-z0-9._ -]+")
 
 def slugify(name: str) -> str:
     cleaned = _SAFE.sub("_", (name or "").strip())
-    return (cleaned.strip("._ ") or "etykieta")[:60]
+    return (cleaned.strip("._ ") or "label")[:60]

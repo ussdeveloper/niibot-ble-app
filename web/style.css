@@ -114,7 +114,7 @@ svg.lucide { width: 16px; height: 16px; stroke-width: 1.7; }
 }
 .menu-item:hover, .menu-item.active { background: rgba(0, 194, 194, 0.12); }
 .menu-spacer { flex: 1; }
-/* język / language switcher */
+/* language switcher */
 .lang-button {
   display: inline-flex;
   align-items: center;
@@ -348,7 +348,7 @@ svg.lucide { width: 16px; height: 16px; stroke-width: 1.7; }
 .element-box.dragging { border-color: rgba(0, 194, 194, 0.85); background: rgba(0, 194, 194, 0.05); cursor: grabbing; }
 .element-box.dragging .handle { display: block; }
 
-/* Warstwa „unoszona” — wycinek podglądu idący za kursorem */
+/* floating layer — the preview slice that follows the cursor */
 .drag-ghost {
   position: absolute;
   pointer-events: none;
@@ -390,7 +390,7 @@ svg.lucide { width: 16px; height: 16px; stroke-width: 1.7; }
 .element-box.locked .handle { display: none !important; }
 .element-box.locked.selected { border-color: rgba(0, 26, 77, 0.28); box-shadow: none; }
 
-/* przełącznik Mirror w pasku danych etykiety */
+/* Mirror toggle in the label data bar */
 .meta-chip.mirror {
   display: inline-flex; align-items: center; gap: 5px;
   border: 1px solid var(--line-strong);
@@ -745,7 +745,7 @@ button.sb-item:hover { background: rgba(0, 194, 194, 0.12); color: var(--teal-de
 .sheet-table tr.current .cell-value { font-weight: 500; }
 .sheet-hint { flex: 0 0 auto; font-size: 11px; color: var(--ink-muted); }
 
-/* ------------------------------------------- tabs przełączające widok (lewy dół) */
+/* ------------------------------------------- view tabs (bottom left) */
 .editor-tabs {
   position: absolute;
   left: 12px;
@@ -778,7 +778,7 @@ button.sb-item:hover { background: rgba(0, 194, 194, 0.12); color: var(--teal-de
 .editor-tab:hover { background: rgba(0, 194, 194, 0.12); color: var(--teal-deep); }
 .editor-tab.active { background: rgba(0, 194, 194, 0.18); color: var(--teal-deep); font-weight: 600; }
 
-/* ----------------------------------------------------- galeria szablonów */
+/* ----------------------------------------------------- template gallery */
 .tpl-picker { display: flex; flex-direction: column; gap: 12px; height: 100%; min-height: 0; flex: 1; }
 .tpl-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; flex: 0 0 auto; }
 .tpl-head .sheet-toggle { white-space: nowrap; flex: 0 0 auto; }
@@ -820,12 +820,8 @@ button.sb-item:hover { background: rgba(0, 194, 194, 0.12); color: var(--teal-de
 .tpl-badge { padding: 1px 6px; border-radius: 999px; background: rgba(0, 26, 77, 0.08); font-size: 9.5px; }
 .tpl-badge.ok { background: rgba(0, 194, 194, 0.2); color: var(--teal-deep); }
 
-/* ------------------------------------------------------- ikony i czcionki */
+/* ------------------------------------------------------- icons and fonts */
 .icon-picker, .font-picker { display: flex; flex-direction: column; height: 100%; min-height: 0; flex: 1; }
-
-/* modal z biblioteką ikon zajmuje całe okno */
-.modal-layer[data-modal="icons"] .modal-body { padding: 0; }
-.modal-layer[data-modal="icons"] .icon-picker { padding: 12px 14px 10px; }
 
 .icon-toolbar {
   display: flex; align-items: center; gap: 10px;
@@ -1062,7 +1058,7 @@ button.btn.wide { width: 100%; }
   display: flex;
   flex-direction: column;
   min-width: 420px;
-  min-height: 260px;
+  min-height: 200px;
   width: 760px;
   height: 560px;
   resize: both;
@@ -1094,7 +1090,11 @@ button.btn.wide { width: 100%; }
   color: var(--ink-muted); cursor: pointer;
 }
 .modal-close:hover { background: rgba(207, 75, 75, 0.14); color: var(--err); }
-.modal-body { flex: 1; display: flex; min-height: 0; }
+.modal-body { flex: 1; display: flex; min-height: 0; padding: 14px 16px 16px; }
+.modal-body.flush { padding: 0; }
+.ask-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.ask-label { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--ink-muted); }
+.ask-input { font-size: 13px; padding: 8px 10px; }
 .modal-tabs {
   display: flex;
   flex-direction: column;
