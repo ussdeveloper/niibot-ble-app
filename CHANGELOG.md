@@ -4,6 +4,19 @@ All notable changes to **Niibot Studio** are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project uses [Semantic Versioning](https://semver.org/).
 
+## [0.12.2] — 2026-11-13
+
+### Added
+- **Zoom and pan in the calibrator**: the wheel zooms around the cursor (100–800 %), *Fit* recentres,
+  and dragging empty space with the *Select* tool pans the view.
+- **Resize handles**: the selected cell gets eight handles (corners and edges) — drag to size it, no
+  numbers needed. A line gets two end handles plus a thickness handle, and keeps its angle.
+- `Delete` removes the selected cell straight from the keyboard.
+
+### Changed
+- Line cells store an `angle` (degrees) and a `thickness_mm`, drawn rotated on both the calibrator and
+  the label; rectangles and circles use `thickness_mm` for their outline weight.
+
 ## [0.12.1] — 2026-11-13
 
 ### Added

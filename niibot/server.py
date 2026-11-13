@@ -192,6 +192,8 @@ class RegionRequest(BaseModel):
     w: float = Field(default=30.0, gt=0, le=400)
     h: float = Field(default=15.0, gt=0, le=400)
     label: str = ""
+    angle: float = 0.0
+    thickness_mm: float = Field(default=0.8, gt=0, le=10)
 
 
 class ProfileRequest(BaseModel):
@@ -739,8 +741,16 @@ async def api_stats(recent: int = 10) -> dict:
 async def api_roll_format(request: RollFormatRequest) -> dict:
     """Store the size (and the drawn cells) of a roll the printer cannot measure."""
     regions = [
-        Region(shape=item.shape if item.shape in ("rect", "circle", "line") else "rect",
-               x=item.x, y=item.y, w=item.w, h=item.h, label=item.label)
+        Region(
+            shape=item.shape if item.shape in ("rect", "circle", "line") else "rect",
+            x=item.x,
+            y=item.y,
+            w=item.w,
+            h=item.h,
+            label=item.label,
+            angle=item.angle,
+            thickness_mm=item.thickness_mm,
+        )
         for item in request.regions
     ]
     entry = {
@@ -784,8 +794,16 @@ async def api_roll_format(request: RollFormatRequest) -> dict:
 @app.post("/api/profiles")
 async def api_profile_save(request: ProfileRequest) -> dict:
     regions = [
-        Region(shape=item.shape if item.shape in ("rect", "circle", "line") else "rect",
-               x=item.x, y=item.y, w=item.w, h=item.h, label=item.label)
+        Region(
+            shape=item.shape if item.shape in ("rect", "circle", "line") else "rect",
+            x=item.x,
+            y=item.y,
+            w=item.w,
+            h=item.h,
+            label=item.label,
+            angle=item.angle,
+            thickness_mm=item.thickness_mm,
+        )
         for item in request.regions
     ]
     profile = PaperProfile(

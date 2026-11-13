@@ -578,7 +578,16 @@ function openRollSizeDialog(options = {}) {
       <button type="button" class="btn" data-cal="delete"><i data-lucide="trash-2"></i> Delete</button>
     </div>
     <div class="cal-stage-wrap">
-      <div class="cal-stage" id="cal-stage"><div class="cal-cells" id="cal-cells"></div></div>
+      <div class="cal-viewport" id="cal-viewport">
+        <div class="cal-stage" id="cal-stage"><div class="cal-cells" id="cal-cells"></div></div>
+      </div>
+      <div class="cal-zoombar">
+        <button type="button" class="btn" data-zoom="out">−</button>
+        <span class="cal-zoom-label" id="cal-zoom-label">100%</span>
+        <button type="button" class="btn" data-zoom="in">+</button>
+        <button type="button" class="btn" data-zoom="fit">Fit</button>
+        <span class="hint">wheel = zoom · drag empty space = pan · Del = delete</span>
+      </div>
     </div>
     <div class="cal-editor" id="cal-editor"></div>
     <div class="cal-summary" id="cal-summary"></div>
@@ -603,14 +612,21 @@ function openRollSizeDialog(options = {}) {
   fitModalToContent(modal, { min: 420, max: 780 });
 
   const stage = $('#cal-stage', body);
+  const viewport = $('#cal-viewport', body);
   const cellsBox = $('#cal-cells', body);
   const editor = $('#cal-editor', body);
   const summary = $('#cal-summary', body);
-  const toolHint = $('.cal-hint-tool', body);
+  const zoomLabel = $('#cal-zoom-label', body);
   let tool = 'select';
+  let zoom = 1;
+  let panX = 0;
+  let panY = 0;
 
   const num = (name) => Math.max(0, Number($(`[data-key="cal-${name}"]`, body)?.value) || 0);
   let lastFit = -1;
+
+  const clamp = (value, low, high) => Math.min(high, Math.max(low, value));
+  const snap = (value) => Math.round(value * 2) / 2;
 
   const readSize = () => {
     width = Math.max(5, num('width'));
@@ -620,10 +636,35 @@ function openRollSizeDialog(options = {}) {
     gap = Math.max(0, num('gap'));
   };
 
+  const applyView = () => {
+    stage.style.transform = `translate(${Math.round(panX)}px, ${Math.round(panY)}px) scale(${zoom})`;
+    if (zoomLabel) zoomLabel.textContent = `${Math.round(zoom * 100)}%`;
+  };
+
+  const centreView = () => {
+    const view = viewport.getBoundingClientRect();
+    const stageW = parseFloat(stage.style.width) || 280;
+    const stageH = parseFloat(stage.style.height) || 190;
+    panX = Math.max(0, (view.width - stageW * zoom) / 2);
+    panY = Math.max(0, (view.height - stageH * zoom) / 2);
+    applyView();
+  };
+
+  const handleMarkup = (cell) => {
+    if (cell.shape === 'line') {
+      return '<i class="cal-handle line-end" data-handle="end"></i>'
+        + '<i class="cal-handle line-start" data-handle="start"></i>'
+        + '<i class="cal-handle thickness" data-handle="thickness"></i>';
+    }
+    return ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']
+      .map((spot) => `<i class="cal-handle ${spot}" data-handle="${spot}"></i>`)
+      .join('');
+  };
+
   const draw = () => {
     // Size the preview from the label proportions — a max-height alone would squash it.
-    const maxW = 280;
-    const maxH = 190;
+    const maxW = 300;
+    const maxH = 200;
     const ratio = width / Math.max(0.1, height);
     let stageW = maxW;
     let stageH = Math.round(maxW / ratio);
@@ -633,26 +674,42 @@ function openRollSizeDialog(options = {}) {
     }
     stage.style.width = `${Math.max(80, stageW)}px`;
     stage.style.height = `${Math.max(40, stageH)}px`;
-    stage.style.aspectRatio = '';
+    applyView();
+    const pxPerMm = (parseFloat(stage.style.width) || 300) / Math.max(1e-6, width);
     cellsBox.innerHTML = cells.map((cell, index) => {
       const tone = index === selected ? ' selected' : '';
       const shape = cell.shape === 'circle' ? ' circle' : cell.shape === 'line' ? ' line' : '';
+      const angle = Number(cell.angle || 0);
+      const rotate = cell.shape === 'line' && angle
+        ? `;transform:rotate(${angle}deg);transform-origin:0 50%`
+        : '';
+      const weight = cell.shape === 'line'
+        ? ''
+        : `;border-width:${Math.max(1, Number(cell.thickness_mm || 0.8) * pxPerMm)}px`;
       return `<div class="cal-cell${tone}${shape}" data-cell="${index}"
         style="left:${(cell.x / width) * 100}%;top:${(cell.y / height) * 100}%;
-               width:${(cell.w / width) * 100}%;height:${(cell.h / height) * 100}%">
-        <span>${index + 1}</span></div>`;
+               width:${(cell.w / width) * 100}%;height:${(cell.h / height) * 100}%${rotate}${weight}">
+        <span>${index + 1}</span>${index === selected ? handleMarkup(cell) : ''}</div>`;
     }).join('');
 
     if (selected >= 0 && cells[selected]) {
       const cell = cells[selected];
-      const shapeName = cell.shape === 'circle' ? 'circle' : cell.shape === 'line' ? 'line' : 'rectangle';
+      const isLine = cell.shape === 'line';
+      const shapeName = cell.shape === 'circle' ? 'circle' : isLine ? 'line' : 'rectangle';
+      const thickness = Number(cell.thickness_mm ?? 0.8);
       editor.innerHTML = `
         <div class="cal-editor-head">Cell ${selected + 1} · ${shapeName}</div>
         <div class="grid-4">
           ${field('X (mm)', numberInput('cal-x', round2(cell.x), 0.5, 0, Math.max(0, width - 0.5)))}
           ${field('Y (mm)', numberInput('cal-y', round2(cell.y), 0.5, 0, Math.max(0, height - 0.5)))}
-          ${field('Width (mm)', numberInput('cal-w', round2(cell.w), 0.5, 0.5, width))}
-          ${field('Height (mm)', numberInput('cal-h', round2(cell.h), 0.5, 0.5, height))}
+          ${field(isLine ? 'Length (mm)' : 'Width (mm)', numberInput('cal-w', round2(cell.w), 0.5, 0.5, width))}
+          ${isLine
+            ? field('Angle (°)', numberInput('cal-angle', round2(cell.angle || 0), 1, -180, 180))
+            : field('Height (mm)', numberInput('cal-h', round2(cell.h), 0.5, 0.5, height))}
+        </div>
+        <div class="grid-2">
+          ${field(isLine ? 'Thickness (mm)' : 'Outline (mm)', numberInput('cal-thickness', thickness, 0.1, 0.2, 10))}
+          ${isLine ? '' : `<div class="hint" style="align-self:end">Outline only changes the guide weight.</div>`}
         </div>`;
     } else {
       editor.innerHTML = '<div class="hint">No cells yet — press <strong>Grid from rows × columns</strong> for a regular roll, '
@@ -695,15 +752,41 @@ function openRollSizeDialog(options = {}) {
     button.onclick = () => setTool(button.dataset.tool);
   });
 
-  /* Drag on empty label space to draw the active shape; a plain click places it at its default size. */
+  /* Drag on empty label space to draw the active shape; a plain click places it at its default size.
+     With the Select tool the same drag pans the zoomed view. */
   stage.addEventListener('pointerdown', (event) => {
-    if (tool === 'select') return;
-    if (event.target.closest('.cal-cell')) return;
+    if (event.target.closest('.cal-handle') || event.target.closest('.cal-cell')) return;
     const box = stage.getBoundingClientRect();
     const toMm = (clientX, clientY) => ({
       x: Math.min(width, Math.max(0, ((clientX - box.left) / box.width) * width)),
       y: Math.min(height, Math.max(0, ((clientY - box.top) / box.height) * height)),
     });
+
+    if (tool === 'select') {
+      const startX = event.clientX;
+      const startY = event.clientY;
+      const originX = panX;
+      const originY = panY;
+      let moved = false;
+      const onMove = (moveEvent) => {
+        const dx = moveEvent.clientX - startX;
+        const dy = moveEvent.clientY - startY;
+        if (Math.abs(dx) > 2 || Math.abs(dy) > 2) moved = true;
+        panX = originX + dx;
+        panY = originY + dy;
+        applyView();
+      };
+      const onUp = () => {
+        window.removeEventListener('pointermove', onMove);
+        window.removeEventListener('pointerup', onUp);
+        if (!moved) selectCell(-1);
+      };
+      window.addEventListener('pointermove', onMove);
+      window.addEventListener('pointerup', onUp);
+      event.preventDefault();
+      return;
+    }
+
     const start = toMm(event.clientX, event.clientY);
     const draft = document.createElement('div');
     draft.className = `cal-cell drafting${tool === 'circle' ? ' circle' : ''}${tool === 'line' ? ' line' : ''}`;
@@ -747,15 +830,23 @@ function openRollSizeDialog(options = {}) {
         h = side;
       }
       if (tool === 'line') {
-        if (w >= h) {
-          const mid = y + h / 2;
-          h = 0.8;
-          y = Math.max(0, mid - h / 2);
-        } else {
-          const mid = x + w / 2;
-          w = 0.8;
-          x = Math.max(0, mid - w / 2);
-        }
+        const dx = end.x - start.x;
+        const dy = end.y - start.y;
+        const length = Math.hypot(dx, dy);
+        const angle = Math.round((Math.atan2(dy, dx) * 180) / Math.PI * 10) / 10;
+        cells.push({
+          shape: 'line',
+          x: round2(Math.min(Math.max(0, start.x), width)),
+          y: round2(Math.min(Math.max(0, start.y), height)),
+          w: round2(Math.max(1, Math.min(length, width))),
+          h: 0.8,
+          angle,
+          thickness_mm: 0.8,
+          label: '',
+        });
+        selectCell(cells.length - 1);
+        setTool(tool);
+        return;
       }
       cells.push({
         shape: tool,
@@ -763,6 +854,8 @@ function openRollSizeDialog(options = {}) {
         y: round2(Math.min(Math.max(0, y), Math.max(0, height - h))),
         w: round2(Math.min(w, width)),
         h: round2(Math.min(h, height)),
+        angle: 0,
+        thickness_mm: 0.8,
         label: '',
       });
       selectCell(cells.length - 1);
@@ -777,31 +870,76 @@ function openRollSizeDialog(options = {}) {
     const node = event.target.closest('.cal-cell');
     if (!node) return;
     const index = Number(node.dataset.cell);
-    selectCell(index);
+    const handle = event.target.dataset?.handle || null;
+    if (index !== selected) selectCell(index);
+
     const startCell = { ...cells[index] };
     const box = stage.getBoundingClientRect();
     const startX = event.clientX;
     const startY = event.clientY;
+    const perPxX = width / box.width;
+    const perPxY = height / box.height;
     let moved = false;
-    const snap = (value) => Math.round(value * 2) / 2;
+
     const onMove = (moveEvent) => {
-      const dx = ((moveEvent.clientX - startX) / box.width) * width;
-      const dy = ((moveEvent.clientY - startY) / box.height) * height;
-      if (Math.abs(dx) > 0.3 || Math.abs(dy) > 0.3) moved = true;
+      const dx = (moveEvent.clientX - startX) * perPxX;
+      const dy = (moveEvent.clientY - startY) * perPxY;
+      if (Math.abs(dx) > 0.2 || Math.abs(dy) > 0.2) moved = true;
       const cell = cells[index];
-      cell.x = Math.min(Math.max(0, snap(startCell.x + dx)), Math.max(0, width - cell.w));
-      cell.y = Math.min(Math.max(0, snap(startCell.y + dy)), Math.max(0, height - cell.h));
+
+      if (handle) {
+        if (cell.shape === 'line') {
+          const rad = ((startCell.angle || 0) * Math.PI) / 180;
+          const cos = Math.cos(rad);
+          const sin = Math.sin(rad);
+          const along = dx * cos + dy * sin;
+          const across = -dx * sin + dy * cos;
+          if (handle === 'end') {
+            cell.w = snap(clamp(startCell.w + along, 1, width * 2));
+          } else if (handle === 'start') {
+            const length = snap(clamp(startCell.w - along, 1, width * 2));
+            cell.w = length;
+            cell.x = snap(startCell.x + (startCell.w - length) * cos);
+            cell.y = snap(startCell.y + (startCell.w - length) * sin);
+          } else {
+            cell.thickness_mm = snap(clamp(startCell.thickness_mm + 2 * across, 0.2, 10));
+            cell.h = cell.thickness_mm;
+          }
+        } else {
+          let left = startCell.x;
+          let top = startCell.y;
+          let right = startCell.x + startCell.w;
+          let bottom = startCell.y + startCell.h;
+          if (handle.includes('w')) left = clamp(startCell.x + dx, 0, right - 0.5);
+          if (handle.includes('n')) top = clamp(startCell.y + dy, 0, bottom - 0.5);
+          if (handle.includes('e')) right = clamp(right + dx, left + 0.5, width);
+          if (handle.includes('s')) bottom = clamp(bottom + dy, top + 0.5, height);
+          if (cell.shape === 'circle') {
+            const side = Math.max(right - left, bottom - top);
+            if (handle.includes('w')) left = Math.max(0, right - side); else right = Math.min(width, left + side);
+            if (handle.includes('n')) top = Math.max(0, bottom - side); else bottom = Math.min(height, top + side);
+          }
+          cell.x = snap(left);
+          cell.y = snap(top);
+          cell.w = snap(Math.max(0.5, right - left));
+          cell.h = snap(Math.max(0.5, bottom - top));
+          if (cell.shape === 'circle') cell.h = cell.w;
+        }
+        draw();
+        return;
+      }
+
+      cell.x = clamp(snap(startCell.x + dx), 0, Math.max(0, width - cell.w));
+      cell.y = clamp(snap(startCell.y + dy), 0, Math.max(0, height - cell.h));
       const node2 = $(`.cal-cell[data-cell="${index}"]`, cellsBox);
       if (node2) {
         node2.style.left = `${(cell.x / width) * 100}%`;
         node2.style.top = `${(cell.y / height) * 100}%`;
       }
-      if (index === selected) {
-        const xInput = $('[data-key="cal-x"]', body);
-        const yInput = $('[data-key="cal-y"]', body);
-        if (xInput) xInput.value = round2(cell.x);
-        if (yInput) yInput.value = round2(cell.y);
-      }
+      const xInput = $('[data-key="cal-x"]', body);
+      const yInput = $('[data-key="cal-y"]', body);
+      if (xInput) xInput.value = round2(cell.x);
+      if (yInput) yInput.value = round2(cell.y);
     };
     const onUp = () => {
       window.removeEventListener('pointermove', onMove);
@@ -811,6 +949,46 @@ function openRollSizeDialog(options = {}) {
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
     event.preventDefault();
+  });
+
+  /* Wheel = zoom around the cursor, buttons for the obvious steps. */
+  viewport.addEventListener('wheel', (event) => {
+    event.preventDefault();
+    const factor = event.deltaY < 0 ? 1.15 : 1 / 1.15;
+    const next = clamp(zoom * factor, 1, 8);
+    if (Math.abs(next - zoom) < 0.001) return;
+    const rect = stage.getBoundingClientRect();
+    const localX = event.clientX - rect.left;
+    const localY = event.clientY - rect.top;
+    const ratio = next / zoom;
+    panX -= localX * (ratio - 1);
+    panY -= localY * (ratio - 1);
+    zoom = next;
+    applyView();
+  }, { passive: false });
+
+  $$('[data-zoom]', body).forEach((button) => {
+    button.onclick = () => {
+      const action = button.dataset.zoom;
+      if (action === 'fit') {
+        zoom = 1;
+        centreView();
+        return;
+      }
+      const factor = action === 'in' ? 1.25 : 1 / 1.25;
+      zoom = clamp(zoom * factor, 1, 8);
+      centreView();
+    };
+  });
+
+  body.addEventListener('keydown', (event) => {
+    if (event.key !== 'Delete' && event.key !== 'Backspace') return;
+    const tag = (event.target.tagName || '').toLowerCase();
+    if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+    if (selected < 0) return;
+    event.preventDefault();
+    cells.splice(selected, 1);
+    selectCell(cells.length ? Math.min(selected, cells.length - 1) : -1);
   });
 
   const addCell = (shape) => {
@@ -882,6 +1060,17 @@ function openRollSizeDialog(options = {}) {
       cell.h = Math.min(Math.max(0.5, Number(event.target.value) || 0.5), height - cell.y);
       if (cell.shape === 'circle') cell.w = Math.min(cell.h, width - cell.x);
     }
+    if (key === 'cal-angle') {
+      cell.angle = Math.max(-180, Math.min(180, Number(event.target.value) || 0));
+      draw();
+      return;
+    }
+    if (key === 'cal-thickness') {
+      cell.thickness_mm = Math.max(0.2, Math.min(10, Number(event.target.value) || 0.8));
+      if (cell.shape === 'line') cell.h = cell.thickness_mm;
+      draw();
+      return;
+    }
     draw();
   });
 
@@ -901,6 +1090,7 @@ function openRollSizeDialog(options = {}) {
   }
 
   draw();
+  centreView();
 
   $('[data-cal-cancel]', footer).onclick = () => closeModal('roll-size');
   $('[data-cal-save]', footer).onclick = async () => {
@@ -923,6 +1113,8 @@ function openRollSizeDialog(options = {}) {
           y: cell.y,
           w: cell.w,
           h: cell.h,
+          angle: Number(cell.angle) || 0,
+          thickness_mm: Number(cell.thickness_mm) || 0.8,
           label: cell.label || `Cell ${index + 1}`,
         })),
       });
@@ -989,10 +1181,15 @@ function renderPaperRegions() {
   // Cells drawn in the calibrator for this roll: show where content can go.
   const cells = state.printer?.profile?.regions || [];
   cells.forEach((cell, index) => {
+    const isLine = cell.shape === 'line';
     const cellX = Math.max(0, Math.min(Number(cell.x || 0), spec.width_mm));
     const cellY = Math.max(0, Math.min(Number(cell.y || 0), spec.height_mm));
-    const cellW = Math.min(Number(cell.w || 0), spec.width_mm - cellX);
-    const cellH = Math.min(Number(cell.h || 0), spec.height_mm - cellY);
+    const cellW = isLine
+      ? Number(cell.w || 0)
+      : Math.min(Number(cell.w || 0), spec.width_mm - cellX);
+    const cellH = isLine
+      ? Number(cell.h || 0.8)
+      : Math.min(Number(cell.h || 0), spec.height_mm - cellY);
     if (cellW <= 0.2 || cellH <= 0.2) return;
     const shapeClass = cell.shape === 'circle' ? ' circle' : cell.shape === 'line' ? ' line' : '';
     const box = document.createElement('div');
@@ -1001,6 +1198,10 @@ function renderPaperRegions() {
     box.style.top = `${(cellY / spec.height_mm) * 100}%`;
     box.style.width = `${(cellW / spec.width_mm) * 100}%`;
     box.style.height = `${(cellH / spec.height_mm) * 100}%`;
+    if (cell.shape === 'line' && Number(cell.angle || 0)) {
+      box.style.transform = `rotate(${Number(cell.angle)}deg)`;
+      box.style.transformOrigin = '0 50%';
+    }
     box.innerHTML = `<b>${index + 1}</b>`;
     box.title = `${cell.label || `Cell ${index + 1}`} — ${round2(cell.w)} × ${round2(cell.h)} mm`;
     layer.appendChild(box);

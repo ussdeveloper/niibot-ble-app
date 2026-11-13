@@ -101,8 +101,10 @@ PAPER_PRESETS: tuple[PaperPreset, ...] = (
 class Region:
     """One printable cell the calibrator drew on the roll.
 
-    ``shape`` is ``rect`` or ``circle``; coordinates are millimetres from the
-    top-left corner of the label page, exactly as they print.
+    ``shape`` is ``rect``, ``circle`` or ``line``; coordinates are millimetres from
+    the top-left corner of the label page, exactly as they print. Lines carry an
+    ``angle`` (degrees, clockwise) and a ``thickness_mm``; for rectangles and
+    circles the thickness is the outline weight the user drew.
     """
 
     shape: str = "rect"
@@ -111,6 +113,8 @@ class Region:
     w: float = 30.0
     h: float = 15.0
     label: str = ""
+    angle: float = 0.0
+    thickness_mm: float = 0.8
 
     def to_dict(self) -> dict:
         return {
@@ -120,6 +124,8 @@ class Region:
             "w": self.w,
             "h": self.h,
             "label": self.label,
+            "angle": self.angle,
+            "thickness_mm": self.thickness_mm,
         }
 
 
