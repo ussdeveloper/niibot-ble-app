@@ -7,9 +7,14 @@ project uses [Semantic Versioning](https://semver.org/).
 ## [0.7.0] — 2026-11-13
 
 ### Added
-- **Data sheet view** (`Arkusz` tab in the bottom-left of the work area) with columns bound
-  to label elements, editable column names, free-form rows, and printing straight from the
-  sheet (`POST /api/print-sheet`, one job for the whole batch).
+- **Data sheet view** (`Sheet` tab in the bottom-left of the work area) with columns bound
+  to label elements, editable column names, free-form rows, sorting, CSV/XLSX import and
+  printing straight from the sheet (`POST /api/print-sheet`, one job for the whole batch).
+- **Resizable layout**: splitter for the properties panel and a splitter between the design
+  and the sheet (double-click = full height); both sizes are remembered.
+- **Auto-connect**: the remembered printer is looked up on start-up; once connected the RFID
+  tag of the roll is read, the format is applied and the whole screen refreshes.
+- **Compact sheet headers**: one type icon with a tooltip instead of the element dropdowns.
 - **Mirror printing** for multi-region rolls: design only the first region, the remaining
   regions are filled at print time — either as a copy or as a vertical flip.
 - **Save label as…** and **Save as template…** dialogs with a name field; user templates are
