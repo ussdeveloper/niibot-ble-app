@@ -4,6 +4,20 @@ All notable changes to **Niibot Studio** are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project uses [Semantic Versioning](https://semver.org/).
 
+## [0.12.4] — 2026-11-13
+
+### Added
+- **Multi-selection with Shift+click** in the calibrator (cells or their chips). Dragging any selected cell
+  moves the whole group, and the align bar becomes active: **Left / Centre H / Right / Top / Middle V /
+  Bottom** plus **Distribute H / Distribute V** for equal spacing inside the selected block.
+- Calibrator window is now **760 px wide with a two-column layout** (settings left, canvas and inspector
+  right) and a 320 px-tall canvas viewport, with aligned field grids.
+- **Row and column spacing** fields next to Rows/Columns: the grid fills the whole label evenly, subtracting
+  the spacings (`cellW = (labelW − (cols−1)·spacing) / cols`). Default 0 mm, as before.
+
+### Changed
+- Setting **Rows or Columns re-draws the grid instantly** — no separate button press needed.
+
 ## [0.12.3] — 2026-11-13
 
 ### Added

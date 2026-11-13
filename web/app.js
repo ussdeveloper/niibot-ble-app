@@ -545,55 +545,97 @@ function openRollSizeDialog(options = {}) {
   let gap = Number(profile?.gap_mm ?? gapInfoMm()) || 0;
   let rows = Math.max(1, Number(profile?.rows || paper.catalog?.rows) || 1);
   let cols = Math.max(1, Number(profile?.cols || paper.catalog?.cols) || 1);
+  let rowSpace = 0;
+  let colSpace = 0;
   let cells = (profile?.regions || []).map((cell) => ({ ...cell }));
   let selected = cells.length ? 0 : -1;
+  let selection = new Set(selected >= 0 ? [selected] : []);
 
   const body = document.createElement('div');
   body.className = 'calibrator';
   body.innerHTML = `
-    <div class="hint">The B1 cannot report the label size over Bluetooth and
-      <code>${escapeHtml(rollName)}</code> is not in the catalogue on this machine.
-      Set the size, then draw the areas that can hold content — they are remembered for this roll code.</div>
-    <div class="grid-2">
-      ${field('Width (mm)', numberInput('cal-width', round2(width), 0.5, 5, 108))}
-      ${field('Height (mm)', numberInput('cal-height', round2(height), 0.5, 5, 300))}
-    </div>
-    <div class="grid-3">
-      ${field('Rows', numberInput('cal-rows', rows, 1, 1, 8))}
-      ${field('Columns', numberInput('cal-cols', cols, 1, 1, 8))}
-      ${field('Gap (mm)', numberInput('cal-gap', round2(gap), 0.5, 0, 20))}
-    </div>
-    ${presets.length ? `<div class="field"><label for="cal-preset">Start from a common size</label>
-      <select id="cal-preset"><option value="">— pick or type your own —</option>
-        ${presets.map((preset, index) => `<option value="${index}">${escapeHtml(preset.label)}${preset.rows > 1 ? ` · ${preset.rows} rows` : ''}</option>`).join('')}
-      </select></div>` : ''}
-    <div class="cal-tools" role="group" aria-label="Drawing tool">
-      <button type="button" class="cal-tool on" data-tool="select"><i data-lucide="mouse-pointer-2"></i> Select</button>
-      <button type="button" class="cal-tool" data-tool="rect"><i data-lucide="square"></i> Draw rectangle</button>
-      <button type="button" class="cal-tool" data-tool="circle"><i data-lucide="circle"></i> Draw circle</button>
-      <button type="button" class="cal-tool" data-tool="line"><i data-lucide="minus"></i> Draw line</button>
-    </div>
-    <div class="cal-toolbar">
-      <button type="button" class="btn" data-cal="grid"><i data-lucide="grid-2x2"></i> Grid from rows × columns</button>
-      <button type="button" class="btn" data-cal="delete"><i data-lucide="trash-2"></i> Delete</button>
-      <button type="button" class="btn" data-cal="undo" title="Undo (Ctrl+Z)"><i data-lucide="undo-2"></i></button>
-      <button type="button" class="btn" data-cal="redo" title="Redo (Ctrl+Y)"><i data-lucide="redo-2"></i></button>
-    </div>
-    <div class="cal-cellchips" id="cal-cellchips"></div>
-    <div class="cal-stage-wrap">
-      <div class="cal-viewport" id="cal-viewport">
-        <div class="cal-stage" id="cal-stage"><div class="cal-cells" id="cal-cells"></div></div>
+    <div class="cal-col cal-col-left">
+      <div class="hint">The B1 cannot report the label size over Bluetooth and
+        <code>${escapeHtml(rollName)}</code> is not in the catalogue on this machine.
+        Set the size, lay out the cells, then fine-tune them — everything is remembered for this roll code.</div>
+
+      <div class="cal-section">
+        <div class="cal-section-head">Grid layout</div>
+        <div class="grid-2">
+          ${field('Rows', numberInput('cal-rows', rows, 1, 1, 12))}
+          ${field('Columns', numberInput('cal-cols', cols, 1, 1, 12))}
+        </div>
+        <div class="grid-2">
+          ${field('Row spacing (mm)', numberInput('cal-rowspace', rowSpace, 0.5, 0, 50))}
+          ${field('Column spacing (mm)', numberInput('cal-colspace', colSpace, 0.5, 0, 50))}
+        </div>
+        <button type="button" class="btn wide" data-cal="grid"><i data-lucide="grid-2x2"></i> Spread the grid over the label</button>
       </div>
-      <div class="cal-zoombar">
-        <button type="button" class="btn" data-zoom="out">−</button>
-        <span class="cal-zoom-label" id="cal-zoom-label">100%</span>
-        <button type="button" class="btn" data-zoom="in">+</button>
-        <button type="button" class="btn" data-zoom="fit">Fit</button>
-        <span class="hint">wheel = zoom · drag empty space = pan · Del = delete</span>
+
+      <div class="cal-section">
+        <div class="cal-section-head">Roll size</div>
+        <div class="grid-2">
+          ${field('Width (mm)', numberInput('cal-width', round2(width), 0.5, 5, 108))}
+          ${field('Height (mm)', numberInput('cal-height', round2(height), 0.5, 5, 300))}
+        </div>
+        <div class="grid-2">
+          ${field('Label gap (mm)', numberInput('cal-gap', round2(gap), 0.5, 0, 20))}
+          ${presets.length ? `<div class="field"><label for="cal-preset">Common size</label>
+            <select id="cal-preset"><option value="">— pick one —</option>
+              ${presets.map((preset, index) => `<option value="${index}">${escapeHtml(preset.label)}${preset.rows > 1 ? ` · ${preset.rows} rows` : ''}</option>`).join('')}
+            </select></div>` : '<div></div>'}
+        </div>
       </div>
+
+      <div class="cal-section">
+        <div class="cal-section-head">Draw</div>
+        <div class="cal-tools" role="group" aria-label="Drawing tool">
+          <button type="button" class="cal-tool on" data-tool="select"><i data-lucide="mouse-pointer-2"></i> Select</button>
+          <button type="button" class="cal-tool" data-tool="rect"><i data-lucide="square"></i> Rectangle</button>
+          <button type="button" class="cal-tool" data-tool="circle"><i data-lucide="circle"></i> Circle</button>
+          <button type="button" class="cal-tool" data-tool="line"><i data-lucide="minus"></i> Line</button>
+        </div>
+        <div class="cal-toolbar">
+          <button type="button" class="btn" data-cal="delete"><i data-lucide="trash-2"></i> Delete</button>
+          <button type="button" class="btn" data-cal="undo" title="Undo (Ctrl+Z)"><i data-lucide="undo-2"></i></button>
+          <button type="button" class="btn" data-cal="redo" title="Redo (Ctrl+Y)"><i data-lucide="redo-2"></i></button>
+        </div>
+      </div>
+
+      <div class="cal-section">
+        <div class="cal-section-head">Align <span class="cal-selcount" id="cal-selcount"></span></div>
+        <div class="cal-align" id="cal-align">
+          <button type="button" class="cal-a" data-align="left" title="Align left edges">Left</button>
+          <button type="button" class="cal-a" data-align="hcenter" title="Centre horizontally">Centre H</button>
+          <button type="button" class="cal-a" data-align="right" title="Align right edges">Right</button>
+          <button type="button" class="cal-a" data-align="top" title="Align top edges">Top</button>
+          <button type="button" class="cal-a" data-align="vmiddle" title="Centre vertically">Middle V</button>
+          <button type="button" class="cal-a" data-align="bottom" title="Align bottom edges">Bottom</button>
+          <button type="button" class="cal-a wide" data-align="dist-h" title="Equal horizontal spacing">Distribute H</button>
+          <button type="button" class="cal-a wide" data-align="dist-v" title="Equal vertical spacing">Distribute V</button>
+        </div>
+        <div class="hint">Shift+click cells to select several.</div>
+      </div>
+
+      <div class="cal-cellchips" id="cal-cellchips"></div>
     </div>
-    <div class="cal-editor" id="cal-editor"></div>
-    <div class="cal-summary" id="cal-summary"></div>
+
+    <div class="cal-col cal-col-right">
+      <div class="cal-stage-wrap">
+        <div class="cal-viewport" id="cal-viewport">
+          <div class="cal-stage" id="cal-stage"><div class="cal-cells" id="cal-cells"></div></div>
+        </div>
+        <div class="cal-zoombar">
+          <button type="button" class="btn" data-zoom="out">−</button>
+          <span class="cal-zoom-label" id="cal-zoom-label">100%</span>
+          <button type="button" class="btn" data-zoom="in">+</button>
+          <button type="button" class="btn" data-zoom="fit">Fit</button>
+          <span class="hint">wheel = zoom · drag = pan / draw · Del = delete</span>
+        </div>
+      </div>
+      <div class="cal-editor" id="cal-editor"></div>
+      <div class="cal-summary" id="cal-summary"></div>
+    </div>
   `;
 
   const footer = document.createElement('div');
@@ -607,12 +649,12 @@ function openRollSizeDialog(options = {}) {
     id: 'roll-size',
     title: 'Calibrate this roll',
     icon: 'ruler',
-    width: 560,
-    height: 700,
+    width: 760,
+    height: 840,
     body,
     footer,
   });
-  fitModalToContent(modal, { min: 420, max: 780 });
+  fitModalToContent(modal, { min: 480, max: 940 });
 
   const stage = $('#cal-stage', body);
   const viewport = $('#cal-viewport', body);
@@ -637,14 +679,79 @@ function openRollSizeDialog(options = {}) {
   const readSize = () => {
     width = Math.max(5, num('width'));
     height = Math.max(5, num('height'));
-    rows = Math.max(1, Math.min(8, Math.round(num('rows')) || 1));
-    cols = Math.max(1, Math.min(8, Math.round(num('cols')) || 1));
+    rows = Math.max(1, Math.min(12, Math.round(num('rows')) || 1));
+    cols = Math.max(1, Math.min(12, Math.round(num('cols')) || 1));
     gap = Math.max(0, num('gap'));
+    rowSpace = Math.max(0, num('rowspace'));
+    colSpace = Math.max(0, num('colspace'));
   };
 
   const applyView = () => {
     stage.style.transform = `translate(${Math.round(panX)}px, ${Math.round(panY)}px) scale(${zoom})`;
     if (zoomLabel) zoomLabel.textContent = `${Math.round(zoom * 100)}%`;
+  };
+
+  const selectedIndices = () => [...selection].filter((index) => cells[index]).sort((a, b) => a - b);
+  const selectedCells = () => selectedIndices().map((index) => cells[index]);
+
+  const selectOnly = (index) => {
+    selection = new Set(index >= 0 && cells[index] ? [index] : []);
+    selected = index;
+    draw();
+  };
+
+  const toggleSelection = (index) => {
+    if (index < 0 || !cells[index]) return;
+    if (selection.has(index)) {
+      selection.delete(index);
+      if (selected === index) selected = selectedIndices()[0] ?? -1;
+    } else {
+      selection.add(index);
+      selected = index;
+    }
+    draw();
+  };
+
+  /* Align / distribute the selected cells inside their common bounding box. */
+  const alignSelection = (mode) => {
+    const indices = selectedIndices();
+    if (indices.length < 2) return;
+    const list = indices.map((index) => cells[index]);
+    const left = Math.min(...list.map((cell) => cell.x));
+    const right = Math.max(...list.map((cell) => cell.x + cell.w));
+    const top = Math.min(...list.map((cell) => cell.y));
+    const bottom = Math.max(...list.map((cell) => cell.y + cell.h));
+    const centerX = (left + right) / 2;
+    const centerY = (top + bottom) / 2;
+    const place = (cell, x, y) => {
+      cell.x = snap(clamp(x, 0, Math.max(0, width - cell.w)));
+      cell.y = snap(clamp(y, 0, Math.max(0, height - cell.h)));
+    };
+    if (mode === 'left') list.forEach((cell) => place(cell, left, cell.y));
+    if (mode === 'right') list.forEach((cell) => place(cell, right - cell.w, cell.y));
+    if (mode === 'hcenter') list.forEach((cell) => place(cell, centerX - cell.w / 2, cell.y));
+    if (mode === 'top') list.forEach((cell) => place(cell, cell.x, top));
+    if (mode === 'bottom') list.forEach((cell) => place(cell, cell.x, bottom - cell.h));
+    if (mode === 'vmiddle') list.forEach((cell) => place(cell, cell.x, centerY - cell.h / 2));
+    if (mode === 'dist-h' || mode === 'dist-v') {
+      const horizontal = mode === 'dist-h';
+      const sorted = [...list].sort((a, b) => (horizontal ? a.x - b.x : a.y - b.y));
+      const size = sorted.reduce((sum, cell) => sum + (horizontal ? cell.w : cell.h), 0);
+      const span = horizontal ? right - left : bottom - top;
+      const gap = (span - size) / Math.max(1, sorted.length - 1);
+      let cursor = horizontal ? left : top;
+      sorted.forEach((cell) => {
+        if (horizontal) {
+          place(cell, cursor, cell.y);
+          cursor += cell.w + gap;
+        } else {
+          place(cell, cell.x, cursor);
+          cursor += cell.h + gap;
+        }
+      });
+    }
+    gridMode = false;
+    commit();
   };
 
   /* Rows/columns that the drawn cells actually form (distinct start rows and columns). */
@@ -675,29 +782,37 @@ function openRollSizeDialog(options = {}) {
     if (next < 0 || next >= history.length) return;
     historyIndex = next;
     cells = JSON.parse(history[historyIndex]);
-    selected = Math.max(-1, Math.min(selected, cells.length - 1));
+    selected = cells.length ? Math.min(Math.max(selected, 0), cells.length - 1) : -1;
+    selection = new Set(selected >= 0 ? [selected] : []);
     draw();
   };
 
   const deleteCell = (index) => {
-    if (index < 0 || index >= cells.length) return;
-    cells.splice(index, 1);
+    const targets = index === undefined || index === null
+      ? selectedIndices()
+      : [index];
+    const valid = targets.filter((item) => item >= 0 && item < cells.length).sort((a, b) => b - a);
+    if (!valid.length) return;
+    valid.forEach((item) => cells.splice(item, 1));
     gridMode = false;
-    selected = Math.min(index, cells.length - 1);
+    const next = Math.max(-1, Math.min(valid[valid.length - 1], cells.length - 1));
+    selection = new Set(next >= 0 ? [next] : []);
+    selected = next;
     commit();
   };
 
   const applyGrid = () => {
     readSize();
     cells = [];
-    const cellW = width / cols;
-    const cellH = height / rows;
+    // Spread every row and column evenly across the whole label, honouring the spacings.
+    const cellW = Math.max(0.5, (width - (cols - 1) * colSpace) / cols);
+    const cellH = Math.max(0.5, (height - (rows - 1) * rowSpace) / rows);
     for (let row = 0; row < rows; row += 1) {
       for (let col = 0; col < cols; col += 1) {
         cells.push({
           shape: 'rect',
-          x: round2(col * cellW),
-          y: round2(row * cellH),
+          x: round2(col * (cellW + colSpace)),
+          y: round2(row * (cellH + rowSpace)),
           w: round2(cellW),
           h: round2(cellH),
           angle: 0,
@@ -708,6 +823,7 @@ function openRollSizeDialog(options = {}) {
     }
     gridMode = true;
     selected = cells.length ? 0 : -1;
+    selection = new Set(selected >= 0 ? [selected] : []);
     commit();
   };
 
@@ -747,7 +863,8 @@ function openRollSizeDialog(options = {}) {
     applyView();
     const pxPerMm = (parseFloat(stage.style.width) || 300) / Math.max(1e-6, width);
     cellsBox.innerHTML = cells.map((cell, index) => {
-      const tone = index === selected ? ' selected' : '';
+      const on = selection.has(index);
+      const tone = on ? ' selected' : '';
       const shape = cell.shape === 'circle' ? ' circle' : cell.shape === 'line' ? ' line' : '';
       const angle = Number(cell.angle || 0);
       const rotate = cell.shape === 'line' && angle
@@ -756,13 +873,19 @@ function openRollSizeDialog(options = {}) {
       const weight = cell.shape === 'line'
         ? ''
         : `;border-width:${Math.max(1, Number(cell.thickness_mm || 0.8) * pxPerMm)}px`;
+      const handles = on && selection.size === 1 ? handleMarkup(cell) : '';
       return `<div class="cal-cell${tone}${shape}" data-cell="${index}"
         style="left:${(cell.x / width) * 100}%;top:${(cell.y / height) * 100}%;
                width:${(cell.w / width) * 100}%;height:${(cell.h / height) * 100}%${rotate}${weight}">
-        <span>${index + 1}</span>${index === selected ? handleMarkup(cell) : ''}</div>`;
+        <span>${index + 1}</span>${handles}</div>`;
     }).join('');
 
-    if (selected >= 0 && cells[selected]) {
+    if (selection.size > 1) {
+      editor.innerHTML = `
+        <div class="cal-editor-head">${selection.size} cells selected</div>
+        <div class="hint">Align them with the buttons on the left, or drag any selected cell to move
+          the whole group. Shift+click adds or removes a cell from the selection.</div>`;
+    } else if (selected >= 0 && cells[selected]) {
       const cell = cells[selected];
       const isLine = cell.shape === 'line';
       const shapeName = cell.shape === 'circle' ? 'circle' : isLine ? 'line' : 'rectangle';
@@ -800,26 +923,28 @@ function openRollSizeDialog(options = {}) {
     summary.textContent = `${cells.length || 1} ${cells.length === 1 ? 'cell' : 'cells'}${layoutNote} · ${perCell}${clipNote}`;
 
     refreshIcons(body);
+    const selCount = $('#cal-selcount', body);
+    if (selCount) selCount.textContent = selection.size > 1 ? `${selection.size} selected` : '';
+    $$('.cal-a', body).forEach((button) => {
+      button.disabled = selection.size < 2;
+    });
     if (chipsBox) {
       chipsBox.innerHTML = cells.length
         ? cells.map((cell, index) => `
-          <button type="button" class="cal-chip${index === selected ? ' on' : ''}" data-chip="${index}">
+          <button type="button" class="cal-chip${selection.has(index) ? ' on' : ''}" data-chip="${index}">
             <b>${index + 1}</b><span>${cell.shape === 'circle' ? 'circle' : cell.shape === 'line' ? 'line' : 'rect'}
             ${round2(cell.w)}×${round2(cell.h)}</span>
             <i class="cal-chip-x" data-chip-del="${index}" title="Delete this cell">✕</i>
           </button>`).join('')
         : '<span class="hint">No cells yet — press the grid button or draw on the label.</span>';
     }
-    if (lastFit !== `${cells.length}:${selected}:${cells[selected]?.shape || ''}`) {
-      lastFit = `${cells.length}:${selected}:${cells[selected]?.shape || ''}`;
-      fitModalToContent(modal, { min: 420, max: 920 });
+    if (lastFit !== `${cells.length}:${selected}:${cells[selected]?.shape || ''}:${selection.size}`) {
+      lastFit = `${cells.length}:${selected}:${cells[selected]?.shape || ''}:${selection.size}`;
+      fitModalToContent(modal, { min: 420, max: 940 });
     }
   };
 
-  const selectCell = (index) => {
-    selected = index;
-    draw();
-  };
+  const selectCell = (index) => selectOnly(index);
 
   const setTool = (next) => {
     tool = next;
@@ -930,6 +1055,7 @@ function openRollSizeDialog(options = {}) {
           label: '',
         });
         selected = cells.length - 1;
+        selection = new Set([selected]);
         commit();
         setTool(tool);
         return;
@@ -945,6 +1071,7 @@ function openRollSizeDialog(options = {}) {
         label: '',
       });
       selected = cells.length - 1;
+      selection = new Set([selected]);
       commit();
       if (tool !== 'select') setTool(tool);
     };
@@ -958,10 +1085,17 @@ function openRollSizeDialog(options = {}) {
     if (!node) return;
     const index = Number(node.dataset.cell);
     const handle = event.target.dataset?.handle || null;
-    if (index !== selected) selectCell(index);
-    gridMode = false;
+
+    if (event.shiftKey) {
+      toggleSelection(index);
+      event.preventDefault();
+      return;
+    }
+    if (!selection.has(index) || selection.size === 1) selectOnly(index);
+    else selected = index; // keep the group, just make this one primary
 
     const startCell = { ...cells[index] };
+    const groupStart = selectedIndices().map((item) => ({ index: item, x: cells[item].x, y: cells[item].y, w: cells[item].w, h: cells[item].h }));
     const box = stage.getBoundingClientRect();
     const startX = event.clientX;
     const startY = event.clientY;
@@ -1013,6 +1147,22 @@ function openRollSizeDialog(options = {}) {
           cell.h = snap(Math.max(0.5, bottom - top));
           if (cell.shape === 'circle') cell.h = cell.w;
         }
+        draw();
+        return;
+      }
+
+      if (groupStart.length > 1) {
+        // Move the whole selection together, keeping it inside the label.
+        const minX = Math.min(...groupStart.map((item) => item.x));
+        const maxX = Math.max(...groupStart.map((item) => item.x + item.w));
+        const minY = Math.min(...groupStart.map((item) => item.y));
+        const maxY = Math.max(...groupStart.map((item) => item.y + item.h));
+        const shiftX = clamp(dx, -minX, Math.max(0, width - maxX));
+        const shiftY = clamp(dy, -minY, Math.max(0, height - maxY));
+        groupStart.forEach((item) => {
+          cells[item.index].x = snap(item.x + shiftX);
+          cells[item.index].y = snap(item.y + shiftY);
+        });
         draw();
         return;
       }
@@ -1131,13 +1281,17 @@ function openRollSizeDialog(options = {}) {
       if (action === 'grid') {
         applyGrid();
       } else if (action === 'delete') {
-        deleteCell(selected);
+        deleteCell();
       } else if (action === 'undo') {
         stepHistory(-1);
       } else if (action === 'redo') {
         stepHistory(1);
       }
     };
+  });
+
+  $$('[data-align]', body).forEach((button) => {
+    button.onclick = () => alignSelection(button.dataset.align);
   });
 
   if (chipsBox) {
@@ -1148,16 +1302,25 @@ function openRollSizeDialog(options = {}) {
         return;
       }
       const chip = event.target.closest('[data-chip]');
-      if (chip) selectCell(Number(chip.dataset.chip));
+      if (!chip) return;
+      const index = Number(chip.dataset.chip);
+      if (event.shiftKey) toggleSelection(index);
+      else selectOnly(index);
     });
   }
 
   body.addEventListener('input', (event) => {
     const key = event.target.dataset?.key;
     if (!key) return;
-    if (['cal-width', 'cal-height', 'cal-rows', 'cal-cols', 'cal-gap'].includes(key)) {
+    if (['cal-width', 'cal-height', 'cal-rows', 'cal-cols', 'cal-gap', 'cal-rowspace', 'cal-colspace'].includes(key)) {
       readSize();
-      if (gridMode && (key === 'cal-rows' || key === 'cal-cols' || key === 'cal-width' || key === 'cal-height')) {
+      const gridKeys = ['cal-rows', 'cal-cols', 'cal-rowspace', 'cal-colspace'];
+      if (gridKeys.includes(key)) {
+        // Rows/columns/spacings always describe the grid, so rebuild it right away.
+        applyGrid();
+        return;
+      }
+      if (gridMode && cells.length) {
         applyGrid();
         return;
       }

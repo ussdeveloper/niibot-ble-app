@@ -2,6 +2,6 @@
 
 from __future__ import annotations
 
-__version__ = "0.12.3"
+__version__ = "0.12.4"
 APP_NAME = "Niibot Studio"
 APP_TAGLINE = "Local label printing for Niimbot B1 over Bluetooth LE"
