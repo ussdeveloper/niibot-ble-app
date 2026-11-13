@@ -1646,7 +1646,7 @@ function elementImage(element) {
   const key = elementSignature(element);
   let entry = elementImages.get(key);
   if (!entry) {
-    entry = { img: null, src: null };
+    entry = { img: null, src: null, box: null };
     elementImages.set(key, entry);
     if (elementImages.size > 160) {
       const oldest = elementImages.keys().next().value;
@@ -1658,14 +1658,15 @@ function elementImage(element) {
         image.onload = () => {
           entry.img = image;
           entry.src = image.src;
+          entry.box = result.element_box || null;
           renderLayers();
         };
         image.src = `data:image/png;base64,${result.png}`;
-        entry.src = image.src;
+        entry.box = result.element_box || null;
       })
       .catch(() => { elementImages.delete(key); });
   }
-  return entry.img;
+  return entry;
 }
 function previewImage() {
   if (!state.preview) return null;
@@ -1697,7 +1698,8 @@ function drawLayerThumb(canvas, element) {
   };
 
   const img = previewImage();
-  const own = elementImage(element);
+  const entry = elementImage(element);
+  const own = entry?.img;
   if (own && own.naturalWidth) {
     const pad = 3;
     const scale = Math.min((cssW - pad * 2) / own.naturalWidth, (cssH - pad * 2) / own.naturalHeight);
@@ -2315,6 +2317,20 @@ function paintBox(box, element) {
 
 /* Content of the dragged element is a crop of the label preview that travels with
    the pointer, so the artwork visibly moves instead of only the selection frame. */
+function paintElementGhost(ghost, element) {
+  const entry = ghost?.__own;
+  const stage = $('#stage');
+  const { width_mm: labelWidth, height_mm: labelHeight } = state.spec;
+  if (!entry?.img?.naturalWidth || !entry.box || !stage || !labelWidth || !labelHeight) return false;
+  const frameW = stage.clientWidth * (element.w / labelWidth);
+  const frameH = stage.clientHeight * (element.h / labelHeight);
+  const scaleX = frameW / entry.box.w;
+  const scaleY = frameH / entry.box.h;
+  ghost.style.backgroundSize = `${entry.img.naturalWidth * scaleX}px ${entry.img.naturalHeight * scaleY}px`;
+  ghost.style.backgroundPosition = `${-entry.box.x * scaleX}px ${-entry.box.y * scaleY}px`;
+  return true;
+}
+
 function makeDragGhost(element) {
   const preview = $('#preview');
   const stage = $('#stage');
@@ -2324,12 +2340,15 @@ function makeDragGhost(element) {
 
   // Prefer the element's own render: the lifted artwork must not contain neighbours.
   const own = elementImage(element);
-  if (own && own.naturalWidth) {
+  if (own?.src) {
     ghost.dataset.mode = 'element';
+    ghost.__own = own;
     ghost.style.backgroundImage = `url(${own.src})`;
     ghost.style.backgroundRepeat = 'no-repeat';
-    ghost.style.backgroundSize = '100% 100%';
-    ghost.style.backgroundPosition = 'center';
+    if (!paintElementGhost(ghost, element)) {
+      ghost.style.backgroundSize = '100% 100%';
+      ghost.style.backgroundPosition = 'center';
+    }
   } else if (preview && preview.src && state.preview?.png) {
     ghost.style.backgroundImage = `url(${preview.src})`;
     ghost.style.backgroundRepeat = 'no-repeat';
@@ -2352,13 +2371,14 @@ function paintGhost(ghost, element, drag) {
   ghost.style.width = `${(element.w / labelWidth) * 100}%`;
   ghost.style.height = `${(element.h / labelHeight) * 100}%`;
 
+  if (ghost.dataset.mode === 'element') {
+    // Keep the artwork exactly inside the frame, also while resizing it.
+    paintElementGhost(ghost, element);
+    return;
+  }
   if (drag && drag.mode === 'resize' && drag.ghostOrigin) {
     // stretch the crop together with the frame
     const stage = $('#stage');
-    if (ghost.dataset.mode === 'element') {
-      ghost.style.backgroundSize = '100% 100%';
-      return;
-    }
     const sx = (element.w / Math.max(0.01, drag.ghostOrigin.w));
     const sy = (element.h / Math.max(0.01, drag.ghostOrigin.h));
     ghost.style.backgroundSize = `${stage.clientWidth * sx}px ${stage.clientHeight * sy}px`;

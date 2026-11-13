@@ -4,6 +4,14 @@ All notable changes to **Niibot Studio** are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project uses [Semantic Versioning](https://semver.org/).
 
+## [0.12.10] — 2026-11-13
+
+### Fixed
+- **The dragged artwork no longer swells**: the element render is trimmed to its ink, so stretching it
+  to `100\u202f% \u00d7 100\u202f%` of the frame blew the glyph up. `/api/element-preview` now returns
+  `element_box` (where the element sits inside the returned PNG) and the drag ghost places and scales the
+  artwork from it, so what follows the cursor is exactly the size it prints. Also applies while resizing.
+
 ## [0.12.9] — 2026-11-13
 
 ### Fixed

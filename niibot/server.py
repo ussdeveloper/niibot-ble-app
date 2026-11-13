@@ -619,14 +619,26 @@ async def api_element_preview(request: ElementPreviewRequest) -> dict:
     image = rendered.image.convert("L")
     inverted = ImageOps.invert(image)
     box = inverted.getbbox()
+    # Where the element itself sits inside the returned PNG (after trimming), so a drag
+    # ghost can place the artwork exactly inside the element frame instead of stretching it.
+    px_per_mm = dpi / 25.4
+    element_box = {
+        "x": round(margin * px_per_mm),
+        "y": round(margin * px_per_mm),
+        "w": max(1, round(element.w * px_per_mm)),
+        "h": max(1, round(element.h * px_per_mm)),
+    }
     if box:
         image = image.crop(box)
+        element_box["x"] -= box[0]
+        element_box["y"] -= box[1]
     buffer = io.BytesIO()
     image.save(buffer, format="PNG")
     return {
         "png": base64.b64encode(buffer.getvalue()).decode("ascii"),
         "width_px": image.width,
         "height_px": image.height,
+        "element_box": element_box,
     }
 
 
