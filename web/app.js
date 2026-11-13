@@ -504,18 +504,26 @@ function renderStageMeta() {
 }
 
 /* A roll the printer/catalogue cannot describe: ask for the size once, remember it per roll code. */
-async function openRollSizeDialog() {
+async function openRollSizeDialog(options = {}) {
   const paper = state.printer?.paper || {};
   const rollName = paper.sku || paper.catalog?.name || paper.barcode || 'this roll';
+  const presets = (state.options?.paper_presets || []).map((preset) => ({
+    label: preset.name || `${round2(preset.width_mm)} × ${round2(preset.height_mm)} mm`,
+    width: preset.width_mm,
+    height: preset.height_mm,
+    rows: preset.rows || 1,
+    type: preset.label_type,
+  }));
   const body = document.createElement('div');
   body.className = 'print-dialog';
   body.innerHTML = `
     <div class="hint">The B1 does not report the label size over Bluetooth, and
       <code>${escapeHtml(rollName)}</code> is not in the NIIMBOT catalogue on this machine.
       Enter it once — it is stored for this roll code and reused automatically.</div>
-    <div class="hint">Tip: open the NIIMBOT app once with this roll inserted and then press
-      <strong>Settings → Format catalogue → Import from the NIIMBOT app</strong> — the vendor app fetches the
-      exact format for the roll code and the import picks it up.</div>
+    ${presets.length ? `<div class="field"><label for="roll-preset">Start from a common size</label>
+      <select id="roll-preset"><option value="">— pick or type your own —</option>
+        ${presets.map((preset, index) => `<option value="${index}">${escapeHtml(preset.label)}${preset.rows > 1 ? ` · ${preset.rows} rows` : ''}</option>`).join('')}
+      </select></div>` : ''}
     <div class="grid-2">
       ${field('Width (mm)', numberInput('roll-width', round2(state.spec.width_mm), 0.5, 5, 108))}
       ${field('Height (mm)', numberInput('roll-height', round2(state.spec.height_mm), 0.5, 5, 300))}
@@ -524,6 +532,9 @@ async function openRollSizeDialog() {
       ${field('Rows on the roll', numberInput('roll-rows', paper.catalog?.rows || 1, 1, 1, 8))}
       ${field('Gap (mm)', numberInput('roll-gap', round2(gapInfoMm()), 0.5, 0, 20))}
     </div>
+    <div class="hint">Tip: open the NIIMBOT app once with this roll inserted and then press
+      <strong>Settings → Format catalogue → Import from the NIIMBOT app</strong> — the vendor app fetches the
+      exact format for the roll code and the import picks it up.</div>
   `;
   const footer = document.createElement('div');
   footer.className = 'row';
@@ -531,8 +542,19 @@ async function openRollSizeDialog() {
   footer.innerHTML = `
     <button class="btn" data-roll-cancel>Cancel</button>
     <button class="btn primary" data-roll-save>Remember for this roll</button>`;
-  const modal = openModal({ id: 'roll-size', title: 'Label size for this roll', icon: 'ruler', width: 470, height: 330, body, footer });
-  fitModalToContent(modal, { min: 300, max: 420 });
+  const modal = openModal({ id: 'roll-size', title: 'Label size for this roll', icon: 'ruler', width: 480, height: 420, body, footer });
+  fitModalToContent(modal, { min: 320, max: 520 });
+
+  const presetSelect = $('#roll-preset', body);
+  if (presetSelect) {
+    presetSelect.onchange = () => {
+      const preset = presets[Number(presetSelect.value)];
+      if (!preset) return;
+      $('[data-key="roll-width"]', body).value = preset.width;
+      $('[data-key="roll-height"]', body).value = preset.height;
+      if (preset.rows) $('[data-key="roll-rows"]', body).value = preset.rows;
+    };
+  }
 
   $('[data-roll-cancel]', footer).onclick = () => closeModal('roll-size');
   $('[data-roll-save]', footer).onclick = async () => {
@@ -3607,7 +3629,15 @@ function applyState(payload) {
     if (!wasConnected) toast(`Roll detected: ${rollName}`, 'ok');
     const knownSize = Boolean(paper.catalog || Number(paper.detected_width_mm) > 0 || payload.profile);
     if (!knownSize && paper.barcode) {
-      toast(`Roll ${paper.barcode}: the printer cannot report its size — set it once in the "size unknown" chip.`, 'error');
+      // Ask once per roll code — the printer cannot measure it and the catalogue has no entry.
+      let asked = {};
+      try { asked = JSON.parse(localStorage.getItem('niibot.askedRolls') || '{}'); } catch (_) { asked = {}; }
+      if (!asked[paper.barcode]) {
+        asked[paper.barcode] = Date.now();
+        try { localStorage.setItem('niibot.askedRolls', JSON.stringify(asked)); } catch (_) { /* ignore */ }
+        toast(`Roll ${paper.barcode}: the printer cannot report its size — set it once.`, 'error');
+        setTimeout(() => { if (state.connected) openRollSizeDialog(); }, 400);
+      }
     }
     applyKnownFormat(paper);
     renderStatusBar();
