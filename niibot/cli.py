@@ -12,6 +12,8 @@ from .bitmap import encode_image
 from .printer import NiimbotPrinter
 from .render import render_label
 from .spec import Element, LabelSpec
+from .store import DATA_DIR
+from .version import __version__ as APP_VERSION
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
@@ -141,6 +143,7 @@ def _cmd_panel(args: argparse.Namespace) -> int:
     import uvicorn
 
     url = f"http://{args.host}:{args.port}"
+    print(f"Niibot Studio {APP_VERSION} - data folder: {DATA_DIR}")
     if not args.no_browser:
         try:
             webbrowser.open(url)
@@ -155,11 +158,25 @@ def _cmd_panel(args: argparse.Namespace) -> int:
     return 0
 
 
+def _prepare_data() -> bool:
+    """Create data/ next to the executable and initialise the database on first run."""
+    from . import store
+
+    try:
+        store.ensure_dirs()
+    except Exception as exc:  # pragma: no cover - depends on the machine
+        print(f"Cannot prepare the data folder ({store.DATA_DIR}): {exc}", file=sys.stderr)
+        return False
+    return True
+
+
 def main(argv: list[str] | None = None) -> int:
     raw = sys.argv[1:] if argv is None else argv
     if not raw:
         raw = ["panel"]
     args = _parse_args(list(raw))
+    if not _prepare_data():
+        return 3
     if args.command == "scan":
         return asyncio.run(_cmd_scan(args))
     if args.command == "info":

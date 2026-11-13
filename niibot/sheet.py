@@ -72,8 +72,9 @@ def apply_mirror(spec: LabelSpec, regions: int, flip: bool = False) -> LabelSpec
     template: list[Element] = []
     untouched: list[Element] = []
     for element in spec.elements:
-        center = element.y + element.h / 2
-        if center < band:
+        # The first region owns every element that starts inside it (an element may still
+        # overflow the cut — the editor flags that separately).
+        if element.y < band - 1e-6:
             template.append(element)
         elif element.visible is False:
             untouched.append(element)

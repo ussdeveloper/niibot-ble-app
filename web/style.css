@@ -389,6 +389,8 @@ svg.lucide { width: 16px; height: 16px; stroke-width: 1.7; }
 }
 .element-box.locked .handle { display: none !important; }
 .element-box.locked.selected { border-color: rgba(0, 26, 77, 0.28); box-shadow: none; }
+/* an element that starts in the edited region but spills past the cut */
+.element-box.crosses { border-color: rgba(232, 122, 42, 0.85); border-style: dashed; background: rgba(232, 122, 42, 0.06); }
 
 /* Mirror toggle in the label data bar */
 .meta-chip.mirror {
@@ -1145,6 +1147,17 @@ button.btn.wide { width: 100%; }
   background: rgba(248, 252, 255, 0.8);
   flex: 0 0 auto;
 }
+/* A status bar placed in the footer hugs and fills the bottom edge of the modal. */
+.modal-footer:has(.modal-status) { justify-content: flex-start; padding: 7px 14px; }
+.modal-status { flex: 1; min-width: 0; margin: 0; padding: 0; border: 0; border-radius: 0; background: transparent; }
+
+/* ------------------------------------------------------------- print dialog */
+.print-dialog { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+.print-row { display: flex; align-items: center; gap: 10px; }
+.print-label { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--ink-muted); }
+.print-copies { width: 104px; padding: 7px 9px; font-size: 13px; text-align: center; }
+.print-summary { font-size: 11.5px; line-height: 1.35; color: var(--ink-muted); }
+.print-rows { font-size: 11px; color: var(--ink-muted); }
 
 /* -------------------------------------------------------------------- toast */
 #toast {

@@ -98,6 +98,7 @@ async def _shutdown() -> None:
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     store.ensure_dirs()
+    log.info("%s %s - data folder: %s", APP_NAME, __version__, store.DATA_DIR)
     # Built-in formats make the picker usable without the vendor app installed.
     for entry in builtin_formats():
         store.upsert_consumable(entry)
@@ -927,7 +928,7 @@ async def _run_print(job: Job, spec: LabelSpec, copies: int, density: int | None
         job.message = "Printed."
     except asyncio.CancelledError:
         job.state = "cancelled"
-        job.message = "Anulowano."
+        job.message = "Cancelled."
         raise
     except ProtocolError as exc:
         job.state = "error"
@@ -989,7 +990,7 @@ async def _run_sheet(job: Job, specs: list[LabelSpec], copies: int, density: int
                 def progress(value: float, **extra: Any) -> None:
                     done = sent + max(0.0, min(1.0, value)) * max(1, copies)
                     job.progress = max(0.0, min(0.98, done / total))
-                    job.message = f"{label} â€” {int(job.progress * 100)}%"
+                    job.message = f"{label} — {int(job.progress * 100)}%"
 
                 await state.printer.print_bitmap(
                     encoded,
@@ -1005,7 +1006,7 @@ async def _run_sheet(job: Job, specs: list[LabelSpec], copies: int, density: int
         job.message = f"Printed {_label_count(total)} from the sheet."
     except asyncio.CancelledError:
         job.state = "cancelled"
-        job.message = "Anulowano."
+        job.message = "Cancelled."
         raise
     except ProtocolError as exc:
         job.state = "error"
@@ -1056,7 +1057,7 @@ async def api_cancel() -> dict:
     await state.printer.cancel()
     if state.job and state.job.state == "running":
         state.job.state = "cancelled"
-        state.job.message = "Anulowano."
+        state.job.message = "Cancelled."
         state.job.finished = time.time()
     if state.job_task and not state.job_task.done():
         state.job_task.cancel()

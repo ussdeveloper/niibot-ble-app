@@ -4,6 +4,34 @@ All notable changes to **Niibot Studio** are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project uses [Semantic Versioning](https://semver.org/).
 
+## [0.9.0] — 2026-11-13
+
+### Added
+- **Print dialog**: every print now starts with a small dialog — pick the number of copies and,
+  when the sheet holds more rows than the edited one, tick **Print the sheet** to run every row
+  × copies (the summary shows the resulting label count before you commit).
+- Status bars inside modals (icon library, fonts) moved into the modal footer so they hug and
+  fill the bottom edge of the window.
+
+### Fixed
+- Modals that only need a little content no longer open with a large empty area: the print and
+  prompt dialogs size themselves to their content.
+- Remaining double-encoded dash in the sheet progress message; "Cancelled." is English now.
+
+## [0.8.2] — 2026-11-13
+
+### Added
+- The executable prepares its own **`data` folder** next to `NiibotStudio.exe` on start-up and
+  creates `niibot.db` (schema + built-in formats) when it is missing, so a fresh copy needs no
+  setup. When that folder is read-only the app falls back to `%LOCALAPPDATA%\Niibot Studio\data`.
+- The panel prints the resolved data folder on start, and `NIIBOT_DATA` still overrides it.
+
+### Fixed
+- Mirror mode now centres, snaps and drags inside the **first region only** — the editable band —
+  instead of the whole label, so elements no longer jump into a generated region.
+- An element that starts in the first region but spills past the cut stays editable and is
+  outlined in orange (the overflow is clipped when printing) instead of being locked.
+
 ## [0.8.1] — 2026-11-13
 
 ### Changed
