@@ -911,6 +911,11 @@ function openRollSizeDialog(options = {}) {
       const thickness = Number(cell.thickness_mm ?? 0.8);
       editor.innerHTML = `
         <div class="cal-editor-head">Cell ${selected + 1} · ${shapeName}</div>
+        <div class="cal-shapes" role="group" aria-label="Cell shape">
+          <button type="button" class="cal-shape${cell.shape === 'rect' ? ' on' : ''}" data-shape="rect">Rectangle</button>
+          <button type="button" class="cal-shape${cell.shape === 'circle' ? ' on' : ''}" data-shape="circle">Circle</button>
+          <button type="button" class="cal-shape${cell.shape === 'line' ? ' on' : ''}" data-shape="line">Line</button>
+        </div>
         <div class="grid-4">
           ${field('X (mm)', numberInput('cal-x', round2(cell.x), 0.5, 0, Math.max(0, width - 0.5)))}
           ${field('Y (mm)', numberInput('cal-y', round2(cell.y), 0.5, 0, Math.max(0, height - 0.5)))}
@@ -1307,6 +1312,43 @@ function openRollSizeDialog(options = {}) {
         stepHistory(1);
       }
     };
+  });
+
+  /* Turn the selected cell(s) into another shape without redrawing them. */
+  const setCellShape = (shape) => {
+    const indices = selectedIndices();
+    if (!indices.length) return;
+    indices.forEach((index) => {
+      const cell = cells[index];
+      if (!cell || cell.shape === shape) return;
+      const centerX = cell.x + cell.w / 2;
+      const centerY = cell.y + cell.h / 2;
+      cell.shape = shape;
+      if (shape === 'circle') {
+        const side = Math.min(Math.max(1, Math.min(cell.w, cell.h)), width, height);
+        cell.w = snap(side);
+        cell.h = snap(side);
+        cell.x = snap(clamp(centerX - cell.w / 2, 0, Math.max(0, width - cell.w)));
+        cell.y = snap(clamp(centerY - cell.h / 2, 0, Math.max(0, height - cell.h)));
+        cell.angle = 0;
+      } else if (shape === 'line') {
+        const thickness = Math.max(0.2, Number(cell.thickness_mm) || 0.8);
+        cell.w = snap(Math.max(1, cell.w));
+        cell.h = snap(thickness);
+        cell.y = snap(clamp(centerY - cell.h / 2, 0, Math.max(0, height - cell.h)));
+        cell.angle = Number(cell.angle) || 0;
+      } else {
+        if (cell.h < 1) cell.h = snap(Math.max(2, height / Math.max(1, rows)));
+        cell.angle = 0;
+      }
+    });
+    gridMode = false;
+    commit();
+  };
+
+  editor.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-shape]');
+    if (button) setCellShape(button.dataset.shape);
   });
 
   $$('[data-align]', body).forEach((button) => {

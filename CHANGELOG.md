@@ -4,6 +4,14 @@ All notable changes to **Niibot Studio** are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project uses [Semantic Versioning](https://semver.org/).
 
+## [0.12.7] — 2026-11-13
+
+### Added
+- **Shape selector in the calibrator**: the selected cell can be switched between
+  **Rectangle / Circle / Line** without redrawing it — a circle keeps a square box centred where the cell
+  was, a line keeps its length as thickness shrinks to the line weight. Works on a whole multi-selection
+  at once.
+
 ## [0.12.6] — 2026-11-13
 
 ### Added
