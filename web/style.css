@@ -1157,6 +1157,15 @@ button.btn.wide { width: 100%; }
 .print-copies { width: 104px; padding: 7px 9px; font-size: 13px; text-align: center; }
 .print-summary { font-size: 11.5px; line-height: 1.35; color: var(--ink-muted); }
 .print-rows { font-size: 11px; color: var(--ink-muted); }
+.density-group { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.density-step {
+  width: 34px; padding: 7px 0; font-size: 12px; font-weight: 600;
+  border: 0; border-right: 1px solid var(--line); background: var(--glass-hi); color: var(--ink-muted);
+}
+.density-step:last-child { border-right: 0; }
+.density-step:hover { background: var(--pale); color: var(--ink); }
+.density-step.on { background: var(--teal-deep); color: #fff; }
+.print-density-hint { font-size: 11px; color: var(--ink-muted); }
 
 /* ------------------------------------------------------------ image cropping */
 .crop-preview {

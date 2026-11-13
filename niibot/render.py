@@ -527,6 +527,16 @@ def _draw_line(layer: Image.Image, element: Element, dpi: int) -> None:
         draw.rectangle([x - thickness // 2, 0, x - thickness // 2 + thickness - 1, height - 1], fill=(0, 0, 0, 255))
 
 
+def _halftone(image: Image.Image) -> Image.Image:
+    """Flatten *image* onto white and dither it into an ink mask (255 = dot)."""
+    if image.mode != "RGBA":
+        image = image.convert("RGBA")
+    gray = Image.new("L", image.size, 255)
+    gray.paste(image.convert("L"), (0, 0), image.split()[3])
+    mono = gray.convert("1", dither=Image.FLOYDSTEINBERG).convert("L")
+    return mono.point(lambda value: 0 if value else 255)
+
+
 def _draw_image(
     layer: Image.Image,
     element: Element,
@@ -547,9 +557,15 @@ def _draw_image(
     width, height = layer.size
     fit = element.image_fit if element.image_fit in ("cover", "contain", "stretch") else "cover"
 
+    def place(picture: Image.Image, x: float, y: float) -> None:
+        if element.image_dither:
+            _paste_clipped_mask(layer, _halftone(picture), int(round(x)), int(round(y)))
+        else:
+            _paste_clipped(layer, picture, int(round(x)), int(round(y)))
+
     if fit == "stretch":
         scaled = source.resize((max(1, width), max(1, height)), Image.LANCZOS)
-        _paste_clipped(layer, scaled, 0, 0)
+        place(scaled, 0, 0)
         return
 
     zoom = max(0.05, float(element.image_zoom or 1.0))
@@ -568,7 +584,7 @@ def _draw_image(
         # Never show a gap: the crop window stays inside the picture.
         left = min(0, max(width - new_size[0], left))
         top = min(0, max(height - new_size[1], top))
-    _paste_clipped(layer, scaled, int(round(left)), int(round(top)))
+    place(scaled, left, top)
 
 
 def _paste_clipped(target: Image.Image, picture: Image.Image, x: int, y: int) -> None:
@@ -580,6 +596,18 @@ def _paste_clipped(target: Image.Image, picture: Image.Image, x: int, y: int) ->
     if right <= left or bottom <= top:
         return
     target.alpha_composite(picture.crop((left, top, right, bottom)), (x + left, y + top))
+
+
+def _paste_clipped_mask(target: Image.Image, mask: Image.Image, x: int, y: int) -> None:
+    """Paint black through *mask* at (x, y), clipped to the target bounds."""
+    left = max(0, -x)
+    top = max(0, -y)
+    right = min(mask.width, target.width - x)
+    bottom = min(mask.height, target.height - y)
+    if right <= left or bottom <= top:
+        return
+    patch = mask.crop((left, top, right, bottom))
+    target.paste(Image.new("RGBA", patch.size, (0, 0, 0, 255)), (x + left, y + top), patch)
 
 
 def _blend(canvas: Image.Image, layer: Image.Image, x: int, y: int) -> None:

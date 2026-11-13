@@ -4,6 +4,25 @@ All notable changes to **Niibot Studio** are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project uses [Semantic Versioning](https://semver.org/).
 
+## [0.11.0] — 2026-11-13
+
+### Added
+- **Print density in the print dialog**: the B1 exposes the same 1–5 heat scale the vendor app
+  calls *print density* (their model table stores `solubilitySetDefault: 3`, range 1–5). The new
+  segmented control remembers the last value, defaults to what the printer reports, and travels
+  with every single-label and sheet print (`POST /api/print|print-sheet` -> `density`).
+- **Photo dithering per picture**: `Dither photo` on an image element halftones it (Floyd–Steinberg)
+  before the 1-bit threshold, so gradients and shaded artwork keep their tone instead of collapsing
+  into flat blobs. Text, barcodes and QR codes still use the sharp threshold.
+
+### Changed
+- The print summary spells out the density it will use (`2 copies · 2 labels · density 4`).
+
+### Notes
+- 203 dpi × 384 dots is the B1 hardware ceiling; the vendor's model table (`paccuracy: 8`,
+  `paccuracyName: "203"`) confirms it. Their *sharper* look comes from the same 1-bit data with a
+  different burn and halftone, which is exactly what these two controls now expose.
+
 ## [0.10.0] — 2026-11-13
 
 ### Added

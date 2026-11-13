@@ -1131,6 +1131,8 @@ function buildInspector() {
         <button type="button" class="btn" data-crop="centre">Centre</button>
         <button type="button" class="btn" data-crop="reset">Reset</button>
       </div>`);
+      parts.push(`<div class="row" style="margin-top:8px">${checkInput('image_dither', 'Dither photo', element.image_dither)}</div>
+        <div class="hint">Dithering keeps shades and gradients; leave it off for logos and line art.</div>`);
       parts.push(`<div class="hint" id="crop-quality" data-image-id="${escapeHtml(element.image_id)}">Checking the source resolution…</div>`);
     }
   }
@@ -3327,6 +3329,31 @@ function sheetDataRows() {
   return (state.spec?.sheet?.rows || []).length;
 }
 
+const DENSITY_LABELS = ['faintest', 'lighter', 'standard', 'darker', 'darkest'];
+const DENSITY_STORAGE_KEY = 'niibot.density';
+
+/* Density is the printer's own heat setting (the vendor calls it "print density", range 1-5).
+   The last value the user picked wins; otherwise follow what the printer reports. */
+function storedDensity() {
+  const clamp = (value) => (Number.isFinite(value) ? Math.max(1, Math.min(5, Math.round(value))) : null);
+  try {
+    const raw = localStorage.getItem(DENSITY_STORAGE_KEY);
+    if (raw !== null && String(raw).trim() !== '') {
+      const saved = clamp(Number(raw));
+      if (saved) return saved;
+    }
+  } catch (_) { /* private mode */ }
+  const device = clamp(Number(state.printer?.info?.density));
+  if (device) return device;
+  return clamp(Number(state.spec?.density)) || 3;
+}
+
+function rememberDensity(value) {
+  try {
+    localStorage.setItem(DENSITY_STORAGE_KEY, String(value));
+  } catch (_) { /* private mode */ }
+}
+
 /* One place that starts a print: asks for the copy count and, when the sheet holds more rows
    than the edited one, whether to run the whole sheet (each row × copies). */
 function openPrintDialog({ fromSheet = false } = {}) {
@@ -3346,6 +3373,13 @@ function openPrintDialog({ fromSheet = false } = {}) {
       <label class="print-label" for="print-copies">Copies</label>
       <input class="print-copies" id="print-copies" type="number" min="1" max="99" step="1" value="${defaults}">
     </div>
+    <div class="print-row">
+      <span class="print-label">Density</span>
+      <div class="density-group" id="print-density" role="group" aria-label="Print density">
+        ${[1, 2, 3, 4, 5].map((value) => `<button type="button" class="density-step" data-density="${value}">${value}</button>`).join('')}
+      </div>
+      <span class="print-density-hint" id="print-density-hint"></span>
+    </div>
     ${hasSheet ? `<label class="check"><input type="checkbox" id="print-from-sheet" ${fromSheet ? 'checked' : ''}>
       <span>Print the sheet</span> <span class="print-rows">(${sheetRows} rows)</span></label>` : ''}
     <div class="print-summary" id="print-summary"></div>
@@ -3363,16 +3397,36 @@ function openPrintDialog({ fromSheet = false } = {}) {
     title: 'Print',
     icon: 'printer',
     width: 430,
-    height: hasSheet ? 300 : 248,
+    height: hasSheet ? 356 : 304,
     body,
     footer,
   });
-  fitModalToContent(modal, { min: 196, max: 420 });
+  fitModalToContent(modal, { min: 196, max: 460 });
 
   const copiesInput = $('#print-copies', body);
   const sheetToggle = $('#print-from-sheet', body);
   const summary = $('#print-summary', body);
   const mirrorOn = !!mirrorRequest();
+  const densityHint = $('#print-density-hint', body);
+  const densityButtons = $$('.density-step', body);
+  let density = storedDensity();
+
+  const paintDensity = () => {
+    densityButtons.forEach((button) => {
+      const on = Number(button.dataset.density) === density;
+      button.classList.toggle('on', on);
+      button.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+    if (densityHint) densityHint.textContent = t(DENSITY_LABELS[density - 1] || '');
+  };
+
+  densityButtons.forEach((button) => {
+    button.onclick = () => {
+      density = Number(button.dataset.density);
+      paintDensity();
+      paint();
+    };
+  });
 
   const paint = () => {
     const copies = Math.max(1, Math.min(99, Number(copiesInput.value) || 1));
@@ -3382,18 +3436,22 @@ function openPrintDialog({ fromSheet = false } = {}) {
     const parts = [
       useSheet ? `${rows} rows × ${copies} ${copies === 1 ? 'copy' : 'copies'}` : `${copies} ${copies === 1 ? 'copy' : 'copies'} of this label`,
       `${total} ${total === 1 ? 'label' : 'labels'}`,
+      `density ${density}`,
     ];
     if (mirrorOn) parts.push('mirror fills the extra regions');
     summary.textContent = parts.join(' · ');
   };
   copiesInput.addEventListener('input', paint);
   if (sheetToggle) sheetToggle.addEventListener('change', paint);
+  paintDensity();
   paint();
 
   const start = async () => {
     const copies = Math.max(1, Math.min(99, Number(copiesInput.value) || 1));
     const useSheet = !!sheetToggle?.checked;
     state.spec.copies = copies;
+    state.spec.density = density;
+    rememberDensity(density);
     pushHistory();
     closeModal('print');
     try {
@@ -3403,7 +3461,7 @@ function openPrintDialog({ fromSheet = false } = {}) {
           rows: state.spec.sheet.rows,
           include_current: true,
           copies,
-          density: state.spec.density || 3,
+          density,
           mirror: mirrorRequest(),
         });
         renderJobStatus(result.job || { state: 'running', progress: 0, message: 'Sheet queued…' });
@@ -3411,7 +3469,7 @@ function openPrintDialog({ fromSheet = false } = {}) {
         await api('/api/print', 'POST', {
           spec: state.spec,
           copies,
-          density: state.spec.density || 3,
+          density,
           mirror: mirrorRequest(),
         });
         renderJobStatus({ state: 'running', progress: 0, message: 'Job accepted…' });

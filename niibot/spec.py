@@ -62,6 +62,8 @@ class Element(BaseModel):
     #: Crop window offset in millimetres — moves the picture inside the box.
     image_offset_x: float = 0.0
     image_offset_y: float = 0.0
+    #: Halftone the picture instead of hard-thresholding it — keeps gradients readable.
+    image_dither: bool = False
 
     @field_validator("type")
     @classmethod
