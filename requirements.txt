@@ -1,0 +1,9 @@
+bleak>=1.0
+fastapi>=0.115
+uvicorn>=0.30
+pillow>=10.2
+qrcode>=8.0
+python-barcode>=0.15
+python-multipart>=0.0.9
+# PDF jobs from the Windows print queue (optional but recommended)
+pypdfium2>=4.30

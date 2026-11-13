@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#f8fcff">
+<meta name="color-scheme" content="light">
+<title>Niibot Studio — drukarka Niimbot B1</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<!-- ------------------------------------------------------------------ menubar -->
+<header class="menubar" id="menubar">
+  <div class="menu-brand">
+    <i data-lucide="printer"></i>
+    <span>Niibot <b>Studio</b></span>
+  </div>
+  <nav class="menu-items">
+    <button class="menu-item" data-menu="file">Plik</button>
+    <button class="menu-item" data-menu="edit">Edycja</button>
+    <button class="menu-item" data-menu="view">Widok</button>
+    <button class="menu-item" data-menu="settings">Ustawienia</button>
+    <button class="menu-item" data-menu="help">Pomoc</button>
+  </nav>
+  <div class="menu-spacer"></div>
+  <div class="menu-conn" id="menu-conn" title="Stan połączenia">
+    <span class="dot" id="conn-dot"></span>
+    <span id="conn-text">nie połączono</span>
+  </div>
+</header>
+<div class="menu-dropdown" id="menu-dropdown" hidden></div>
+
+<!-- -------------------------------------------------------------------- shell -->
+<div class="shell">
+
+  <!-- lewy toolbar (jak activity bar w VS Code) -->
+  <nav class="activity-bar" id="activity-bar">
+    <button data-add="text" title="Tekst"><i data-lucide="type"></i></button>
+    <button data-add="barcode" title="Kod kreskowy"><i data-lucide="barcode"></i></button>
+    <button data-add="qr" title="Kod QR"><i data-lucide="qr-code"></i></button>
+    <button data-add="rect" title="Ramka"><i data-lucide="square"></i></button>
+    <button data-add="line" title="Linia"><i data-lucide="minus"></i></button>
+    <button data-add="image" title="Obraz"><i data-lucide="image"></i></button>
+    <button id="btn-icons" title="Ikony i cliparty (Lucide, Material)"><i data-lucide="shapes"></i></button>
+    <div class="ab-sep"></div>
+    <button id="btn-undo" title="Cofnij (Ctrl+Z)"><i data-lucide="undo-2"></i></button>
+    <button id="btn-redo" title="Ponów (Ctrl+Y)"><i data-lucide="redo-2"></i></button>
+    <div class="ab-sep"></div>
+    <button id="btn-save" title="Zapisz etykietę (Ctrl+S)"><i data-lucide="save"></i></button>
+    <button id="btn-open" title="Wczytaj etykietę"><i data-lucide="folder-open"></i></button>
+    <button id="btn-png" title="Eksport PNG"><i data-lucide="download"></i></button>
+    <div class="ab-sep"></div>
+    <button id="btn-print" class="accent" title="Drukuj (Ctrl+P)"><i data-lucide="printer"></i></button>
+    <div class="ab-sep"></div>
+    <button id="btn-grid" class="toggle" title="Siatka na etykiecie (G)"><i data-lucide="grid-3x3"></i></button>
+    <button id="btn-snap" class="toggle active" title="Przyciąganie do siatki (S)"><i data-lucide="magnet"></i></button>
+    <div class="ab-spacer"></div>
+    <button id="btn-settings" title="Ustawienia"><i data-lucide="settings"></i></button>
+  </nav>
+
+  <!-- obszar roboczy -->
+  <main class="workbench">
+    <div class="editor">
+      <div class="stage-meta" id="stage-meta"></div>
+
+      <div class="canvas-wrap" id="canvas-wrap">
+        <div class="paper-column" id="paper-column">
+          <div class="stage" id="stage">
+            <img id="preview" alt="Podgląd etykiety">
+            <div id="grid-layer" class="grid-layer" hidden></div>
+            <div id="paper-regions"></div>
+            <div id="guides" class="guides"></div>
+            <div id="overlay"></div>
+          </div>
+          <div class="gap-preview" id="gap-preview"><span id="gap-preview-label">odstęp</span></div>
+        </div>
+      </div>
+
+      <!-- widok arkusza danych -->
+      <div class="sheet-pane" id="sheet-pane" hidden>
+        <div class="sheet-toolbar">
+          <button class="btn" id="sheet-add-row"><i data-lucide="table-row-insert-bottom"></i> Wiersz</button>
+          <button class="btn" id="sheet-add-column"><i data-lucide="table-column-insert-right"></i> Kolumna</button>
+          <label class="sheet-toggle" id="sheet-mirror-wrap" title="Wypełnij pozostałe regiony etykiety kopią pierwszego">
+            <input type="checkbox" id="sheet-mirror"><span>Mirror</span>
+          </label>
+          <label class="sheet-toggle" id="sheet-flip-wrap" title="Druga strona jako odbicie pionowe zamiast kopii">
+            <input type="checkbox" id="sheet-flip"><span>odbicie</span>
+          </label>
+          <div class="sheet-spacer"></div>
+          <button class="btn" id="sheet-clear"><i data-lucide="eraser"></i> Wyczyść</button>
+          <button class="btn primary" id="sheet-print"><i data-lucide="printer"></i> Drukuj arkusz</button>
+        </div>
+        <div class="sheet-scroll" id="sheet-scroll">
+          <table class="sheet-table" id="sheet-table"></table>
+        </div>
+        <div class="sheet-hint" id="sheet-hint"></div>
+      </div>
+
+      <!-- przełącznik widoku (dół po lewej) -->
+      <div class="editor-tabs" id="editor-tabs">
+        <span class="tabs-grip" title="Widok obszaru roboczego"><i data-lucide="grip-horizontal"></i></span>
+        <button class="editor-tab active" data-view="design"><i data-lucide="layout-template"></i> Projekt</button>
+        <button class="editor-tab" data-view="sheet"><i data-lucide="table-2"></i> Arkusz</button>
+      </div>
+
+      <!-- pływający toolbar nad obszarem roboczym -->
+      <div class="floating-toolbar" id="floating-toolbar" hidden>
+        <span class="ft-label" id="ft-label">element</span>
+        <div class="ft-sep"></div>
+        <button data-ft="align-h" title="Wyśrodkuj w poziomie"><i data-lucide="align-center-horizontal"></i></button>
+        <button data-ft="align-v" title="Wyśrodkuj w pionie"><i data-lucide="align-center-vertical"></i></button>
+        <button data-ft="rotate" title="Obróć 90°"><i data-lucide="rotate-cw"></i></button>
+        <button data-ft="up" title="Warstwa wyżej"><i data-lucide="chevron-up"></i></button>
+        <button data-ft="down" title="Warstwa niżej"><i data-lucide="chevron-down"></i></button>
+        <div class="ft-sep"></div>
+        <button data-ft="duplicate" title="Duplikuj (Ctrl+D)"><i data-lucide="copy"></i></button>
+        <button data-ft="delete" class="danger" title="Usuń (Del)"><i data-lucide="trash-2"></i></button>
+      </div>
+
+      <div class="warnings" id="warnings"></div>
+    </div>
+
+    <!-- status bar -->
+    <footer class="statusbar">
+      <button class="sb-item" id="sb-conn" title="Połączenie">
+        <i data-lucide="bluetooth"></i><span id="sb-conn-text">nie połączono</span>
+      </button>
+      <div class="sb-item" id="sb-paper" title="Papier i rolka">
+        <i data-lucide="tag"></i><span id="sb-paper-text">brak danych</span>
+      </div>
+      <div class="sb-item" id="sb-format" title="Format etykiety">
+        <i data-lucide="crop"></i><span id="sb-format-text">—</span>
+      </div>
+      <div class="sb-spacer"></div>
+      <div class="sb-item sb-job" id="sb-job" hidden>
+        <div class="sb-progress"><div id="sb-progress-bar"></div></div>
+        <span id="sb-job-text">—</span>
+      </div>
+      <div class="sb-item" id="sb-temp" title="Temperatura głowicy"></div>
+      <div class="sb-item sb-muted" id="sb-db" title="Baza danych">SQLite</div>
+    </footer>
+  </main>
+
+  <!-- prawy panel: właściwości + warstwy -->
+  <aside class="panel">
+    <header class="panel-title"><i data-lucide="sliders-horizontal"></i><span>Właściwości</span></header>
+    <div class="panel-body" id="inspector-card">
+      <div class="panel-empty">Wybierz element na etykiecie, aby go edytować.</div>
+    </div>
+    <header class="panel-title"><i data-lucide="layers"></i><span>Warstwy</span>
+      <span class="panel-count" id="layer-count">0</span>
+    </header>
+    <div class="panel-body panel-layers" id="layer-list"></div>
+    <div class="panel-toolbar">
+      <button id="layer-up" title="Warstwa wyżej"><i data-lucide="chevron-up"></i></button>
+      <button id="layer-down" title="Warstwa niżej"><i data-lucide="chevron-down"></i></button>
+      <span class="pt-sep"></span>
+      <button id="layer-duplicate" title="Duplikuj (Ctrl+D)"><i data-lucide="copy"></i></button>
+      <button id="layer-delete" class="danger" title="Usuń (Del)"><i data-lucide="trash-2"></i></button>
+    </div>
+  </aside>
+</div>
+
+<div id="modal-root"></div>
+<div id="toast"></div>
+<input type="file" id="file-input" accept="image/*" hidden>
+
+<script src="/static/vendor/lucide.min.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>
