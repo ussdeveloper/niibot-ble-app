@@ -4,6 +4,13 @@ All notable changes to **Niibot Studio** are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project uses [Semantic Versioning](https://semver.org/).
 
+## [0.12.8] — 2026-11-13
+
+### Added
+- **Name for a roll format**: the calibrator has a *Roll name* field, so the label bar and the format
+  catalogue show `Round 21 mm white` instead of the bare RFID code. The name is stored with the roll
+  (catalogue entry + remembered profile) and comes back on every later insertion.
+
 ## [0.12.7] — 2026-11-13
 
 ### Added

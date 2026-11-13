@@ -551,6 +551,11 @@ function openRollSizeDialog(options = {}) {
   const paper = state.printer?.paper || {};
   const rollName = paper.sku || paper.catalog?.name || paper.barcode || 'this roll';
   const profile = state.printer?.profile || null;
+  /* A friendly name for this roll (the barcode is a poor label everywhere in the UI). */
+  const codeOnly = (value) => !value || /^\d+$/.test(String(value).trim());
+  let rollLabel = !codeOnly(profile?.name) ? String(profile.name)
+    : !codeOnly(paper.catalog?.name) ? String(paper.catalog.name)
+      : '';
   const presets = (state.options?.paper_presets || []).map((preset) => ({
     label: preset.name || `${round2(preset.width_mm)} × ${round2(preset.height_mm)} mm`,
     width: preset.width_mm,
@@ -593,6 +598,11 @@ function openRollSizeDialog(options = {}) {
 
       <div class="cal-section">
         <div class="cal-section-head">Roll size</div>
+        <div class="field">
+          <label for="cal-name">Roll name</label>
+          <input id="cal-name" data-key="cal-name" value="${escapeHtml(rollLabel)}"
+            placeholder="e.g. Round 21 mm white" autocomplete="off">
+        </div>
         <div class="grid-2">
           ${field('Width (mm)', numberInput('cal-width', round2(width), 0.5, 5, 108))}
           ${field('Height (mm)', numberInput('cal-height', round2(height), 0.5, 5, 300))}
@@ -1437,11 +1447,13 @@ function openRollSizeDialog(options = {}) {
   $('[data-cal-save]', footer).onclick = async () => {
     readSize();
     const layout = derivedGrid();
+    const typedName = ($('[data-key="cal-name"]', body)?.value || '').trim();
+    const savedName = typedName || (codeOnly(rollName) ? rollName : String(rollName));
     closeModal('roll-size');
     try {
       const payload = await api('/api/roll-format', 'POST', {
         barcode: paper.barcode || 'unknown',
-        name: rollName,
+        name: savedName,
         width_mm: width,
         height_mm: height,
         rows: layout.rows,
@@ -1466,7 +1478,7 @@ function openRollSizeDialog(options = {}) {
         const catalog = await api('/api/catalog');
         state.catalog = catalog.catalog || [];
       } catch (_) { /* the list refreshes with the settings tab */ }
-      toast(`Roll ${rollName}: ${round2(width)} × ${round2(height)} mm, ${cells.length || 1} cell${cells.length === 1 ? '' : 's'} remembered`, 'ok');
+      toast(`Roll ${savedName}: ${round2(width)} × ${round2(height)} mm, ${cells.length || 1} cell${cells.length === 1 ? '' : 's'} remembered`, 'ok');
       renderPaperRegions();
       schedulePreview();
       if (isModalOpen('settings')) renderSettingsTab();
