@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import io
 import logging
 import platform
@@ -18,6 +19,7 @@ from typing import Any
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
+from PIL import ImageOps
 from pydantic import BaseModel, Field
 
 from . import ipp as ipp_mod
@@ -152,6 +154,11 @@ class SheetPrintRequest(BaseModel):
     density: int | None = None
     label_type: int | None = None
     mirror: MirrorRequest | None = None
+
+
+class ElementPreviewRequest(BaseModel):
+    spec: LabelSpec
+    element_id: str
 
 
 class SaveLabelRequest(BaseModel):
@@ -517,6 +524,39 @@ async def api_preview(request: PreviewRequest) -> dict:
         return preview_payload(_with_mirror(request.spec, request.mirror), dpi, printhead, store.upload_path)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/element-preview")
+async def api_element_preview(request: ElementPreviewRequest) -> dict:
+    """Render a single element on its own — used for drag ghosts and layer thumbnails."""
+    element = next((item for item in request.spec.elements if item.id == request.element_id), None)
+    if element is None:
+        raise HTTPException(status_code=404, detail="Element not found.")
+    dpi, _printhead = _geometry()
+    margin = round(max(element.w, element.h) * 0.75 + 1, 2)
+    single = LabelSpec(
+        name="element",
+        width_mm=round(element.w + 2 * margin, 2),
+        height_mm=round(element.h + 2 * margin, 2),
+        elements=[element.model_copy(update={"x": margin, "y": margin, "visible": True}, deep=True)],
+    )
+    try:
+        rendered = render_label(single, dpi, 20000, store.upload_path)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    image = rendered.image.convert("L")
+    inverted = ImageOps.invert(image)
+    box = inverted.getbbox()
+    if box:
+        image = image.crop(box)
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    return {
+        "png": base64.b64encode(buffer.getvalue()).decode("ascii"),
+        "width_px": image.width,
+        "height_px": image.height,
+    }
 
 
 @app.post("/api/render.png")
