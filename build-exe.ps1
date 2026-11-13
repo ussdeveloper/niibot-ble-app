@@ -43,8 +43,17 @@ if ($Clean) {
 }
 
 Write-Host 'Running PyInstaller...'
-& $python -m PyInstaller --noconfirm --clean NiibotStudio.spec
-if ($LASTEXITCODE -ne 0) { throw 'PyInstaller failed' }
+# PyInstaller reports progress on stderr; keep that from aborting the script.
+$log = Join-Path $PSScriptRoot 'build-pyinstaller.log'
+$nativePref = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+& $python -m PyInstaller --noconfirm --clean --log-level WARN NiibotStudio.spec *> $log
+$pyExit = $LASTEXITCODE
+$ErrorActionPreference = $nativePref
+if ($pyExit -ne 0) {
+    Get-Content $log -Tail 40 | ForEach-Object { Write-Host $_ }
+    throw 'PyInstaller failed'
+}
 
 $exe = Join-Path $PSScriptRoot 'dist\NiibotStudio\NiibotStudio.exe'
 if (-not (Test-Path $exe)) { throw "Build finished but $exe is missing" }
