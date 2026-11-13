@@ -4,6 +4,23 @@ All notable changes to **Niibot Studio** are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project uses [Semantic Versioning](https://semver.org/).
 
+## [0.12.3] — 2026-11-13
+
+### Added
+- **Cell list in the calibrator**: every drawn cell is a chip under the toolbar (`1 rect 48×25 ✕`) — click to
+  select, `✕` deletes just that one. The summary now spells out the layout it detected
+  (`2 cells · 2 rows × 1 column · 48 × 25 mm each`), and that is what gets stored with the roll.
+- **Undo / redo inside the calibrator**: toolbar buttons plus `Ctrl+Z`, `Ctrl+Y` / `Ctrl+Shift+Z`, and
+  `Delete` removes the selected cell. The history is local to the dialog, so it never fights the
+  designer's own undo.
+
+### Fixed
+- Editing the **Rows / Columns** fields now rebuilds the grid immediately while the cells are still a
+  plain grid — no second click on the button needed.
+- **Lines are visible and selectable**: they render as a dashed violet bar with a minimum size and a
+  larger hit area, keep their angle, and their `Length (mm)` / `Angle` / `Thickness (mm)` fields are
+  reachable (the dialog grows to fit instead of clipping them).
+
 ## [0.12.2] — 2026-11-13
 
 ### Added

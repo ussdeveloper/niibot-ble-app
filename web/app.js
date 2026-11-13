@@ -576,7 +576,10 @@ function openRollSizeDialog(options = {}) {
     <div class="cal-toolbar">
       <button type="button" class="btn" data-cal="grid"><i data-lucide="grid-2x2"></i> Grid from rows × columns</button>
       <button type="button" class="btn" data-cal="delete"><i data-lucide="trash-2"></i> Delete</button>
+      <button type="button" class="btn" data-cal="undo" title="Undo (Ctrl+Z)"><i data-lucide="undo-2"></i></button>
+      <button type="button" class="btn" data-cal="redo" title="Redo (Ctrl+Y)"><i data-lucide="redo-2"></i></button>
     </div>
+    <div class="cal-cellchips" id="cal-cellchips"></div>
     <div class="cal-stage-wrap">
       <div class="cal-viewport" id="cal-viewport">
         <div class="cal-stage" id="cal-stage"><div class="cal-cells" id="cal-cells"></div></div>
@@ -617,10 +620,13 @@ function openRollSizeDialog(options = {}) {
   const editor = $('#cal-editor', body);
   const summary = $('#cal-summary', body);
   const zoomLabel = $('#cal-zoom-label', body);
+  const chipsBox = $('#cal-cellchips', body);
   let tool = 'select';
   let zoom = 1;
   let panX = 0;
   let panY = 0;
+  /* True while the cells are just the rows × columns grid, so the fields can keep rebuilding it. */
+  let gridMode = !cells.length;
 
   const num = (name) => Math.max(0, Number($(`[data-key="cal-${name}"]`, body)?.value) || 0);
   let lastFit = -1;
@@ -639,6 +645,70 @@ function openRollSizeDialog(options = {}) {
   const applyView = () => {
     stage.style.transform = `translate(${Math.round(panX)}px, ${Math.round(panY)}px) scale(${zoom})`;
     if (zoomLabel) zoomLabel.textContent = `${Math.round(zoom * 100)}%`;
+  };
+
+  /* Rows/columns that the drawn cells actually form (distinct start rows and columns). */
+  const derivedGrid = () => {
+    if (!cells.length) return { rows, cols };
+    const rowsSeen = new Set(cells.map((cell) => Math.round(Number(cell.y) || 0)));
+    const colsSeen = new Set(cells.map((cell) => Math.round(Number(cell.x) || 0)));
+    return { rows: Math.max(1, rowsSeen.size), cols: Math.max(1, colsSeen.size) };
+  };
+
+  /* Undo history lives inside the dialog: every committed change is one step. */
+  let history = [JSON.stringify(cells)];
+  let historyIndex = 0;
+
+  const commit = () => {
+    const snapshot = JSON.stringify(cells);
+    if (history[historyIndex] !== snapshot) {
+      history = history.slice(0, historyIndex + 1);
+      history.push(snapshot);
+      if (history.length > 60) history.shift();
+      historyIndex = history.length - 1;
+    }
+    draw();
+  };
+
+  const stepHistory = (delta) => {
+    const next = historyIndex + delta;
+    if (next < 0 || next >= history.length) return;
+    historyIndex = next;
+    cells = JSON.parse(history[historyIndex]);
+    selected = Math.max(-1, Math.min(selected, cells.length - 1));
+    draw();
+  };
+
+  const deleteCell = (index) => {
+    if (index < 0 || index >= cells.length) return;
+    cells.splice(index, 1);
+    gridMode = false;
+    selected = Math.min(index, cells.length - 1);
+    commit();
+  };
+
+  const applyGrid = () => {
+    readSize();
+    cells = [];
+    const cellW = width / cols;
+    const cellH = height / rows;
+    for (let row = 0; row < rows; row += 1) {
+      for (let col = 0; col < cols; col += 1) {
+        cells.push({
+          shape: 'rect',
+          x: round2(col * cellW),
+          y: round2(row * cellH),
+          w: round2(cellW),
+          h: round2(cellH),
+          angle: 0,
+          thickness_mm: 0.8,
+          label: rows * cols > 1 ? `R${row + 1}C${col + 1}` : '',
+        });
+      }
+    }
+    gridMode = true;
+    selected = cells.length ? 0 : -1;
+    commit();
   };
 
   const centreView = () => {
@@ -723,12 +793,26 @@ function openRollSizeDialog(options = {}) {
     const clipNote = headLimit && width > headLimit + 0.05
       ? ` · prints up to ${round2(headLimit)} mm (printhead)`
       : '';
-    summary.textContent = `${cells.length || 1} ${cells.length === 1 ? 'cell' : 'cells'} · ${perCell}${clipNote}`;
+    const layout = derivedGrid();
+    const layoutNote = cells.length > 1
+      ? ` · ${layout.rows} row${layout.rows === 1 ? '' : 's'} × ${layout.cols} column${layout.cols === 1 ? '' : 's'}`
+      : '';
+    summary.textContent = `${cells.length || 1} ${cells.length === 1 ? 'cell' : 'cells'}${layoutNote} · ${perCell}${clipNote}`;
 
     refreshIcons(body);
-    if (lastFit !== cells.length) {
-      lastFit = cells.length;
-      fitModalToContent(modal, { min: 420, max: 780 });
+    if (chipsBox) {
+      chipsBox.innerHTML = cells.length
+        ? cells.map((cell, index) => `
+          <button type="button" class="cal-chip${index === selected ? ' on' : ''}" data-chip="${index}">
+            <b>${index + 1}</b><span>${cell.shape === 'circle' ? 'circle' : cell.shape === 'line' ? 'line' : 'rect'}
+            ${round2(cell.w)}×${round2(cell.h)}</span>
+            <i class="cal-chip-x" data-chip-del="${index}" title="Delete this cell">✕</i>
+          </button>`).join('')
+        : '<span class="hint">No cells yet — press the grid button or draw on the label.</span>';
+    }
+    if (lastFit !== `${cells.length}:${selected}:${cells[selected]?.shape || ''}`) {
+      lastFit = `${cells.length}:${selected}:${cells[selected]?.shape || ''}`;
+      fitModalToContent(modal, { min: 420, max: 920 });
     }
   };
 
@@ -788,6 +872,7 @@ function openRollSizeDialog(options = {}) {
     }
 
     const start = toMm(event.clientX, event.clientY);
+    gridMode = false;
     const draft = document.createElement('div');
     draft.className = `cal-cell drafting${tool === 'circle' ? ' circle' : ''}${tool === 'line' ? ' line' : ''}`;
     cellsBox.appendChild(draft);
@@ -844,7 +929,8 @@ function openRollSizeDialog(options = {}) {
           thickness_mm: 0.8,
           label: '',
         });
-        selectCell(cells.length - 1);
+        selected = cells.length - 1;
+        commit();
         setTool(tool);
         return;
       }
@@ -858,7 +944,8 @@ function openRollSizeDialog(options = {}) {
         thickness_mm: 0.8,
         label: '',
       });
-      selectCell(cells.length - 1);
+      selected = cells.length - 1;
+      commit();
       if (tool !== 'select') setTool(tool);
     };
     window.addEventListener('pointermove', onMove);
@@ -872,6 +959,7 @@ function openRollSizeDialog(options = {}) {
     const index = Number(node.dataset.cell);
     const handle = event.target.dataset?.handle || null;
     if (index !== selected) selectCell(index);
+    gridMode = false;
 
     const startCell = { ...cells[index] };
     const box = stage.getBoundingClientRect();
@@ -944,7 +1032,7 @@ function openRollSizeDialog(options = {}) {
     const onUp = () => {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
-      if (moved) draw();
+      if (moved) commit();
     };
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
@@ -981,15 +1069,40 @@ function openRollSizeDialog(options = {}) {
     };
   });
 
-  body.addEventListener('keydown', (event) => {
-    if (event.key !== 'Delete' && event.key !== 'Backspace') return;
+  body.addEventListener('change', (event) => {
+    const key = event.target.dataset?.key;
+    if (!key) return;
+    if (key.startsWith('cal-')) commit();
+  });
+
+  const onCalKeydown = (event) => {
+    if (!document.body.contains(stage)) {
+      document.removeEventListener('keydown', onCalKeydown, true);
+      return;
+    }
+    const mod = event.ctrlKey || event.metaKey;
     const tag = (event.target.tagName || '').toLowerCase();
-    if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+    const typing = tag === 'input' || tag === 'textarea' || tag === 'select';
+    if (mod && event.key.toLowerCase() === 'z') {
+      event.preventDefault();
+      event.stopPropagation();
+      stepHistory(event.shiftKey ? 1 : -1);
+      return;
+    }
+    if (mod && event.key.toLowerCase() === 'y') {
+      event.preventDefault();
+      event.stopPropagation();
+      stepHistory(1);
+      return;
+    }
+    if (typing) return;
+    if (event.key !== 'Delete' && event.key !== 'Backspace') return;
     if (selected < 0) return;
     event.preventDefault();
-    cells.splice(selected, 1);
-    selectCell(cells.length ? Math.min(selected, cells.length - 1) : -1);
-  });
+    event.stopPropagation();
+    deleteCell(selected);
+  };
+  document.addEventListener('keydown', onCalKeydown, true);
 
   const addCell = (shape) => {
     if (shape === 'circle') {
@@ -1014,42 +1127,46 @@ function openRollSizeDialog(options = {}) {
 
   $$('[data-cal]', body).forEach((button) => {
     button.onclick = () => {
-      readSize();
       const action = button.dataset.cal;
       if (action === 'grid') {
-        cells = [];
-        const cellW = width / cols;
-        const cellH = height / rows;
-        for (let row = 0; row < rows; row += 1) {
-          for (let col = 0; col < cols; col += 1) {
-            cells.push({
-              shape: 'rect',
-              x: round2(col * cellW),
-              y: round2(row * cellH),
-              w: round2(cellW),
-              h: round2(cellH),
-              label: rows * cols > 1 ? `R${row + 1}C${col + 1}` : '',
-            });
-          }
-        }
-        selectCell(cells.length ? 0 : -1);
+        applyGrid();
       } else if (action === 'delete') {
-        if (selected >= 0) cells.splice(selected, 1);
-        selectCell(cells.length ? Math.min(selected, cells.length - 1) : -1);
+        deleteCell(selected);
+      } else if (action === 'undo') {
+        stepHistory(-1);
+      } else if (action === 'redo') {
+        stepHistory(1);
       }
     };
   });
+
+  if (chipsBox) {
+    chipsBox.addEventListener('click', (event) => {
+      const remove = event.target.closest('[data-chip-del]');
+      if (remove) {
+        deleteCell(Number(remove.dataset.chipDel));
+        return;
+      }
+      const chip = event.target.closest('[data-chip]');
+      if (chip) selectCell(Number(chip.dataset.chip));
+    });
+  }
 
   body.addEventListener('input', (event) => {
     const key = event.target.dataset?.key;
     if (!key) return;
     if (['cal-width', 'cal-height', 'cal-rows', 'cal-cols', 'cal-gap'].includes(key)) {
       readSize();
+      if (gridMode && (key === 'cal-rows' || key === 'cal-cols' || key === 'cal-width' || key === 'cal-height')) {
+        applyGrid();
+        return;
+      }
       draw();
       return;
     }
     const cell = cells[selected];
     if (!cell) return;
+    gridMode = false;
     if (key === 'cal-x') cell.x = Math.min(Math.max(0, Number(event.target.value) || 0), Math.max(0, width - cell.w));
     if (key === 'cal-y') cell.y = Math.min(Math.max(0, Number(event.target.value) || 0), Math.max(0, height - cell.h));
     if (key === 'cal-w') {
@@ -1095,6 +1212,7 @@ function openRollSizeDialog(options = {}) {
   $('[data-cal-cancel]', footer).onclick = () => closeModal('roll-size');
   $('[data-cal-save]', footer).onclick = async () => {
     readSize();
+    const layout = derivedGrid();
     closeModal('roll-size');
     try {
       const payload = await api('/api/roll-format', 'POST', {
@@ -1102,8 +1220,8 @@ function openRollSizeDialog(options = {}) {
         name: rollName,
         width_mm: width,
         height_mm: height,
-        rows,
-        cols,
+        rows: layout.rows,
+        cols: layout.cols,
         gap_mm: gap,
         label_type: paper.label_type ?? state.spec.label_type,
         capacity: paper.capacity ?? null,
