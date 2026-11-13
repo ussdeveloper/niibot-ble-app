@@ -506,6 +506,14 @@ function renderStageMeta() {
       <i data-lucide="flip-vertical-2"></i> Mirror ${geo.rows}×
     </button>`);
   }
+  const cells = profileCells();
+  if (cells.length > 1) {
+    const onCells = !!spec.sheet?.cells_mirror;
+    chips.push(`<button type="button" class="meta-chip mirror ${onCells ? 'active' : ''}" id="meta-cells-mirror"
+      title="Design inside cell 1 of the calibrated roll — cells 2..${cells.length} are filled with the same content">
+      <i data-lucide="copy"></i> Mirror cells ${cells.length}×
+    </button>`);
+  }
   if (geo.gapMm > 0 && hasGapPaper()) chips.push(`<span class="meta-chip">gap ${round2(geo.gapMm)} mm</span>`);
   chips.push(`<button type="button" class="meta-chip" id="meta-orient"
     title="Change the orientation — turn the design with the label or just swap the canvas">
@@ -523,6 +531,8 @@ function renderStageMeta() {
   if (calibrateChip) calibrateChip.onclick = () => openRollSizeDialog();
   const orientChip = $('#meta-orient', meta);
   if (orientChip) orientChip.onclick = () => openOrientationDialog();
+  const cellsMirrorChip = $('#meta-cells-mirror', meta);
+  if (cellsMirrorChip) cellsMirrorChip.onclick = () => toggleCellsMirror();
   const fitChip = $('#meta-fit-roll', meta);
   if (fitChip) {
     fitChip.onclick = () => {
@@ -1482,8 +1492,9 @@ function renderPaperRegions() {
       : Math.min(Number(cell.h || 0), spec.height_mm - cellY);
     if (cellW <= 0.2 || cellH <= 0.2) return;
     const shapeClass = cell.shape === 'circle' ? ' circle' : cell.shape === 'line' ? ' line' : '';
+    const current = index === 0 && !!state.spec?.sheet?.cells_mirror;
     const box = document.createElement('div');
-    box.className = `paper-cell${shapeClass}`;
+    box.className = `paper-cell${shapeClass}${current ? ' editable' : ''}`;
     box.style.left = `${(cellX / spec.width_mm) * 100}%`;
     box.style.top = `${(cellY / spec.height_mm) * 100}%`;
     box.style.width = `${(cellW / spec.width_mm) * 100}%`;
@@ -2916,11 +2927,59 @@ function sheetRegions() {
   return Math.max(1, Number(geo.rows || 1));
 }
 
+function profileCells() {
+  const cells = state.printer?.profile?.regions || [];
+  return cells.filter((cell) => Number(cell.w) > 0.5 && Number(cell.h) > 0.5);
+}
+
 function mirrorRequest() {
   const sheet = state.spec?.sheet;
+  const cells = profileCells();
+  if (sheet?.cells_mirror && cells.length > 1) {
+    return {
+      regions: cells.length,
+      flip: !!sheet.mirror_flip,
+      cells: cells.map((cell) => ({
+        shape: cell.shape || 'rect',
+        x: Number(cell.x) || 0,
+        y: Number(cell.y) || 0,
+        w: Number(cell.w),
+        h: Number(cell.h),
+      })),
+    };
+  }
   const regions = sheetRegions();
   if (!sheet?.mirror || regions < 2) return null;
   return { regions, flip: !!sheet.mirror_flip };
+}
+
+/* With calibrated cells the user can design in cell 1 only and let the rest be filled. */
+function toggleCellsMirror() {
+  if (!state.spec) return;
+  const sheet = state.spec.sheet || (state.spec.sheet = { columns: [], rows: [], mirror: false, mirror_flip: false });
+  sheet.cells_mirror = !sheet.cells_mirror;
+  pushHistory();
+  renderStageMeta();
+  renderOverlay();
+  renderPaperRegions();
+  schedulePreview();
+  const cells = profileCells();
+  if (!sheet.cells_mirror) {
+    toast('Mirror cells off — every cell is printed as designed');
+    return;
+  }
+  const first = cells[0];
+  const outside = state.spec.elements.filter((element) => element.visible !== false && (
+    element.x + element.w / 2 < Number(first.x)
+    || element.x + element.w / 2 > Number(first.x) + Number(first.w)
+    || element.y + element.h / 2 < Number(first.y)
+    || element.y + element.h / 2 > Number(first.y) + Number(first.h)
+  ));
+  if (outside.length) {
+    toast(`Mirror cells on — but ${outside.length} element(s) sit outside cell 1, so only what is inside cell 1 is repeated.`, 'error');
+  } else {
+    toast(`Mirror cells on — design inside cell 1, the other ${cells.length - 1} will match`, 'ok');
+  }
 }
 
 function valueElements() {

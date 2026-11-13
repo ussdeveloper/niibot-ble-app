@@ -103,6 +103,77 @@ def apply_mirror(spec: LabelSpec, regions: int, flip: bool = False) -> LabelSpec
     return spec.model_copy(update={"elements": [*untouched, *template, *copies]}, deep=False)
 
 
+def apply_cell_mirror(spec: LabelSpec, cells: list[dict], flip: bool = False) -> LabelSpec:
+    """Copy everything drawn in the first calibrated cell into every other cell.
+
+    Cells come from the roll calibrator (``rect``/``circle``/``line`` with millimetres).
+    With this on the user designs inside cell 1 only — the rest is generated, so stray
+    elements that sit in the other cells are replaced.
+    """
+    usable = [
+        cell
+        for cell in cells or []
+        if float(cell.get("w") or 0) > 0.5 and float(cell.get("h") or 0) > 0.5
+    ]
+    if len(usable) < 2:
+        return spec
+
+    first = usable[0]
+    fx, fy = float(first.get("x") or 0), float(first.get("y") or 0)
+    fw, fh = float(first["w"]), float(first["h"])
+
+    def inside(element: Element, cell: dict) -> bool:
+        cx = element.x + element.w / 2
+        cy = element.y + element.h / 2
+        return (
+            float(cell.get("x") or 0) - 0.05 <= cx <= float(cell.get("x") or 0) + float(cell["w"]) + 0.05
+            and float(cell.get("y") or 0) - 0.05 <= cy <= float(cell.get("y") or 0) + float(cell["h"]) + 0.05
+        )
+
+    template = [element for element in spec.elements if inside(element, first)]
+    keep = [
+        element
+        for element in spec.elements
+        if not inside(element, first) and not any(inside(element, cell) for cell in usable[1:])
+    ]
+    if not template:
+        return spec
+
+    copies: list[Element] = []
+    for index, cell in enumerate(usable[1:], start=1):
+        cx, cy = float(cell.get("x") or 0), float(cell.get("y") or 0)
+        cw, ch = float(cell["w"]), float(cell["h"])
+        scale_x = cw / fw
+        scale_y = ch / fh
+        if str(cell.get("shape") or "rect") == "circle":
+            scale_x = scale_y = min(scale_x, scale_y)
+        for element in template:
+            rel_x = (element.x - fx) * scale_x
+            rel_y = (element.y - fy) * scale_y
+            width = element.w * scale_x
+            height = element.h * scale_y
+            if flip:
+                rel_y = ch - rel_y - height
+                rotation = (180 - element.rotation) % 360
+            else:
+                rotation = element.rotation
+            copies.append(
+                element.model_copy(
+                    update={
+                        "id": f"{element.id}-c{index}",
+                        "x": round(cx + rel_x, 3),
+                        "y": round(cy + rel_y, 3),
+                        "w": round(width, 3),
+                        "h": round(height, 3),
+                        "rotation": rotation,
+                    },
+                    deep=True,
+                )
+            )
+
+    return spec.model_copy(update={"elements": [*keep, *template, *copies]}, deep=False)
+
+
 def build_sheet_specs(
     spec: LabelSpec,
     columns: list[SheetColumn],

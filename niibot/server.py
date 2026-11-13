@@ -133,10 +133,15 @@ class ConnectRequest(BaseModel):
 
 
 class MirrorRequest(BaseModel):
-    """Fill regions 2..N with a copy (or vertical mirror) of region 1."""
+    """Fill regions 2..N with a copy (or vertical mirror) of region 1.
+
+    ``cells`` (the roll calibrator's cells) wins over ``regions`` when given: the first
+    cell is the editable one and every other cell receives a copy of its content.
+    """
 
     regions: int = 1
     flip: bool = False
+    cells: list[RegionRequest] | None = None
 
 
 class PreviewRequest(BaseModel):
@@ -552,7 +557,15 @@ def _geometry() -> tuple[int, int]:
 
 
 def _with_mirror(spec: LabelSpec, mirror: MirrorRequest | None) -> LabelSpec:
-    if mirror is None or mirror.regions < 2:
+    if mirror is None:
+        return spec
+    if mirror.cells and len(mirror.cells) > 1:
+        cells = [
+            {"shape": cell.shape, "x": cell.x, "y": cell.y, "w": cell.w, "h": cell.h}
+            for cell in mirror.cells
+        ]
+        return sheet.apply_cell_mirror(spec, cells, mirror.flip)
+    if mirror.regions < 2:
         return spec
     return sheet.apply_mirror(spec, mirror.regions, mirror.flip)
 

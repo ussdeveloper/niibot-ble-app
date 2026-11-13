@@ -4,6 +4,15 @@ All notable changes to **Niibot Studio** are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project uses [Semantic Versioning](https://semver.org/).
 
+## [0.12.6] — 2026-11-13
+
+### Added
+- **Mirror the calibrated cells**: with a roll that has two or more cells (two circles side by side,
+  a 2 × 2 block, …) the label bar offers **Mirror cells N×**. Design inside cell 1 and every other cell
+  is filled with the same content — copied, scaled to the cell when its size differs, and optionally
+  flipped — both in the live preview and on the printout. Cell 1 is outlined as the editable one while
+  this is on, and the toggle warns when elements stick out of it.
+
 ## [0.12.5] — 2026-11-13
 
 ### Added
