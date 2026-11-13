@@ -5,12 +5,12 @@ const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
 
 const TYPE_LABELS = {
-  text: 'Tekst',
-  barcode: 'Kod kreskowy',
-  qr: 'Kod QR',
-  rect: 'Ramka',
-  line: 'Linia',
-  image: 'Obraz',
+  text: 'Text',
+  barcode: 'Barcode',
+  qr: 'QR code',
+  rect: 'Frame',
+  line: 'Line',
+  image: 'Image',
 };
 
 const TYPE_ICONS = {
@@ -157,6 +157,7 @@ const state = {
   showGrid: false,
   snapToGrid: true,
   view: 'design',
+  sheetHeight: 0,
   dragging: false,
   previewPending: false,
   catalog: [],
@@ -1564,7 +1565,7 @@ function openFontPicker(element) {
 
 /* =============================================================== sheet view */
 const VALUE_TYPES = new Set(['text', 'barcode', 'qr']);
-const TYPE_NAMES = { text: 'Tekst', barcode: 'Kod', qr: 'QR', image: 'Obraz', rect: 'Ramka', line: 'Linia' };
+const TYPE_NAMES = { text: 'Text', barcode: 'Barcode', qr: 'QR', image: 'Image', rect: 'Frame', line: 'Line' };
 
 function sheetRegions() {
   const geo = paperGeometry();
@@ -1602,19 +1603,92 @@ function syncSheetColumns() {
 
 function switchView(view) {
   state.view = view;
-  const sheet = view === 'sheet';
-  $('#sheet-pane').hidden = !sheet;
-  $('#canvas-wrap').hidden = sheet;
-  $('.stage-meta').hidden = sheet;
-  $('#floating-toolbar').hidden = true;
-  $('#warnings').hidden = sheet;
+  applySplit();
   $$('.editor-tab').forEach((tab) => tab.classList.toggle('active', tab.dataset.view === view));
-  if (sheet) {
+  if (view === 'sheet') {
     renderSheet();
   } else {
     updateFloatingToolbar();
     layoutStage();
   }
+}
+
+function applySplit() {
+  const isSheet = state.view === 'sheet';
+  const split = isSheet && state.sheetHeight > 0;
+  $('#splitter-sheet').hidden = !isSheet;
+  $('#sheet-pane').hidden = !isSheet;
+  $('#canvas-wrap').hidden = isSheet && !split;
+  $('.stage-meta').hidden = isSheet && !split;
+  $('#warnings').hidden = isSheet;
+  const pane = $('#sheet-pane');
+  pane.style.height = split ? `${state.sheetHeight}px` : '';
+  pane.style.flex = split ? '0 0 auto' : '';
+  if (split) {
+    state.dragging = false;
+    layoutStage();
+  }
+}
+
+function bindSplitters() {
+  const panelWidth = Number(localStorage.getItem('niibot.panelWidth'));
+  if (panelWidth >= 240 && panelWidth <= 640) {
+    document.documentElement.style.setProperty('--panel-w', `${panelWidth}px`);
+  }
+  const sheetHeight = Number(localStorage.getItem('niibot.sheetHeight'));
+  if (sheetHeight > 120) state.sheetHeight = sheetHeight;
+
+  const resizer = $('#panel-resizer');
+  resizer.addEventListener('pointerdown', (event) => {
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--panel-w'), 10) || 320;
+    resizer.classList.add('dragging');
+    try { resizer.setPointerCapture(event.pointerId); } catch (_) { /* ignore */ }
+    const move = (moveEvent) => {
+      const width = Math.max(240, Math.min(620, startWidth - (moveEvent.clientX - startX)));
+      document.documentElement.style.setProperty('--panel-w', `${width}px`);
+      layoutStage();
+      layoutFloatingToolbar();
+    };
+    const up = () => {
+      resizer.classList.remove('dragging');
+      resizer.removeEventListener('pointermove', move);
+      resizer.removeEventListener('pointerup', up);
+      const width = getComputedStyle(document.documentElement).getPropertyValue('--panel-w');
+      try { localStorage.setItem('niibot.panelWidth', String(parseInt(width, 10))); } catch (_) { /* ignore */ }
+    };
+    resizer.addEventListener('pointermove', move);
+    resizer.addEventListener('pointerup', up);
+  });
+
+  const sheetSplitter = $('#splitter-sheet');
+  const setSheetHeight = (height) => {
+    state.sheetHeight = height;
+    try { localStorage.setItem('niibot.sheetHeight', String(height)); } catch (_) { /* ignore */ }
+    applySplit();
+  };
+  sheetSplitter.addEventListener('pointerdown', (event) => {
+    event.preventDefault();
+    const editor = $('.editor').getBoundingClientRect();
+    sheetSplitter.classList.add('dragging');
+    try { sheetSplitter.setPointerCapture(event.pointerId); } catch (_) { /* ignore */ }
+    const move = (moveEvent) => {
+      const raw = editor.bottom - moveEvent.clientY;
+      const height = Math.max(0, Math.min(editor.height - 140, raw));
+      state.sheetHeight = height < 120 ? 0 : Math.round(height);
+      applySplit();
+    };
+    const up = () => {
+      sheetSplitter.classList.remove('dragging');
+      sheetSplitter.removeEventListener('pointermove', move);
+      sheetSplitter.removeEventListener('pointerup', up);
+      try { localStorage.setItem('niibot.sheetHeight', String(state.sheetHeight)); } catch (_) { /* ignore */ }
+    };
+    sheetSplitter.addEventListener('pointermove', move);
+    sheetSplitter.addEventListener('pointerup', up);
+  });
+  sheetSplitter.addEventListener('dblclick', () => setSheetHeight(0));
 }
 
 function renderSheet() {
@@ -1628,16 +1702,15 @@ function renderSheet() {
   const headCells = columns.map((column, index) => {
     const element = state.spec.elements.find((item) => item.id === column.element_id);
     const type = element ? element.type : 'text';
-    const options = elements.map((item) => `<option value="${item.id}" ${item.id === column.element_id ? 'selected' : ''}>
-      ${TYPE_NAMES[item.type] || item.type}: ${escapeHtml(elementTitle(item)).slice(0, 26)}
-    </option>`).join('');
+    const typeName = TYPE_NAMES[type] || type;
     return `<th class="sheet-col" draggable="true" data-col-index="${index}">
       <div class="col-head">
+        <span class="col-type" title="${escapeHtml(typeName)} · ${escapeHtml(element ? elementTitle(element) : '')}">
+          <i data-lucide="${TYPE_ICONS[type] || 'type'}"></i>
+        </span>
         <span class="col-title" data-col-title="${column.id}" title="Double-click to rename, drag to reorder">${escapeHtml(column.name)}</span>
         <button class="col-del" data-col-del="${column.id}" title="Remove column from the sheet"><i data-lucide="x"></i></button>
       </div>
-      <div class="col-meta"><i data-lucide="${TYPE_ICONS[type] || 'type'}"></i><span>${TYPE_NAMES[type] || type}</span></div>
-      <select class="col-element" data-col-element="${column.id}">${options}</select>
     </th>`;
   }).join('');
 
@@ -1903,16 +1976,7 @@ function bindSheetControls() {
       if (column) column.name = input.value;
     }
   });
-  table.addEventListener('change', (event) => {
-    const select = event.target.closest('[data-col-element]');
-    if (!select) return;
-    const column = state.spec.sheet.columns.find((item) => item.id === select.dataset.colElement);
-    if (column) {
-      column.element_id = select.value;
-      pushHistory();
-      renderSheet();
-    }
-  });
+  table.addEventListener('change', () => { /* element binding is fixed per column now */ });
   table.addEventListener('click', (event) => {
     const delCol = event.target.closest('[data-col-del]');
     if (delCol) {
@@ -3070,6 +3134,7 @@ function bindControls() {
   $('#btn-icons').onclick = () => openIconPicker();
 
   bindSheetControls();
+  bindSplitters();
 
   document.addEventListener('pointerdown', onPointerDown);
   document.addEventListener('pointermove', onPointerMove);

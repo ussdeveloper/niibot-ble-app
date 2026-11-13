@@ -582,6 +582,39 @@ button.sb-item:hover { background: rgba(0, 194, 194, 0.12); color: var(--teal-de
 .layer-grip { color: rgba(0, 26, 77, 0.26); display: flex; cursor: grab; flex: 0 0 auto; }
 .layer-grip svg.lucide { width: 13px; height: 13px; }
 
+/* --------------------------------------------------------------- resizers */
+.panel-resizer {
+  position: absolute;
+  top: 0; bottom: 0;
+  width: 7px;
+  left: calc(100% - var(--panel-w) - 3px);
+  z-index: 25;
+  cursor: col-resize;
+}
+.panel-resizer:hover, .panel-resizer.dragging { background: rgba(0, 194, 194, 0.28); }
+
+.splitter-h {
+  height: 7px;
+  flex: 0 0 auto;
+  cursor: row-resize;
+  border-radius: 4px;
+  background: transparent;
+  position: relative;
+}
+.splitter-h::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 3px;
+  width: 46px;
+  height: 1px;
+  transform: translateX(-50%);
+  background: rgba(0, 26, 77, 0.16);
+  border-radius: 1px;
+}
+.splitter-h:hover, .splitter-h.dragging { background: rgba(0, 194, 194, 0.18); }
+.splitter-h[hidden] { display: none; }
+
 /* --------------------------------------------------------------- sheet view */
 .sheet-pane {
   flex: 1;
@@ -646,7 +679,15 @@ button.sb-item:hover { background: rgba(0, 194, 194, 0.12); color: var(--teal-de
 .row-num { font-size: 11px; color: var(--ink-muted); }
 .row-num.current { color: var(--teal-deep); font-weight: 600; }
 
-.col-head { display: flex; align-items: center; gap: 2px; padding: 5px 6px 2px; cursor: grab; }
+.col-head { display: flex; align-items: center; gap: 6px; padding: 6px 8px; cursor: grab; }
+.col-type {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px; flex: 0 0 auto;
+  border-radius: 5px;
+  background: rgba(0, 194, 194, 0.14);
+  color: var(--teal-deep);
+}
+.col-type svg { width: 11px; height: 11px; }
 .sheet-col.dragging { opacity: 0.45; }
 .sheet-col.drop-target { outline: 2px dashed rgba(0, 194, 194, 0.75); outline-offset: -2px; }
 .col-title {
