@@ -212,6 +212,11 @@ class PaperProfile:
     capacity: int | None = None
     #: Cells the calibrator drew; empty means "one cell = the whole label".
     regions: list[Region] = field(default_factory=list)
+    #: Size of a single sticker on this roll; 0 means "the page is one sticker".
+    sticker_w_mm: float = 0.0
+    sticker_h_mm: float = 0.0
+    row_space_mm: float = 0.0
+    col_space_mm: float = 0.0
 
     def to_dict(self) -> dict:
         return {
@@ -223,4 +228,8 @@ class PaperProfile:
             "label_type": self.label_type,
             "capacity": self.capacity,
             "regions": [region.to_dict() for region in self.regions],
+            "sticker_w_mm": self.sticker_w_mm,
+            "sticker_h_mm": self.sticker_h_mm,
+            "row_space_mm": self.row_space_mm,
+            "col_space_mm": self.col_space_mm,
         }

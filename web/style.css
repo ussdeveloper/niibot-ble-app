@@ -333,8 +333,10 @@ svg.lucide { width: 16px; height: 16px; stroke-width: 1.7; }
   pointer-events: none;
   border-radius: 3px;
   background-image:
-    repeating-linear-gradient(to right, rgba(0, 106, 178, 0.14) 0 1px, transparent 1px var(--grid-x, 8px)),
-    repeating-linear-gradient(to bottom, rgba(0, 106, 178, 0.14) 0 1px, transparent 1px var(--grid-y, 8px));
+    repeating-linear-gradient(to right, rgba(0, 106, 178, 0.30) 0 1px, transparent 1px var(--grid-major-x, 40px)),
+    repeating-linear-gradient(to bottom, rgba(0, 106, 178, 0.30) 0 1px, transparent 1px var(--grid-major-y, 40px)),
+    repeating-linear-gradient(to right, rgba(0, 106, 178, 0.07) 0 1px, transparent 1px var(--grid-x, 8px)),
+    repeating-linear-gradient(to bottom, rgba(0, 106, 178, 0.07) 0 1px, transparent 1px var(--grid-y, 8px));
 }
 .grid-layer.hidden { display: none; }
 

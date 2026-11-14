@@ -40,12 +40,14 @@ function snap(value, free) {
 }
 
 /* grid + alignment snapping */
-const GRID_MM = 1;
+const SNAP_MM = 0.5;
+const GRID_MINOR_MM = 0.5;
+const GRID_MAJOR_MM = 5;
 const GUIDE_TOLERANCE_PX = 6;
 
 function snapToStep(value, free) {
   if (free || !state.snapToGrid) return round2(value);
-  return Math.round(value / GRID_MM) * GRID_MM;
+  return Math.round(value / SNAP_MM) * SNAP_MM;
 }
 
 function alignmentTargets(exceptId) {
@@ -462,9 +464,13 @@ function applyGridSize() {
   if (!layer) return;
   layer.hidden = !state.showGrid;
   if (!state.showGrid || !state.spec) return;
-  const step = Math.max(4, GRID_MM * state.pxPerMm);
-  layer.style.setProperty('--grid-x', `${step}px`);
-  layer.style.setProperty('--grid-y', `${step}px`);
+  const px = state.pxPerMm || 4;
+  // Draw the grid the snapping actually uses: 0.5 mm cells, 5 mm lines heavier.
+  const minor = px * GRID_MINOR_MM >= 4.5 ? GRID_MINOR_MM : px >= 4.5 ? 1 : 0;
+  layer.style.setProperty('--grid-x', `${minor ? minor * px : px}px`);
+  layer.style.setProperty('--grid-y', `${minor ? minor * px : px}px`);
+  layer.style.setProperty('--grid-major-x', `${GRID_MAJOR_MM * px}px`);
+  layer.style.setProperty('--grid-major-y', `${GRID_MAJOR_MM * px}px`);
 }
 
 function renderStageMeta() {
@@ -475,16 +481,28 @@ function renderStageMeta() {
   const paper = state.printer?.paper || {};
   const rollName = paper.sku || paper.catalog?.name || paper.barcode;
   const known = !!geo.catalog || Number(paper.detected_width_mm) > 0 || !!state.printer?.profile;
-  const chips = [`<span class="meta-chip"><b>${round2(spec.width_mm)} × ${round2(spec.height_mm)} mm</b></span>`];
+  /* The size people care about is one sticker — the print page is the grid of them. */
+  const rollProfile = state.printer?.profile;
+  const hasSticker = Number(rollProfile?.sticker_w_mm) > 0 && Number(rollProfile?.sticker_h_mm) > 0;
+  const stickerText = hasSticker
+    ? `${round2(rollProfile.sticker_w_mm)} × ${round2(rollProfile.sticker_h_mm)} mm` : null;
+  const chips = [`<button type="button" class="meta-chip" id="meta-roll-size"
+    title="Sticker size — click to calibrate. Print page: ${round2(spec.width_mm)} × ${round2(spec.height_mm)} mm">
+    <b>${stickerText || `${round2(spec.width_mm)} × ${round2(spec.height_mm)} mm`}</b></button>`];
   if (geo.typeName) chips.push(`<span class="meta-chip type">paper: ${escapeHtml(geo.typeName)}</span>`);
-  if (rollName) chips.push(`<span class="meta-chip mono">${escapeHtml(rollName)}</span>`);
+  {
+    // A roll without a typed name is described by its sticker size, never by the RFID code.
+    const typed = state.printer?.profile?.name;
+    const useful = typed && !/^\d+$/.test(String(typed).trim()) && String(typed).trim() !== String(paper.barcode || '');
+    const shown = useful ? typed : (stickerText || rollName);
+    if (shown) chips.push(`<span class="meta-chip mono">${escapeHtml(shown)}</span>`);
+  }
   if (state.connected) {
     chips.push(`<button type="button" class="meta-chip${known ? '' : ' warn'}" id="meta-calibrate"
       title="Size and printable cells of this roll — reopen the calibrator any time">
       <i data-lucide="ruler"></i> ${known ? 'Correct calibration' : 'Calibrate this roll'}
     </button>`);
   }
-  const rollProfile = state.printer?.profile;
   if (rollProfile && rollProfile.width_mm && rollProfile.height_mm) {
     const headLimit = printheadWidthMm() || Math.max(rollProfile.width_mm, rollProfile.height_mm);
     const rollA = { w: Math.min(rollProfile.width_mm, headLimit), h: rollProfile.height_mm };
@@ -563,13 +581,27 @@ function openRollSizeDialog(options = {}) {
     rows: preset.rows || 1,
   }));
 
-  let width = Number(profile?.width_mm) || Number(state.spec?.width_mm) || 40;
-  let height = Number(profile?.height_mm) || Number(state.spec?.height_mm) || 30;
-  let gap = Number(profile?.gap_mm ?? gapInfoMm()) || 0;
   let rows = Math.max(1, Number(profile?.rows || paper.catalog?.rows) || 1);
   let cols = Math.max(1, Number(profile?.cols || paper.catalog?.cols) || 1);
-  let rowSpace = 0;
-  let colSpace = 0;
+  let rowSpace = Math.max(0, Number(profile?.row_space_mm) || 0);
+  let colSpace = Math.max(0, Number(profile?.col_space_mm) || 0);
+  /* The main size is one sticker; the print page follows from it and the grid. */
+  let stickerW = Number(profile?.sticker_w_mm) || 0;
+  let stickerH = Number(profile?.sticker_h_mm) || 0;
+  if (!stickerW || !stickerH) {
+    stickerW = round2((Number(profile?.width_mm) || Number(state.spec?.width_mm) || 40) / cols);
+    stickerH = round2((Number(profile?.height_mm) || Number(state.spec?.height_mm) || 30) / rows);
+  }
+  let width = stickerW;
+  let height = stickerH;
+  const pageSize = () => {
+    width = Math.max(1, round2(cols * stickerW + (cols - 1) * colSpace));
+    height = Math.max(1, round2(rows * stickerH + (rows - 1) * rowSpace));
+    return { width, height };
+  };
+  pageSize();
+  const stickerLabel = () => `${round2(stickerW)} × ${round2(stickerH)} mm`;
+  let gap = Number(profile?.gap_mm ?? gapInfoMm()) || 0;
 
   const cleanShape = (shape) => ({
     kind: shape.kind === 'circle' ? 'circle' : 'rect',
@@ -600,7 +632,7 @@ function openRollSizeDialog(options = {}) {
   let autoZone = !(profile?.regions || []).length;
 
   const defaultZone = () => {
-    const margin = Math.min(0.5, Math.min(width, height) / 8);
+    const margin = Math.min(0.5, Math.min(stickerW, stickerH) / 8);
     return {
       label: 'Item 1',
       thickness: 0.3,
@@ -608,8 +640,8 @@ function openRollSizeDialog(options = {}) {
         kind: 'rect',
         x: round2(margin),
         y: round2(margin),
-        w: round2(Math.max(1, width - margin * 2)),
-        h: round2(Math.max(1, height - margin * 2)),
+        w: round2(Math.max(1, stickerW - margin * 2)),
+        h: round2(Math.max(1, stickerH - margin * 2)),
       }],
     };
   };
@@ -627,18 +659,19 @@ function openRollSizeDialog(options = {}) {
     <div class="cal-col cal-col-left">
       <div class="hint">The B1 cannot report the label size over Bluetooth and
         <code>${escapeHtml(rollName)}</code> is not in the catalogue on this machine.
-        Set the size, outline where the roll can print, and everything is remembered for this code.</div>
+        Set the size of <strong>one sticker</strong>, outline where it can print, and everything is
+        remembered for this roll code.</div>
 
       <div class="cal-section">
-        <div class="cal-section-head">Roll</div>
+        <div class="cal-section-head">Sticker</div>
         <div class="field">
           <label for="cal-name">Roll name</label>
           <input id="cal-name" data-key="cal-name" value="${escapeHtml(rollLabel)}"
-            placeholder="e.g. Round 21 mm white" autocomplete="off">
+            placeholder="${escapeHtml(stickerLabel())}" autocomplete="off">
         </div>
         <div class="grid-2">
-          ${field('Width (mm)', numberInput('cal-width', round2(width), 0.5, 5, 108))}
-          ${field('Height (mm)', numberInput('cal-height', round2(height), 0.5, 5, 300))}
+          ${field('Sticker width (mm)', numberInput('cal-width', round2(stickerW), 0.5, 2, 108))}
+          ${field('Sticker height (mm)', numberInput('cal-height', round2(stickerH), 0.5, 2, 300))}
         </div>
         <div class="grid-2">
           ${field('Label gap (mm)', numberInput('cal-gap', round2(gap), 0.5, 0, 20))}
@@ -647,6 +680,7 @@ function openRollSizeDialog(options = {}) {
               ${presets.map((preset, index) => `<option value="${index}">${escapeHtml(preset.label)}${preset.rows > 1 ? ` · ${preset.rows} rows` : ''}</option>`).join('')}
             </select></div>` : '<div></div>'}
         </div>
+        <div class="hint" id="cal-page"></div>
       </div>
 
       <div class="cal-section">
@@ -681,7 +715,7 @@ function openRollSizeDialog(options = {}) {
           <button type="button" class="btn" data-cal="redo" title="Redo (Ctrl+Y)"><i data-lucide="redo-2"></i></button>
         </div>
         <div class="hint">Drag on the label to add a zone. Right-click a zone to add a second outline to the
-          same item, duplicate it, or copy it onto every zone.</div>
+          same item, duplicate it, or copy it onto every zone. Snapping: 0.5 mm (Alt = 0.1 mm free).</div>
       </div>
 
       <div class="cal-section">
@@ -833,13 +867,27 @@ function openRollSizeDialog(options = {}) {
 
   const readSize = () => {
     const read = (name, fallback) => Number($(`[data-key="cal-${name}"]`, body)?.value) || fallback;
-    width = Math.max(5, read('width', width));
-    height = Math.max(5, read('height', height));
+    stickerW = Math.max(2, read('width', stickerW));
+    stickerH = Math.max(2, read('height', stickerH));
     rows = Math.max(1, Math.min(12, Math.round(read('rows', rows))));
     cols = Math.max(1, Math.min(12, Math.round(read('cols', cols))));
     gap = Math.max(0, Number($('[data-key="cal-gap"]', body)?.value) || 0);
     rowSpace = Math.max(0, Number($('[data-key="cal-rowspace"]', body)?.value) || 0);
     colSpace = Math.max(0, Number($('[data-key="cal-colspace"]', body)?.value) || 0);
+    pageSize();
+    renderPageNote();
+  };
+
+  /* The main size is one sticker — the print page is always the grid of them. */
+  const renderPageNote = () => {
+    const note = $('#cal-page', body);
+    if (!note) return;
+    const headLimit = printheadWidthMm();
+    const over = headLimit && width > headLimit + 0.05
+      ? ` · <strong>${round2(width - headLimit)} mm wider than the printhead</strong>` : '';
+    const grid = cols * rows === 1 ? 'one sticker'
+      : `${cols} across × ${rows} down`;
+    note.innerHTML = `Print page: <strong>${round2(width)} × ${round2(height)} mm</strong> (${grid})${over}`;
   };
 
   /* -------------------------------------------------------------- history */
@@ -883,8 +931,9 @@ function openRollSizeDialog(options = {}) {
 
   const applyGrid = () => {
     readSize();
-    const zoneW = Math.max(1, (width - (cols - 1) * colSpace) / cols);
-    const zoneH = Math.max(1, (height - (rows - 1) * rowSpace) / rows);
+    // One zone per sticker, laid out exactly where the stickers sit on the page.
+    const zoneW = Math.max(1, stickerW);
+    const zoneH = Math.max(1, stickerH);
     zones = [];
     for (let row = 0; row < rows; row += 1) {
       for (let col = 0; col < cols; col += 1) {
@@ -921,7 +970,12 @@ function openRollSizeDialog(options = {}) {
 
   const addZone = () => {
     readSize();
-    const box = { x: round2(width * 0.1), y: round2(height * 0.1), w: round2(width * 0.8), h: round2(height * 0.8) };
+    const box = {
+      x: round2(Math.max(0, (stickerW - stickerW * 0.8) / 2)),
+      y: round2(Math.max(0, (stickerH - stickerH * 0.8) / 2)),
+      w: round2(stickerW * 0.8),
+      h: round2(stickerH * 0.8),
+    };
     zones.push({ label: `Item ${zones.length + 1}`, thickness: 0.3, shapes: [{ kind: 'rect', ...box }] });
     autoZone = false;
     selection = new Set([zones.length - 1]);
@@ -1103,6 +1157,10 @@ function openRollSizeDialog(options = {}) {
     x: cssX(spot.includes('w') ? box.x : spot.includes('e') ? box.x + box.w : box.x + box.w / 2),
     y: cssY(spot.includes('n') ? box.y : spot.includes('s') ? box.y + box.h : box.y + box.h / 2),
   });
+  const handleMmPoint = (box, spot) => ({
+    x: spot.includes('w') ? box.x : spot.includes('e') ? box.x + box.w : box.x + box.w / 2,
+    y: spot.includes('n') ? box.y : spot.includes('s') ? box.y + box.h : box.y + box.h / 2,
+  });
 
   const paintHandles = (box) => {
     ctx.save();
@@ -1137,20 +1195,29 @@ function openRollSizeDialog(options = {}) {
     ctx.lineWidth = 1;
     ctx.strokeRect(cssX(0) + 0.5, cssY(0) + 0.5, width * view.scale - 1, height * view.scale - 1);
 
-    // faint 5 mm grid — helps placing outlines by eye
-    if (view.scale * 5 > 26) {
-      ctx.strokeStyle = 'rgba(0, 26, 77, 0.07)';
+    /* The grid matches the snap: 0.5 mm cells (1 mm when they would be too dense), 5 mm heavier. */
+    const gridLines = (step, colour, weight) => {
+      if (step <= 0) return;
+      ctx.save();
+      ctx.strokeStyle = colour;
+      ctx.lineWidth = weight;
       ctx.beginPath();
-      for (let x = 5; x < width; x += 5) {
+      for (let i = 1; i * step < width - 1e-6; i += 1) {
+        const x = i * step;
         ctx.moveTo(cssX(x), cssY(0));
         ctx.lineTo(cssX(x), cssY(height));
       }
-      for (let y = 5; y < height; y += 5) {
+      for (let i = 1; i * step < height - 1e-6; i += 1) {
+        const y = i * step;
         ctx.moveTo(cssX(0), cssY(y));
         ctx.lineTo(cssX(width), cssY(y));
       }
       ctx.stroke();
-    }
+      ctx.restore();
+    };
+    const minorStep = view.scale * 0.5 >= 6 ? 0.5 : view.scale >= 6 ? 1 : 0;
+    gridLines(minorStep, 'rgba(0, 26, 77, 0.045)', 1);
+    gridLines(5, 'rgba(0, 26, 77, 0.13)', 1);
 
     // printhead limit
     const headLimit = printheadWidthMm();
@@ -1246,13 +1313,11 @@ function openRollSizeDialog(options = {}) {
   }
 
   const renderSummary = () => {
-    const headLimit = printheadWidthMm();
-    const clipNote = headLimit && width > headLimit + 0.05
-      ? ` · prints up to ${round2(headLimit)} mm (printhead)` : '';
     const outlines = zones.reduce((sum, zone) => sum + zone.shapes.length, 0);
-    summary.textContent = `${zones.length} item zone${zones.length === 1 ? '' : 's'}`
-      + ` · ${outlines} outline${outlines === 1 ? '' : 's'}`
-      + ` · ${round2(width)} × ${round2(height)} mm${clipNote}`;
+    summary.textContent = `sticker ${stickerLabel()}`
+      + ` · page ${round2(width)} × ${round2(height)} mm`
+      + ` · ${zones.length} item${zones.length === 1 ? '' : 's'}`
+      + ` · ${outlines} outline${outlines === 1 ? '' : 's'}`;
   };
 
   const renderChips = () => {
@@ -1500,12 +1565,17 @@ function openRollSizeDialog(options = {}) {
       const box = activeShape !== null && zone.shapes[activeShape] ? zone.shapes[activeShape] : zoneBounds(zone);
       const hit = handleAt(point, box);
       if (hit) {
+        const grabbed = handleMmPoint(box, hit);
         dragState = {
           mode: 'resize',
           spot: hit,
           index: indices[0],
           shape: activeShape,
           origin: { ...box },
+          // Cursor offset from the handle: the edge follows the pointer instead of jumping to it.
+          grab: { x: spot.x - grabbed.x, y: spot.y - grabbed.y },
+          // Snapshot, so scaling always works from the original outlines instead of compounding.
+          shapes: zone.shapes.map((item) => ({ ...item })),
         };
         canvas.setPointerCapture(event.pointerId);
         event.preventDefault();
@@ -1548,13 +1618,26 @@ function openRollSizeDialog(options = {}) {
       activeShape = order >= 0 ? order : 0;
     }
 
+    const origins = selectedIndices().map((target) => ({
+      index: target,
+      shapes: zones[target].shapes.map((shape) => ({ ...shape })),
+    }));
+    // Bounds of everything that is being dragged, so the group can be kept on the label.
+    const moving = origins.flatMap((entry) => entry.shapes);
+    const bounds = {
+      x: Math.min(...moving.map((shape) => shape.x)),
+      y: Math.min(...moving.map((shape) => shape.y)),
+      right: Math.max(...moving.map((shape) => shape.x + shape.w)),
+      bottom: Math.max(...moving.map((shape) => shape.y + shape.h)),
+    };
     dragState = {
       mode: 'move',
       index,
       shape: activeShape,
       startX: spot.x,
       startY: spot.y,
-      origins: selectedIndices().map((target) => ({ index: target, shapes: zones[target].shapes.map((shape) => ({ ...shape })) })),
+      bounds,
+      origins,
     };
     canvas.setPointerCapture(event.pointerId);
     draw();
@@ -1605,22 +1688,25 @@ function openRollSizeDialog(options = {}) {
     }
 
     if (dragState?.mode === 'move') {
-      const dx = snapMm(spot.x - dragState.startX, event.altKey);
-      const dy = snapMm(spot.y - dragState.startY, event.altKey);
+      const free = event.altKey;
+      const bounds = dragState.bounds;
+      // Keep the dragged outlines on the label, then snap the moved edge to the 0.5 mm grid.
+      const rawX = Math.min(width - bounds.right, Math.max(-bounds.x, spot.x - dragState.startX));
+      const rawY = Math.min(height - bounds.bottom, Math.max(-bounds.y, spot.y - dragState.startY));
       if (dragState.shape !== null) {
         // move the single outline inside its item
         const current = zones[dragState.index].shapes[dragState.shape];
         const origin = dragState.origins.find((item) => item.index === dragState.index)?.shapes[dragState.shape];
         if (current && origin) {
-          current.x = origin.x + dx;
-          current.y = origin.y + dy;
+          current.x = snapMm(origin.x + rawX, free);
+          current.y = snapMm(origin.y + rawY, free);
         }
       } else {
         dragState.origins.forEach((entry) => {
           const zone = zones[entry.index];
           entry.shapes.forEach((shape, order) => {
-            zone.shapes[order].x = shape.x + dx;
-            zone.shapes[order].y = shape.y + dy;
+            zone.shapes[order].x = snapMm(shape.x + rawX, free);
+            zone.shapes[order].y = snapMm(shape.y + rawY, free);
           });
         });
       }
@@ -1632,16 +1718,36 @@ function openRollSizeDialog(options = {}) {
       const zone = zones[dragState.index];
       if (!zone) return;
       const origin = dragState.origin;
-      const left = dragState.spot.includes('w') ? Math.min(spot.x, origin.x + origin.w - 1) : origin.x;
-      const right = dragState.spot.includes('e') ? Math.max(spot.x, origin.x + 1) : origin.x + origin.w;
-      const top = dragState.spot.includes('n') ? Math.min(spot.y, origin.y + origin.h - 1) : origin.y;
-      const bottom = dragState.spot.includes('s') ? Math.max(spot.y, origin.y + 1) : origin.y + origin.h;
+      const free = event.altKey;
+      const cursor = { x: spot.x - dragState.grab.x, y: spot.y - dragState.grab.y };
+      let left = origin.x;
+      let right = origin.x + origin.w;
+      let top = origin.y;
+      let bottom = origin.y + origin.h;
+      if (dragState.spot.includes('w')) left = Math.max(0, snapMm(cursor.x, free));
+      if (dragState.spot.includes('e')) right = Math.min(width, snapMm(cursor.x, free));
+      if (dragState.spot.includes('n')) top = Math.max(0, snapMm(cursor.y, free));
+      if (dragState.spot.includes('s')) bottom = Math.min(height, snapMm(cursor.y, free));
+      left = Math.min(left, right - 1);
+      right = Math.max(right, left + 1);
+      top = Math.min(top, bottom - 1);
+      bottom = Math.max(bottom, top + 1);
       const next = { x: left, y: top, w: right - left, h: bottom - top };
       if (dragState.shape !== null) {
         const shape = zone.shapes[dragState.shape];
         if (shape) Object.assign(shape, next);
       } else {
-        scaleZone(zone, origin, next);
+        // Scale the outlines from the snapshot taken at pointerdown.
+        const sx = origin.w > 0.01 ? next.w / origin.w : 1;
+        const sy = origin.h > 0.01 ? next.h / origin.h : 1;
+        dragState.shapes.forEach((shape, order) => {
+          const target = zone.shapes[order];
+          if (!target) return;
+          target.x = next.x + (shape.x - origin.x) * sx;
+          target.y = next.y + (shape.y - origin.y) * sy;
+          target.w = Math.max(0.4, shape.w * sx);
+          target.h = Math.max(0.4, shape.h * sy);
+        });
       }
       draw();
     }
@@ -1899,6 +2005,8 @@ function openRollSizeDialog(options = {}) {
         activeShape = null;
         renderInspector();
       }
+      const placeholder = $('#cal-name', body);
+      if (placeholder && !placeholder.value.trim()) placeholder.placeholder = stickerLabel();
       centreView();
     }
   });
@@ -1986,7 +2094,8 @@ function openRollSizeDialog(options = {}) {
   $('[data-cal-save]', footer).onclick = async () => {
     readSize();
     const typedName = ($('[data-key="cal-name"]', body)?.value || '').trim();
-    const savedName = typedName || (codeOnly(rollName) ? rollName : String(rollName));
+    /* No name typed: the roll is described by its sticker size, not by the RFID code. */
+    const savedName = typedName || stickerLabel();
     const payloadRegions = outlinePayload().regions;
     const layoutRows = Math.max(1, new Set(zones.map((zone) => Math.round(zoneBounds(zone).y))).size);
     const layoutCols = Math.max(1, new Set(zones.map((zone) => Math.round(zoneBounds(zone).x))).size);
@@ -2003,6 +2112,10 @@ function openRollSizeDialog(options = {}) {
         label_type: paper.label_type ?? state.spec.label_type,
         capacity: paper.capacity ?? null,
         regions: payloadRegions,
+        sticker_w_mm: stickerW,
+        sticker_h_mm: stickerH,
+        row_space_mm: rowSpace,
+        col_space_mm: colSpace,
       });
       applyState(payload);
       applySize(width, height, { gap_mm: gap, label_type: paper.label_type ?? state.spec.label_type });
@@ -2010,7 +2123,8 @@ function openRollSizeDialog(options = {}) {
         const catalog = await api('/api/catalog');
         state.catalog = catalog.catalog || [];
       } catch (_) { /* the list refreshes with the settings tab */ }
-      toast(`Roll ${savedName}: ${round2(width)} × ${round2(height)} mm, ${zones.length} item zone${zones.length === 1 ? '' : 's'} remembered`, 'ok');
+      toast(`${savedName} — sticker ${stickerLabel()}, print page ${round2(width)} × ${round2(height)} mm,`
+        + ` ${zones.length} item${zones.length === 1 ? '' : 's'} remembered`, 'ok');
       renderPaperRegions();
       schedulePreview();
       if (isModalOpen('settings')) renderSettingsTab();
@@ -2020,6 +2134,7 @@ function openRollSizeDialog(options = {}) {
   };
 
   renderInspector();
+  renderPageNote();
   setTool('select');
   /* The canvas needs a laid-out wrap; the modal is in the DOM by now, so measure on the next frame. */
   requestAnimationFrame(() => {

@@ -4,6 +4,23 @@ All notable changes to **Niibot Studio** are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project uses [Semantic Versioning](https://semver.org/).
 
+## [0.13.1] — 2026-11-14
+
+### Fixed
+- **The main size in the calibrator is one sticker.** `Sticker width/height` describe a single
+  label; the print page is derived from the grid (`2 across × 1 down` = 42 × 21 mm) and shown
+  under the fields, with a warning when it would be wider than the printhead.
+- **Calibrator resize runs away no longer**: scaling was applied again to already-scaled outlines
+  on every pointer move, so an item grew far faster than the cursor. It now scales from a
+  snapshot taken when the handle is grabbed, and the edge follows the pointer (no jump).
+- Calibrator drag/resize snap to **0.5 mm** by default (Alt = 0.1 mm free) and stay inside the label;
+  the drawn grid matches the snap (0.5 mm cells, 5 mm heavier lines).
+- A roll without a typed name is now described by its sticker size („21 × 21 mm”) instead of by the
+  RFID code — in the label bar, the calibrator and the stored profile.
+
+### Changed
+- Design canvas snapping is 0.5 mm too, and its grid draws 0.5 mm cells with heavier 5 mm lines.
+
 ## [0.13.0] — 2026-11-14
 
 ### Added

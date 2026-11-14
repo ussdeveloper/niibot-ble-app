@@ -251,6 +251,11 @@ class RollFormatRequest(BaseModel):
     label_type: int = 1
     capacity: int | None = None
     regions: list[RegionRequest] = Field(default_factory=list)
+    #: Size of one sticker on the roll; ``width_mm``/``height_mm`` stay the print page.
+    sticker_w_mm: float = Field(default=0.0, ge=0, le=200)
+    sticker_h_mm: float = Field(default=0.0, ge=0, le=400)
+    row_space_mm: float = Field(default=0.0, ge=0, le=50)
+    col_space_mm: float = Field(default=0.0, ge=0, le=50)
 
 
 class DensityRequest(BaseModel):
@@ -276,9 +281,22 @@ def _current_profile() -> dict | None:
     if not key:
         return None
     profile = store.get_profile(key)
-    if profile:
-        profile = dict(profile)
-        profile["key"] = key
+    if not profile:
+        return None
+    profile = dict(profile)
+    profile["key"] = key
+    # Rows/columns live on the catalogue entry; the profile only keeps the page size.
+    entry = store.get_catalog_entry(paper.barcode) or {}
+    cols = max(1, int(entry.get("cols") or 1))
+    rows = max(1, int(entry.get("rows") or 1))
+    profile.setdefault("rows", rows)
+    profile.setdefault("cols", cols)
+    profile["rows"], profile["cols"] = rows, cols
+    # A profile saved before stickers were tracked: derive the sticker from the grid.
+    if not profile.get("sticker_w_mm"):
+        profile["sticker_w_mm"] = round(float(profile["width_mm"]) / cols, 3)
+    if not profile.get("sticker_h_mm"):
+        profile["sticker_h_mm"] = round(float(profile["height_mm"]) / rows, 3)
     return profile
 
 
@@ -821,9 +839,12 @@ def _regions_from_request(items: list[RegionRequest]) -> list[Region]:
 async def api_roll_format(request: RollFormatRequest) -> dict:
     """Store the size (and the drawn item zones) of a roll the printer cannot measure."""
     regions = _regions_from_request(request.regions)
+    sticker_w = request.sticker_w_mm or request.width_mm / max(1, request.cols)
+    sticker_h = request.sticker_h_mm or request.height_mm / max(1, request.rows)
+    name = request.name or f"{sticker_w:g} × {sticker_h:g} mm"
     entry = {
         "barcode": request.barcode,
-        "name": request.name or request.barcode,
+        "name": name,
         "width_mm": request.width_mm,
         "height_mm": request.height_mm,
         "paper_type": request.label_type,
@@ -839,20 +860,26 @@ async def api_roll_format(request: RollFormatRequest) -> dict:
         store.save_profile(
             PaperProfile(
                 key=profile_key_value,
-                name=request.name or f"{request.width_mm:g} × {request.height_mm:g} mm",
+                name=name,
                 width_mm=request.width_mm,
                 height_mm=request.height_mm,
                 gap_mm=request.gap_mm,
                 label_type=request.label_type,
                 capacity=request.capacity,
                 regions=regions,
+                sticker_w_mm=round(sticker_w, 3),
+                sticker_h_mm=round(sticker_h, 3),
+                row_space_mm=request.row_space_mm,
+                col_space_mm=request.col_space_mm,
             )
         )
     log.info(
-        "Roll %s remembered as %g × %g mm (%d rows, %d cells drawn)",
+        "Roll %s remembered as %g × %g mm, sticker %g × %g mm (%d rows, %d zones drawn)",
         request.barcode,
         request.width_mm,
         request.height_mm,
+        sticker_w,
+        sticker_h,
         request.rows,
         len(regions),
     )

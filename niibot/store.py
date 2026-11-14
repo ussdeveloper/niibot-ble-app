@@ -170,6 +170,9 @@ def _migrate_schema(db: sqlite3.Connection) -> None:
     profile_columns = {row["name"] for row in db.execute("PRAGMA table_info(profiles)").fetchall()}
     if "regions" not in profile_columns:
         db.execute("ALTER TABLE profiles ADD COLUMN regions TEXT")
+    for column in ("sticker_w_mm", "sticker_h_mm", "row_space_mm", "col_space_mm"):
+        if column not in profile_columns:
+            db.execute(f"ALTER TABLE profiles ADD COLUMN {column} REAL")
     consumable_columns = {row["name"] for row in db.execute("PRAGMA table_info(consumables)").fetchall()}
     if "cols" not in consumable_columns:
         db.execute("ALTER TABLE consumables ADD COLUMN cols INTEGER")
@@ -526,11 +529,15 @@ def upsert_profile(profile: PaperProfile) -> dict[str, Any]:
     regions = json.dumps([region.to_dict() for region in profile.regions], ensure_ascii=False) if profile.regions else None
     with connect() as db:
         db.execute(
-            "INSERT INTO profiles(key, name, width_mm, height_mm, gap_mm, label_type, capacity, regions, updated_at)"
-            " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            "INSERT INTO profiles(key, name, width_mm, height_mm, gap_mm, label_type, capacity, regions,"
+            " sticker_w_mm, sticker_h_mm, row_space_mm, col_space_mm, updated_at)"
+            " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
             " ON CONFLICT(key) DO UPDATE SET name=excluded.name, width_mm=excluded.width_mm,"
             " height_mm=excluded.height_mm, gap_mm=excluded.gap_mm, label_type=excluded.label_type,"
-            " capacity=excluded.capacity, regions=excluded.regions, updated_at=excluded.updated_at",
+            " capacity=excluded.capacity, regions=excluded.regions, sticker_w_mm=excluded.sticker_w_mm,"
+            " sticker_h_mm=excluded.sticker_h_mm, row_space_mm=excluded.row_space_mm,"
+            " col_space_mm=excluded.col_space_mm,"
+            " updated_at=excluded.updated_at",
             (
                 profile.key,
                 profile.name,
@@ -540,6 +547,10 @@ def upsert_profile(profile: PaperProfile) -> dict[str, Any]:
                 profile.label_type,
                 profile.capacity,
                 regions,
+                profile.sticker_w_mm,
+                profile.sticker_h_mm,
+                profile.row_space_mm,
+                profile.col_space_mm,
                 _now(),
             ),
         )
