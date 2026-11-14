@@ -115,10 +115,16 @@ def device_scope() -> str:
 
 def _apply_device_geometry() -> None:
     """Give the active driver the geometry override saved in the settings."""
-    geometry = store.load_settings().get("device_geometry") or {}
+    settings = store.load_settings()
+    geometry = settings.get("device_geometry") or {}
     state.printer.set_geometry_override(
         geometry.get("dpi"), geometry.get("printhead_px"), geometry.get("print_task")
     )
+    if hasattr(state.printer, "feed_mm"):
+        try:
+            state.printer.feed_mm = float(settings.get("feed_mm") or 0.0)
+        except (TypeError, ValueError):
+            state.printer.feed_mm = 0.0
 
 
 def make_printer(protocol: str):
@@ -404,15 +410,34 @@ def _state_payload() -> dict:
             paper["geometry_source"] = "catalog"
         elif paper.get("detected_width_mm"):
             paper["geometry_source"] = "printer"
+    info = asdict(state.printer.info)
+    if not state.connected:
+        # Off-line show the printer that will be used next (the saved one), not whatever
+        # driver handed over the last connection.
+        remembered = next(
+            (row for row in store.list_printers() if row["address"] == settings.get("last_address")),
+            None,
+        )
+        if remembered:
+            info["model_name"] = remembered.get("model_name") or info.get("model_name")
+            info["model_key"] = remembered.get("model_key") or info.get("model_key")
+            offline_protocol = remembered.get("protocol") or state.protocol
+        else:
+            offline_protocol = state.protocol
+    else:
+        offline_protocol = state.protocol
     return {
         "connected": state.connected,
-        "link": {"address": state.printer.link.address, "name": state.printer.link.name},
-        "info": asdict(state.printer.info),
+        "link": {
+            "address": state.printer.link.address if state.connected else settings.get("last_address"),
+            "name": state.printer.link.name if state.connected else info.get("model_name"),
+        },
+        "info": info,
         "paper": paper,
         "profile": _current_profile(),
         "job": state.job.to_dict() if state.job else None,
-        "protocol": state.protocol,
-        "protocol_name": "LuckPrinter (Fichero / AiYin)" if state.protocol == "luckprinter" else "Niimbot",
+        "protocol": offline_protocol,
+        "protocol_name": "LuckPrinter (Fichero / AiYin)" if offline_protocol == "luckprinter" else "Niimbot",
         "device_scope": device_scope(),
         "keep_alive": {
             "ping_age_s": (
@@ -708,6 +733,7 @@ async def api_device_settings() -> dict:
     info = state.printer.info
     return {
         "protocol": state.protocol,
+        "feed_mm": float(store.load_settings().get("feed_mm") or 0.0),
         "override": {
             "dpi": int(geometry.get("dpi") or 0),
             "printhead_px": int(geometry.get("printhead_px") or 0),
@@ -737,6 +763,13 @@ async def api_device_settings_set(request: Request) -> dict:
         raise HTTPException(status_code=400, detail="Printhead width must be between 32 and 2048 px.")
     if print_task and print_task not in {"b1", "v4"}:
         raise HTTPException(status_code=400, detail="Unknown print task.")
+    feed_mm = payload.get("feed_mm")
+    if feed_mm is not None:
+        try:
+            feed_value = max(0.0, min(50.0, float(feed_mm)))
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="Feed must be a number of millimetres.")
+        store.save_settings({"feed_mm": feed_value})
     protocol = str(payload.get("protocol") or "").strip().lower()
     if protocol and protocol not in {"niimbot", "luckprinter"}:
         raise HTTPException(status_code=400, detail="Unknown printer protocol.")
@@ -748,7 +781,7 @@ async def api_device_settings_set(request: Request) -> dict:
     async with state.lock:
         if protocol and not state.connected:
             state.use_protocol(protocol)
-        state.printer.set_geometry_override(dpi or None, printhead_px or None, print_task or None)
+        _apply_device_geometry()
         if state.connected:
             # Re-apply immediately so the canvas and printing pick the new geometry up.
             state.printer.refresh_geometry()
@@ -858,6 +891,7 @@ async def api_connect(request: ConnectRequest) -> dict:
                 except Exception:  # noqa: BLE001
                     pass
         if not connected:
+            state.use_protocol(settings.get("printer_protocol") or "niimbot")
             detail = f"Could not connect: {last_error}" if last_error else "Could not connect"
             raise HTTPException(status_code=502, detail=detail) from last_error
         store.save_settings({"printer_protocol": state.protocol})
@@ -948,6 +982,27 @@ async def api_detect_size() -> dict:
         "profile": stored,
         "state": _state_payload(),
     }
+
+
+class FeedRequest(BaseModel):
+    mm: float = 6.0
+
+
+@app.post("/api/printer/feed")
+async def api_printer_feed(request: FeedRequest) -> dict:
+    """Advance the paper by hand — the quickest way to find the right value for the tear bar."""
+    if not state.connected:
+        raise HTTPException(status_code=409, detail="The printer is not connected.")
+    feed = getattr(state.printer, "feed", None)
+    if feed is None:
+        raise HTTPException(status_code=409, detail="This printer handles paper advance itself.")
+    millimetres = max(0.5, min(50.0, float(request.mm)))
+    async with state.lock:
+        try:
+            await feed(millimetres)
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {"fed_mm": millimetres}
 
 
 @app.post("/api/calibrate")

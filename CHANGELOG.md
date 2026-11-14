@@ -4,6 +4,21 @@ All notable changes to **Niibot Studio** are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project uses [Semantic Versioning](https://semver.org/).
 
+## [0.14.2] — 2026-11-14
+
+### Fixed
+- **Fichero/Karsten prints every label but never advances to the next one.** The panel numbers
+  label types like Niimbot (1 = labels with gaps) and the value was sent unchanged, so the printer
+  switched to *black mark* mode and searched for a mark that does not exist. `paper_type_from_label_type()`
+  now maps 1→0 (gap), 2→1 (black mark), 3/5/11→2 (continuous) and the paper type is sent before
+  every print, plus once after connecting.
+- **Explicit paper advance.** This family does not walk to the tear bar by itself, so the vendor app
+  sends the distance: *Settings → Printer → Paper advance* (mm, sent as `1B 4A nn` dots after each
+  label) with a **Feed now** button, and `POST /api/printer/feed` for scripted use.
+- **The offline status bar shows the printer that will be used next** (name and protocol from the
+  printer registry), so the B1 is labelled `B1`/`Niimbot` instead of inheriting the last driver's
+  Fichero name. A failed connect restores the saved protocol too.
+
 ## [0.14.1] — 2026-11-14
 
 ### Added

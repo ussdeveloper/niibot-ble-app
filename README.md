@@ -316,6 +316,15 @@ Pick **LuckPrinter (Fichero / AiYin)** in *Settings → Printer → Protocol* �
 Everything else works as usual; this family has no roll tag, so its calibration is stored under
 the fixed key `AIYIN` (make one with *Correct calibration*).
 
+**Paper type and advance.** The panel numbers label types like Niimbot (1 = labels with gaps,
+2 = black mark, 3 = continuous tape); this family uses 0/1/2. The mapping is done in
+`luckprinter.paper_type_from_label_type()` and the paper type is sent before every print — sending
+Niimbot's `1` unchanged made the printer look for a black mark, so it printed every label but never
+moved to the next gap. The printer also does not walk to the tear bar on its own: *Settings →
+Printer → Paper advance* holds the distance sent after each label (`1B 4A nn` dots), and
+**Feed now** advances the paper once so the value can be dialled in; `POST /api/printer/feed`
+does the same over HTTP.
+
 ---
 
 ## Device resolution (dpi) and unknown printers

@@ -80,6 +80,20 @@ class CommandTests(unittest.TestCase):
         self.assertEqual(lp.enable_command("nonsense"), lp.enable_command("aiyin"))
 
 
+class PaperTypeTests(unittest.TestCase):
+    """The panel speaks Niimbot label types; this family numbers paper types 0/1/2."""
+
+    def test_gap_labels_are_not_sent_as_black_mark(self) -> None:
+        self.assertEqual(lp.paper_type_from_label_type(1), 0)   # labels with gap
+        self.assertEqual(lp.paper_type_from_label_type(None), 0)
+        self.assertEqual(lp.paper_type_from_label_type(4), 0)   # perforated -> gap
+
+    def test_other_types(self) -> None:
+        self.assertEqual(lp.paper_type_from_label_type(2), 1)   # black mark
+        self.assertEqual(lp.paper_type_from_label_type(3), 2)   # continuous tape
+        self.assertEqual(lp.paper_type_from_label_type(11), 2)  # heat-shrink tube
+
+
 class RasterTests(unittest.TestCase):
     def test_header_layout(self) -> None:
         frame = lp.build_raster(b"\xff" * 36, width_px=96, height=3)
@@ -105,6 +119,26 @@ class RasterTests(unittest.TestCase):
         self.assertEqual(encoded.raw[12], 0x00)
         frame = lp.build_raster(encoded.raw, encoded.cols, encoded.rows)
         self.assertEqual(frame[8], 0x80)
+
+
+class FeedTests(unittest.TestCase):
+    def test_feed_forward_is_chunked_at_255_dots(self) -> None:
+        self.assertEqual(lp.feed_forward(48), bytes.fromhex("1b4a30"))
+        self.assertEqual(lp.feed_forward(0), b"")
+        self.assertEqual(lp.feed_forward(300), bytes.fromhex("1b4aff1b4a2d"))
+
+    def test_driver_feed_uses_the_dpi(self) -> None:
+        import asyncio
+
+        printer = FicheroPrinter()
+        link = FakeLink()
+        printer.link = link  # type: ignore[assignment]
+
+        async def run() -> None:
+            await printer.feed(6.0)      # 6 mm at 203 dpi = 48 dots
+
+        asyncio.run(run())
+        self.assertEqual(link.writes[-1], bytes.fromhex("1b4a30"))
 
 
 class ParsingTests(unittest.TestCase):
@@ -161,12 +195,14 @@ class PrinterFlowTests(unittest.TestCase):
         async def run() -> None:
             await self.printer.connect("C9:48:8A:00:00:01")
             self.link.writes.clear()
-            await self.printer.print_bitmap(encoded, copies=1, density=3, label_type=0)
+            # panel label type 1 = labels with gaps -> the printer needs paper type 0
+            await self.printer.print_bitmap(encoded, copies=1, density=3, label_type=1)
 
         asyncio.run(run())
         payloads = self.link.writes
         self.assertIn(lp.set_density(1), payloads)      # panel 3 of 5 -> middle step
-        self.assertIn(lp.set_paper_type(0), payloads)
+        self.assertIn(lp.set_paper_type(0), payloads)   # gap mode, so the printer finds the gap
+        self.assertNotIn(lp.set_paper_type(1), payloads)
         self.assertIn(lp.WAKE, payloads)
         self.assertIn(lp.enable_command("aiyin"), payloads)
         self.assertIn(lp.FORM_FEED, payloads)

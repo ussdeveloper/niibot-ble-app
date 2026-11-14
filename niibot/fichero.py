@@ -212,6 +212,8 @@ class FicheroPrinter:
         self._family = "aiyin"
         #: Set by the panel (Settings → Printer); the geometry override drives 96 px vs 142 px heads.
         self.geometry_override: dict = {}
+        #: Extra advance after each label so it reaches the tear bar (0 = rely on the printer).
+        self.feed_mm: float = 0.0
 
     @property
     def connected(self) -> bool:
@@ -264,6 +266,13 @@ class FicheroPrinter:
     async def refresh(self) -> PaperStatus:
         status = lp.parse_status(await self.link.request(lp.REQUESTS["status"]))
         battery = lp.parse_battery(await self.link.request(lp.REQUESTS["battery"]))
+        if not getattr(self, "_paper_type_sent", False):
+            # One-time: make sure the printer is in gap mode, whatever a previous app left behind.
+            try:
+                await self.set_paper_type(self.paper.label_type or 1)
+                self._paper_type_sent = True
+            except Exception:  # noqa: BLE001 - best effort
+                pass
         self.paper = PaperStatus(
             lid_closed=not status.get("cover_open", False),
             paper_inserted=not status.get("out_of_paper", False),
@@ -315,8 +324,12 @@ class FicheroPrinter:
         self.info.density = max(1, min(5, int(density)))
 
     async def set_paper_type(self, kind: int) -> None:
-        await self.link.request(lp.set_paper_type(kind), timeout=1.5)
-        self.paper.label_type = int(kind)
+        """``kind`` is the panel's Niimbot label type (1 = gaps), not the LuckPrinter value."""
+        luck_type = lp.paper_type_from_label_type(kind)
+        await self.link.request(lp.set_paper_type(luck_type), timeout=1.5)
+        self.paper.label_type = int(kind or 1)
+        self.paper.label_type_name = lp.PAPER_TYPES.get(luck_type)
+        self.paper.label_type_source = "printer"
 
     async def set_label_type(self, label_type: int) -> None:
         await self.set_paper_type(int(label_type))
@@ -347,8 +360,9 @@ class FicheroPrinter:
         raw = getattr(encoded, "raw", b"")
         raster = lp.build_raster(raw, width_px, height)
         copies = max(1, int(copies))
-        if label_type is not None:
-            await self.link.request(lp.set_paper_type(int(label_type)), timeout=1.5)
+        # Always send the paper type: the printer must know how to find the gap, otherwise it
+        # prints every label but never advances to the next one (the reported symptom).
+        await self.set_paper_type(label_type if label_type is not None else (self.paper.label_type or 1))
         if density is not None:
             level = max(0, min(2, round((max(1, min(5, int(density))) - 1) / 2)))
             await self.link.request(lp.set_density(level), timeout=1.5)
@@ -363,12 +377,22 @@ class FicheroPrinter:
             if on_progress:
                 on_progress(0.6, page=page)
             await self.link.write(lp.FORM_FEED)
+            # The family does not walk to the tear bar by itself: the vendor app sends an
+            # explicit advance, so the value is configurable per printer (Settings → Printer).
+            await self.feed(getattr(self, "feed_mm", 0.0) or 0.0)
             await self.link.write(lp.stop_command(self._family))
             await self.link.wait_for_finish(timeout=60.0)
             if on_progress:
                 on_progress(0.9, page=page)
         if on_progress:
             on_progress(1.0, page=copies)
+
+    async def feed(self, millimetres: float) -> None:
+        """Push the paper forward by ``millimetres`` — used to reach the tear bar after a print."""
+        dots = int(round(max(0.0, float(millimetres)) * self.info.dpi / 25.4))
+        if dots <= 0:
+            return
+        await self.link.write(lp.feed_forward(dots))
 
     # ----------------------------------------------------------- convenience
     async def get_battery(self) -> int | None:

@@ -49,6 +49,24 @@ FAMILIES = {
 
 PAPER_TYPES = {0: "gap", 1: "black_mark", 2: "continuous"}
 
+#: The panel speaks Niimbot's label types (1 = gaps, 2 = black mark, 3 = continuous tape);
+#: this family numbers them 0/1/2. Sending Niimbot's ``1`` here means "black mark" and the
+#: printer then never finds the gap — it prints every label but never advances to the next one.
+_NIIMBOT_TO_LUCK = {
+    1: 0,   # labels with gap
+    2: 1,   # black mark
+    3: 2,   # continuous tape
+    5: 2,   # transparent film behaves like continuous
+    11: 2,  # heat-shrink tube
+}
+
+
+def paper_type_from_label_type(label_type: int | None) -> int:
+    """Translate the panel's Niimbot label type to this family's paper type."""
+    if label_type is None:
+        return 0
+    return _NIIMBOT_TO_LUCK.get(int(label_type), 0)
+
 
 def set_density(level: int) -> bytes:
     """0 = light, 1 = medium, 2 = thick (the printer's own scale, not Niimbot's 1-5)."""
@@ -70,6 +88,17 @@ def enable_command(family: str = "aiyin") -> bytes:
 
 def stop_command(family: str = "aiyin") -> bytes:
     return FAMILIES.get(family, FAMILIES["aiyin"])[1]
+
+
+def feed_forward(dots: int) -> bytes:
+    """``1B 4A nn`` — advance the paper by ``dots`` print rows (max 255 per command)."""
+    remaining = max(0, int(dots))
+    chunks = bytearray()
+    while remaining > 0:
+        step = min(255, remaining)
+        chunks += b"\x1b\x4a" + bytes((step,))
+        remaining -= step
+    return bytes(chunks)
 
 
 def build_raster(raw: bytes, width_px: int, height: int, mode: int = 0) -> bytes:

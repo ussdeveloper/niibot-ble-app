@@ -5144,6 +5144,7 @@ function bindSettingsActions(content) {
       if (action === 'device-save') await saveDeviceGeometry(content);
       if (action === 'scan-printers') await loadPrinters(true);
       if (action === 'diagnose') await diagnoseDevice(event.target.closest('[data-address]').dataset.address);
+      if (action === 'feed-now' || action === 'feed') await feedPaper(document.querySelector('#feed-mm')?.value);
       if (action === 'use-format') {
         const index = Number(event.target.closest('[data-index]').dataset.index);
         const item = state.catalog[index];
@@ -5214,6 +5215,15 @@ function renderGeometryOverride(info) {
         <button class="btn" data-action="device-save"><i data-lucide="save"></i> Apply</button>
       </div>
       <div class="hint">Leave empty for automatic. Changes apply to the live connection immediately.</div>
+      <h4 style="margin-top:12px">Paper advance</h4>
+      <div class="hint">The Fichero/Karsten family does not walk to the tear bar by itself — the vendor app
+        sends the distance explicitly. Set how far the label should advance after printing (0 = leave it to
+        the printer) and use <em>Feed now</em> to try it out.</div>
+      <div class="geom-row">
+        <label>Advance after print (mm)<input type="number" id="feed-mm" min="0" max="50" step="0.5"
+          value="${Number(deviceSettings?.feed_mm || 0)}"></label>
+        <button class="btn" data-action="feed"><i data-lucide="arrow-down-to-line"></i> Feed now</button>
+      </div>
     </div>`;
 }
 
@@ -5221,7 +5231,8 @@ async function saveDeviceGeometry(content) {
   const dpi = Number($('#geom-dpi', content)?.value || 0);
   const printhead_px = Number($('#geom-head', content)?.value || 0);
   const print_task = $('#geom-task', content)?.value || '';
-  const payload = await api('/api/settings/device', 'POST', { dpi, printhead_px, print_task });
+  const feed_mm = Number($('#feed-mm', content)?.value || 0);
+  const payload = await api('/api/settings/device', 'POST', { dpi, printhead_px, print_task, feed_mm });
   deviceSettings = payload;
   await refreshState();
   renderSettingsTab();
@@ -5773,6 +5784,17 @@ async function diagnoseDevice(address) {
     report = `diagnose failed: ${error.message}`;
     body.innerHTML = `<div class="hint">${escapeHtml(error.message)}</div>`;
     footer.querySelector('#diagnose-verdict').textContent = 'Device did not answer.';
+  }
+}
+
+/* Push the label out to the tear bar — also the way to find the right advance value. */
+async function feedPaper(millimetres) {
+  const mm = Number(millimetres || 6);
+  try {
+    const result = await api('/api/printer/feed', 'POST', { mm });
+    toast(`Fed ${result.fed_mm} mm`, 'ok');
+  } catch (error) {
+    toast(error.message, 'error');
   }
 }
 
