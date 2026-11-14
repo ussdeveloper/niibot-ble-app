@@ -285,12 +285,10 @@ def _current_profile() -> dict | None:
         return None
     profile = dict(profile)
     profile["key"] = key
-    # Rows/columns live on the catalogue entry; the profile only keeps the page size.
+    # The grid is stored with the calibration; older records fall back to the catalogue entry.
     entry = store.get_catalog_entry(paper.barcode) or {}
-    cols = max(1, int(entry.get("cols") or 1))
-    rows = max(1, int(entry.get("rows") or 1))
-    profile.setdefault("rows", rows)
-    profile.setdefault("cols", cols)
+    cols = max(1, int(profile.get("cols") or entry.get("cols") or 1))
+    rows = max(1, int(profile.get("rows") or entry.get("rows") or 1))
     profile["rows"], profile["cols"] = rows, cols
     # A profile saved before stickers were tracked: derive the sticker from the grid.
     if not profile.get("sticker_w_mm"):
@@ -871,6 +869,8 @@ async def api_roll_format(request: RollFormatRequest) -> dict:
                 sticker_h_mm=round(sticker_h, 3),
                 row_space_mm=request.row_space_mm,
                 col_space_mm=request.col_space_mm,
+                rows=request.rows,
+                cols=request.cols,
             )
         )
     log.info(

@@ -217,6 +217,9 @@ class PaperProfile:
     sticker_h_mm: float = 0.0
     row_space_mm: float = 0.0
     col_space_mm: float = 0.0
+    #: How the stickers sit on the print page (1 × 1 = the page is one sticker).
+    rows: int = 1
+    cols: int = 1
 
     def to_dict(self) -> dict:
         return {
@@ -232,4 +235,6 @@ class PaperProfile:
             "sticker_h_mm": self.sticker_h_mm,
             "row_space_mm": self.row_space_mm,
             "col_space_mm": self.col_space_mm,
+            "rows": self.rows,
+            "cols": self.cols,
         }

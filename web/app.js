@@ -1081,42 +1081,112 @@ function openRollSizeDialog(options = {}) {
   const alignSelection = (mode) => {
     const indices = selectedIndices();
     if (indices.length < 2) return;
-    const boxes = indices.map((index) => zoneBounds(zones[index]));
-    const left = Math.min(...boxes.map((box) => box.x));
-    const right = Math.max(...boxes.map((box) => box.x + box.w));
-    const top = Math.min(...boxes.map((box) => box.y));
-    const bottom = Math.max(...boxes.map((box) => box.y + box.h));
+    const boxes = new Map(indices.map((index) => [index, zoneBounds(zones[index])]));
+    const list = () => [...boxes.values()];
+    const left = Math.min(...list().map((box) => box.x));
+    const right = Math.max(...list().map((box) => box.x + box.w));
+    const top = Math.min(...list().map((box) => box.y));
+    const bottom = Math.max(...list().map((box) => box.y + box.h));
     const centreX = (left + right) / 2;
     const centreY = (top + bottom) / 2;
-    const place = (zone, box, x, y) => {
-      translateZone(zone, x - box.x, y - box.y);
-    };
-    indices.forEach((index, order) => {
+
+    /* Put a zone's own top-left at (x, y) — always inside the label, so nothing can jump off screen. */
+    const place = (index, x, y) => {
       const zone = zones[index];
-      const box = boxes[order];
-      if (mode === 'left') place(zone, box, left, box.y);
-      if (mode === 'right') place(zone, box, right - box.w, box.y);
-      if (mode === 'hcenter') place(zone, box, centreX - box.w / 2, box.y);
-      if (mode === 'top') place(zone, box, box.x, top);
-      if (mode === 'bottom') place(zone, box, box.x, bottom - box.h);
-      if (mode === 'vmiddle') place(zone, box, box.x, centreY - box.h / 2);
-    });
+      const box = boxes.get(index);
+      if (!zone || !box) return;
+      const dx = Math.min(width - (box.x + box.w), Math.max(-box.x, x - box.x));
+      const dy = Math.min(height - (box.y + box.h), Math.max(-box.y, y - box.y));
+      translateZone(zone, round2(dx), round2(dy));
+    };
+
     if (mode === 'dist-h' || mode === 'dist-v') {
       const horizontal = mode === 'dist-h';
-      const sorted = indices.map((index, order) => ({ index, box: boxes[order] }))
-        .sort((a, b) => (horizontal ? a.box.x - b.box.x : a.box.y - b.box.y));
-      const span = horizontal ? right - left : bottom - top;
-      const used = sorted.reduce((sum, item) => sum + (horizontal ? item.box.w : item.box.h), 0);
-      const space = (span - used) / Math.max(1, sorted.length - 1);
-      let cursor = horizontal ? left : top;
-      sorted.forEach(({ index, box }) => {
-        if (horizontal) place(zones[index], box, cursor, box.y);
-        else place(zones[index], box, box.x, cursor);
-        cursor += (horizontal ? box.w : box.h) + space;
+      const size = (box) => (horizontal ? box.w : box.h);
+      const start = (box) => (horizontal ? box.x : box.y);
+      const sorted = [...indices].sort((a, b) => start(boxes.get(a)) - start(boxes.get(b)));
+      const used = sorted.reduce((sum, index) => sum + size(boxes.get(index)), 0);
+      const labelSpan = horizontal ? width : height;
+      /* Equal gaps between the items AND equal margins at the label edges — that is what
+         "distributed across the sticker" means; only fall back to the group's own span when
+         the items are too big to fit with margins. */
+      const fitsLabel = labelSpan - used >= 0.5 * (sorted.length + 1);
+      const origin = fitsLabel ? 0 : Math.min(...sorted.map((index) => start(boxes.get(index))));
+      const extent = fitsLabel ? labelSpan
+        : Math.max(...sorted.map((index) => start(boxes.get(index)) + size(boxes.get(index)))) - origin;
+      const count = sorted.length;
+      const margin = fitsLabel ? (extent - used) / (count + 1) : 0;
+      const between = fitsLabel ? margin : Math.max(0, (extent - used) / Math.max(1, count - 1));
+      let cursor = origin + margin;
+      sorted.forEach((index) => {
+        const box = boxes.get(index);
+        if (horizontal) place(index, cursor, box.y);
+        else place(index, box.x, cursor);
+        cursor += size(box) + between;
       });
+      commit();
+      renderInspector();
+      draw();
+      return;
     }
+
+    indices.forEach((index) => {
+      const box = boxes.get(index);
+      if (mode === 'left') place(index, left, box.y);
+      if (mode === 'right') place(index, right - box.w, box.y);
+      if (mode === 'hcenter') place(index, centreX - box.w / 2, box.y);
+      if (mode === 'top') place(index, box.x, top);
+      if (mode === 'bottom') place(index, box.x, bottom - box.h);
+      if (mode === 'vmiddle') place(index, box.x, centreY - box.h / 2);
+    });
     commit();
     renderInspector();
+    draw();
+  };
+
+  /* Guide lines taken from the label size: the centre and the quarters of the sticker. */
+  const guideXs = () => [width / 2, width / 4, (3 * width) / 4];
+  const guideYs = () => [height / 2, height / 4, (3 * height) / 4];
+  const SNAP_GUIDE_PX = 7;
+  /* Which guide is currently holding a dragged edge (drawn highlighted). */
+  let activeGuides = { x: null, y: null };
+
+  const guideTolerance = () => SNAP_GUIDE_PX / Math.max(1, view.scale);
+
+  /** Nearest guide to *value* within the tolerance — ``null`` when nothing is close. */
+  const nearestGuide = (value, guides, tolerance) => {
+    let best = null;
+    guides.forEach((guide) => {
+      const delta = Math.abs(guide - value);
+      if (delta <= tolerance && (!best || delta < best.delta)) best = { guide, delta };
+    });
+    return best;
+  };
+
+  /** Snap the whole box (left / centre / right and top / middle / bottom) onto the guides. */
+  const snapBoxToGuides = (box, dx, dy, tolerance) => {
+    // ``box`` is the dragged footprint: left/top plus right/bottom (no w/h properties).
+    const boxW = box.right - box.x;
+    const boxH = box.bottom - box.y;
+    const candidatesX = [box.x + dx, box.x + dx + boxW / 2, box.right + dx];
+    const candidatesY = [box.y + dy, box.y + dy + boxH / 2, box.bottom + dy];
+    let pickX = null;
+    candidatesX.forEach((anchor) => {
+      const hit = nearestGuide(anchor, guideXs(), tolerance);
+      if (hit && (!pickX || hit.delta < pickX.delta)) pickX = { ...hit, anchor };
+    });
+    let pickY = null;
+    candidatesY.forEach((anchor) => {
+      const hit = nearestGuide(anchor, guideYs(), tolerance);
+      if (hit && (!pickY || hit.delta < pickY.delta)) pickY = { ...hit, anchor };
+    });
+    activeGuides = { x: pickX?.guide ?? null, y: pickY?.guide ?? null };
+    return {
+      dx: dx + (pickX ? pickX.guide - pickX.anchor : 0),
+      dy: dy + (pickY ? pickY.guide - pickY.anchor : 0),
+      hitX: !!pickX,
+      hitY: !!pickY,
+    };
   };
 
   /* ------------------------------------------------------------- drawing */
@@ -1235,6 +1305,34 @@ function openRollSizeDialog(options = {}) {
     gridLines(minorStep, 'rgba(0, 26, 77, 0.045)', 1);
     gridLines(5, 'rgba(0, 26, 77, 0.13)', 1);
 
+    /* Centre and quarter guides — the lines the drag snaps to. */
+    const drawGuide = (value, vertical, strong, active) => {
+      ctx.save();
+      ctx.setLineDash(active ? [] : strong ? [6, 4] : [3, 4]);
+      ctx.lineWidth = active ? 1.6 : strong ? 1.2 : 1;
+      ctx.strokeStyle = active ? '#e87a2a' : strong ? 'rgba(139, 92, 246, 0.55)' : 'rgba(139, 92, 246, 0.26)';
+      ctx.beginPath();
+      if (vertical) {
+        ctx.moveTo(cssX(value), cssY(0));
+        ctx.lineTo(cssX(value), cssY(height));
+      } else {
+        ctx.moveTo(cssX(0), cssY(value));
+        ctx.lineTo(cssX(width), cssY(value));
+      }
+      ctx.stroke();
+      ctx.restore();
+    };
+    const centreGuideX = width / 2;
+    const centreGuideY = height / 2;
+    guideXs().forEach((value) => {
+      const isCentre = Math.abs(value - centreGuideX) < 1e-6;
+      drawGuide(value, true, isCentre, activeGuides.x !== null && Math.abs(activeGuides.x - value) < 1e-6);
+    });
+    guideYs().forEach((value) => {
+      const isCentre = Math.abs(value - centreGuideY) < 1e-6;
+      drawGuide(value, false, isCentre, activeGuides.y !== null && Math.abs(activeGuides.y - value) < 1e-6);
+    });
+
     // printhead limit
     const headLimit = printheadWidthMm();
     if (headLimit && width > headLimit + 0.05) {
@@ -1337,6 +1435,8 @@ function openRollSizeDialog(options = {}) {
   };
 
   const renderChips = () => {
+    const selCount = $('#cal-selcount', body);
+    if (selCount) selCount.textContent = selection.size > 1 ? `${selection.size} selected` : '';
     if (!chipsBox) return;
     chipsBox.innerHTML = zones.length
       ? zones.map((zone, index) => {
@@ -1706,23 +1806,34 @@ function openRollSizeDialog(options = {}) {
     if (dragState?.mode === 'move') {
       const free = event.altKey;
       const bounds = dragState.bounds;
-      // Keep the dragged outlines on the label, then snap the moved edge to the 0.5 mm grid.
-      const rawX = Math.min(width - bounds.right, Math.max(-bounds.x, spot.x - dragState.startX));
-      const rawY = Math.min(height - bounds.bottom, Math.max(-bounds.y, spot.y - dragState.startY));
+      // Keep the dragged outlines on the label, snap to the centre/quarter guides first,
+      // then fall back to the 0.5 mm grid.
+      let rawX = Math.min(width - bounds.right, Math.max(-bounds.x, spot.x - dragState.startX));
+      let rawY = Math.min(height - bounds.bottom, Math.max(-bounds.y, spot.y - dragState.startY));
+      const guided = free ? { hitX: false, hitY: false } : snapBoxToGuides(bounds, rawX, rawY, guideTolerance());
+      if (!free) {
+        rawX = Math.min(width - bounds.right, Math.max(-bounds.x, guided.dx));
+        rawY = Math.min(height - bounds.bottom, Math.max(-bounds.y, guided.dy));
+      } else {
+        activeGuides = { x: null, y: null };
+      }
+      const snapAxis = (value, axis) => (
+        (axis === 'x' ? guided.hitX : guided.hitY) ? value : snapMm(value, free)
+      );
       if (dragState.shape !== null) {
         // move the single outline inside its item
         const current = zones[dragState.index].shapes[dragState.shape];
         const origin = dragState.origins.find((item) => item.index === dragState.index)?.shapes[dragState.shape];
         if (current && origin) {
-          current.x = snapMm(origin.x + rawX, free);
-          current.y = snapMm(origin.y + rawY, free);
+          current.x = snapAxis(origin.x + rawX, 'x');
+          current.y = snapAxis(origin.y + rawY, 'y');
         }
       } else {
         dragState.origins.forEach((entry) => {
           const zone = zones[entry.index];
           entry.shapes.forEach((shape, order) => {
-            zone.shapes[order].x = snapMm(shape.x + rawX, free);
-            zone.shapes[order].y = snapMm(shape.y + rawY, free);
+            zone.shapes[order].x = snapAxis(shape.x + rawX, 'x');
+            zone.shapes[order].y = snapAxis(shape.y + rawY, 'y');
           });
         });
       }
@@ -1740,10 +1851,16 @@ function openRollSizeDialog(options = {}) {
       let right = origin.x + origin.w;
       let top = origin.y;
       let bottom = origin.y + origin.h;
-      if (dragState.spot.includes('w')) left = Math.max(0, snapMm(cursor.x, free));
-      if (dragState.spot.includes('e')) right = Math.min(width, snapMm(cursor.x, free));
-      if (dragState.spot.includes('n')) top = Math.max(0, snapMm(cursor.y, free));
-      if (dragState.spot.includes('s')) bottom = Math.min(height, snapMm(cursor.y, free));
+      const tolerance = guideTolerance();
+      const guideX = free ? null : nearestGuide(cursor.x, guideXs(), tolerance);
+      const guideY = free ? null : nearestGuide(cursor.y, guideYs(), tolerance);
+      activeGuides = { x: guideX?.guide ?? null, y: guideY?.guide ?? null };
+      const edgeX = (value) => (guideX ? guideX.guide : snapMm(value, free));
+      const edgeY = (value) => (guideY ? guideY.guide : snapMm(value, free));
+      if (dragState.spot.includes('w')) left = Math.max(0, edgeX(cursor.x));
+      if (dragState.spot.includes('e')) right = Math.min(width, edgeX(cursor.x));
+      if (dragState.spot.includes('n')) top = Math.max(0, edgeY(cursor.y));
+      if (dragState.spot.includes('s')) bottom = Math.min(height, edgeY(cursor.y));
       left = Math.min(left, right - 1);
       right = Math.max(right, left + 1);
       top = Math.min(top, bottom - 1);
@@ -1770,8 +1887,10 @@ function openRollSizeDialog(options = {}) {
   });
 
   const finishPointer = (event) => {
+    activeGuides = { x: null, y: null };
     if (dragState?.mode === 'pan') {
       dragState = null;
+      draw();
       return;
     }
     if (draft) {
@@ -2156,7 +2275,9 @@ function openRollSizeDialog(options = {}) {
   renderInspector();
   renderPageNote();
   setTool('select');
-  /* The canvas needs a laid-out wrap; the modal is in the DOM by now, so measure on the next frame. */
+  /* Measure right away — requestAnimationFrame does not run in a background tab, and the canvas
+     must never be left blank. The frame callback then catches late layout changes. */
+  resizeCanvas();
   requestAnimationFrame(() => {
     resizeCanvas();
     refreshIcons(body);

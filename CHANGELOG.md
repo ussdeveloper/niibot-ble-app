@@ -4,6 +4,22 @@ All notable changes to **Niibot Studio** are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project uses [Semantic Versioning](https://semver.org/).
 
+## [0.13.3] — 2026-11-14
+
+### Added
+- **Guide lines in the calibrator**: the label centre and the quarter lines (from the sticker size),
+  drawn behind the zones. Dragging or resizing an item snaps its edges and its centre onto them and
+  the line lights up (Alt = free movement, no snapping).
+
+### Fixed
+- **Distribute H/V** now spreads the selected items across the whole label with equal margins at the
+  edges and equal gaps between them; before it only spread them between their own outermost edges,
+  and with items wider than that span they landed on top of each other (looking like they vanished).
+- Align (left/right/centre/top/bottom) keeps every item on the label.
+- The grid (rows × columns) is stored with the calibration, so a calibration reused from the library
+  rebuilds its print page correctly instead of collapsing to one sticker.
+- The calibrator canvas is sized immediately, so it is never blank when the tab was in the background.
+
 ## [0.13.2] — 2026-11-14
 
 ### Added
