@@ -236,6 +236,52 @@ function startQueueWatch() {
   state.queueTimer = setInterval(loadQueue, 4000);
 }
 
+/* Height of the queue section, remembered in the database like every other panel size. */
+function applyQueueHeight() {
+  const list = $('#queue-list');
+  if (!list) return;
+  const height = Number(state.queueHeight) || 0;
+  if (height > 0) {
+    list.classList.add('sized');
+    list.style.height = `${height}px`;
+  } else {
+    list.classList.remove('sized');
+    list.style.height = '';
+  }
+}
+
+function bindQueueSplitter() {
+  const splitter = $('#splitter-queue');
+  const list = $('#queue-list');
+  if (!splitter || !list) return;
+  splitter.addEventListener('pointerdown', (event) => {
+    event.preventDefault();
+    const startY = event.clientY;
+    const startHeight = list.getBoundingClientRect().height;
+    const panel = document.querySelector('aside.panel').getBoundingClientRect();
+    splitter.classList.add('dragging');
+    try { splitter.setPointerCapture(event.pointerId); } catch (_) { /* ignore */ }
+    const move = (moveEvent) => {
+      const height = Math.max(74, Math.min(panel.height - 220, startHeight - (moveEvent.clientY - startY)));
+      state.queueHeight = Math.round(height);
+      applyQueueHeight();
+    };
+    const up = () => {
+      splitter.classList.remove('dragging');
+      splitter.removeEventListener('pointermove', move);
+      splitter.removeEventListener('pointerup', up);
+      writePref('queueHeight', state.queueHeight);
+    };
+    splitter.addEventListener('pointermove', move);
+    splitter.addEventListener('pointerup', up);
+  });
+  splitter.addEventListener('dblclick', () => {
+    state.queueHeight = 0;
+    applyQueueHeight();
+    writePref('queueHeight', 0);
+  });
+}
+
 async function repeatQueueJob(rowId) {
   try {
     await api(`/api/queue/${rowId}/repeat`, 'POST');
@@ -6114,6 +6160,9 @@ function saveViewPrefs() {
 }
 
 function loadViewPrefs() {
+  const queueHeight = Number(readPref('queueHeight', 0));
+  state.queueHeight = Number.isFinite(queueHeight) && queueHeight > 0 ? Math.round(queueHeight) : 0;
+  applyQueueHeight();
   const saved = readPref('view');
   if (!saved) return;
   if (typeof saved.showGrid === 'boolean') state.showGrid = saved.showGrid;
@@ -7098,6 +7147,7 @@ async function init() {
   }
   bindControls();
   bindQueueActions();
+  bindQueueSplitter();
   startQueueWatch();
   loadViewPrefs();
   syncViewToggles();

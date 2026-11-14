@@ -272,9 +272,13 @@ purpose — a test hook.
 
 The app reconnects to the printer you used last, without being asked. It scans for that printer
 (by address, then by advertised name — a random BLE address changes when the printer is power
-cycled), connects with three attempts and backs off from 10 s to 25 s while the printer is away.
-Windows' `find_device_by_address` is deliberately **not** used: it returns a cached, nameless
-device for an address that is not advertising, which made a switched-off printer look reachable.
+cycled), connects with up to three attempts and backs off from 8 s to 18 s while the printer is
+away. A scan that sees the printer connects immediately. Windows' `find_device_by_address` is
+deliberately **not** used: it returns a cached, nameless device for an address that is not
+advertising, which made a switched-off printer look reachable — a nameless advertisement now gets
+a single attempt and the address is skipped for 90 s. When the remembered printer does not answer,
+the app connects to another printer it already knows that *is* advertising, and remembers it.
+
 The status bar shows exactly what the reconnect is doing, and `GET /api/health` (the Ready / Not
 Ready chip in the top-right corner) proves the backend itself is alive.
 
@@ -285,7 +289,8 @@ Ready chip in the top-right corner) proves the backend itself is alive.
 The bottom of the right panel lists what was printed: state, size, time and printer, with the
 running job on top and a progress bar. **Repeat** sends the exact same label or sheet again (the
 spec is stored with the job, so the label does not have to be open), **Remove** drops the entry
-from the history, and a running job offers **Cancel**.
+from the history, and a running job offers **Cancel**. The handle above the list resizes the
+section (double-click resets it) and the height is remembered.
 
 `GET /api/queue` returns the history plus `current`; `POST /api/queue/{id}/repeat` prints it again
 and `DELETE /api/queue/{id}` removes it. Jobs that did not come from the designer (the Windows IPP

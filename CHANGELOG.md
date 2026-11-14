@@ -4,6 +4,27 @@ All notable changes to **Niibot Studio** are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project uses [Semantic Versioning](https://semver.org/).
 
+## [0.14.6] — 2026-11-14
+
+### Added
+- The printer-queue section has its own **resizer**: drag the handle above it to give the queue as
+  much room as you like, double-click it to go back to the default third of the panel. The height
+  is remembered in SQLite with the other panel sizes.
+
+### Fixed
+- **The app now connects by itself when the printer is there.** A scan that sees the remembered
+  printer connects immediately instead of waiting for the timer, the retry interval is 8 s for the
+  first attempts and 18 s after that, and the status bar narrates it.
+- Windows keeps advertising a printer from cache after it was switched off, so the remembered
+  printer could look reachable while it was asleep. An advertisement without a name (that is what
+  the cache returns) now gets a single connect attempt instead of three, a failed address is
+  skipped for 90 s, and…
+- …when the remembered printer does not answer, the app connects to **another known printer that
+  is advertising right now** (it has its own library already) and remembers it as last used,
+  instead of sitting dead while a printer is in range.
+- Auto-connect now does the same book-keeping as a manual connect (`reconnect_wanted`, device
+  scope, claiming the legacy library), so the keep-alive watchdog keeps the link alive after it.
+
 ## [0.14.5] — 2026-11-14
 
 ### Fixed
