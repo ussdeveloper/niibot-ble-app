@@ -63,6 +63,11 @@ python -m venv .venv
 The panel opens at <http://127.0.0.1:8765>. Requirements: Windows 10/11 with Bluetooth LE,
 Python 3.10+.
 
+The interface is a local web app: the executable starts a small server on `127.0.0.1:8765` and
+opens it in **its own window** (Edge/Chrome in app mode, with a private profile in `data\window`,
+so it has no tabs or address bar and its own taskbar entry). `--no-browser` keeps the console only,
+and on a machine without Edge/Chrome the default browser is used instead.
+
 ### Standalone executable
 
 ```powershell

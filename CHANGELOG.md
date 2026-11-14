@@ -4,6 +4,15 @@ All notable changes to **Niibot Studio** are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project uses [Semantic Versioning](https://semver.org/).
 
+## [0.13.6] — 2026-11-14
+
+### Added
+- **The panel opens in its own window.** The executable now starts Edge (or Chrome) in *app mode*
+  against `127.0.0.1`: a chromeless window with its own taskbar entry and a private profile in
+  `data\window`, instead of a tab in the everyday browser. It waits until the server answers, so the
+  window never shows an empty page, and falls back to the default browser when no Chromium is found.
+  `--no-browser` keeps the console only.
+
 ## [0.13.5] — 2026-11-14
 
 ### Changed

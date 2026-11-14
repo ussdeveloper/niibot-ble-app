@@ -5,8 +5,14 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
+import socket
+import subprocess
 import sys
+import threading
+import time
 import webbrowser
+from pathlib import Path as _Path
 
 from .bitmap import encode_image
 from .printer import NiimbotPrinter
@@ -139,16 +145,85 @@ async def _cmd_print(args: argparse.Namespace) -> int:
     return 0
 
 
+#: Chromium-based browsers that can open the panel as a window of its own (no tabs, no address bar).
+_BROWSER_CANDIDATES = (
+    r"Microsoft\Edge\Application\msedge.exe",
+    r"Google\Chrome\Application\chrome.exe",
+)
+
+
+def _find_app_browser() -> str | None:
+    roots = [
+        os.environ.get("PROGRAMFILES(X86)"),
+        os.environ.get("PROGRAMFILES"),
+        os.environ.get("LOCALAPPDATA"),
+    ]
+    for root in roots:
+        if not root:
+            continue
+        for relative in _BROWSER_CANDIDATES:
+            candidate = _Path(root) / relative
+            if candidate.is_file():
+                return str(candidate)
+    return None
+
+
+def _open_panel_window(url: str) -> str:
+    """Show the panel in its own app window; fall back to the default browser."""
+    browser = _find_app_browser()
+    if browser is None:
+        try:
+            webbrowser.open(url)
+        except Exception:  # pragma: no cover - depends on the machine
+            pass
+        return "default browser"
+    # Its own profile folder, so the window keeps its own settings and is a separate app
+    # entry (it does not disturb the user's normal browser session).
+    profile = _Path(DATA_DIR) / "window"
+    try:
+        profile.mkdir(parents=True, exist_ok=True)
+    except OSError:  # pragma: no cover - unwritable data folder
+        return "default browser"
+    try:
+        subprocess.Popen(
+            [
+                browser,
+                f"--app={url}",
+                f"--user-data-dir={profile}",
+                "--window-size=1440,920",
+                "--no-first-run",
+                "--no-default-browser-check",
+                "--disable-features=Translate,MediaRouter",
+            ],
+            close_fds=True,
+        )
+    except OSError:  # pragma: no cover - browser disappeared between the check and the spawn
+        webbrowser.open(url)
+        return "default browser"
+    return f"{_Path(browser).stem} app window"
+
+
+def _open_when_ready(url: str, host: str, port: int, timeout: float = 25.0) -> None:
+    """Wait for the server to accept connections, then open the window (dot not white page)."""
+    target = "127.0.0.1" if host in ("0.0.0.0", "::", "") else host
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            with socket.create_connection((target, port), timeout=0.4):
+                break
+        except OSError:
+            time.sleep(0.15)
+    where = _open_panel_window(url)
+    print(f"Window: {where}")
+
+
 def _cmd_panel(args: argparse.Namespace) -> int:
     import uvicorn
 
     url = f"http://{args.host}:{args.port}"
     print(f"Niibot Studio {APP_VERSION} - data folder: {DATA_DIR}")
     if not args.no_browser:
-        try:
-            webbrowser.open(url)
-        except Exception:  # pragma: no cover
-            pass
+        threading.Thread(target=_open_when_ready, args=(url, args.host, args.port), daemon=True).start()
     print(f"Panel: {url}  (Ctrl+C stops it)")
     # Import the app object directly: the frozen EXE has no importable module path
     # for uvicorn's string form ("niibot.server:app").
