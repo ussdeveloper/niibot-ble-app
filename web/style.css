@@ -291,6 +291,12 @@ svg.lucide { width: 16px; height: 16px; stroke-width: 1.7; }
 .meta-chip.ok { border-color: rgba(0, 194, 194, 0.5); color: var(--teal-deep); background: rgba(0, 194, 194, 0.08); }
 .meta-chip.bad { border-color: rgba(207, 75, 75, 0.5); color: var(--err); background: rgba(207, 75, 75, 0.08); }
 .meta-chip.type { border-color: rgba(138, 111, 230, 0.45); color: var(--violet-deep); background: rgba(138, 111, 230, 0.08); }
+/* the calibration on screen is the last one used, not read from the printer */
+.meta-chip.warn {
+  border-color: rgba(232, 122, 42, 0.55); color: #b45a1c; background: rgba(232, 122, 42, 0.12);
+  font-weight: 600;
+}
+.meta-chip.warn svg { width: 12px; height: 12px; }
 
 .canvas-wrap {
   flex: 1;
@@ -1324,6 +1330,31 @@ button.btn.wide { width: 100%; }
 }
 .paper-outline.circle { border-radius: 50%; }
 .paper-cell.editable .paper-outline { border-color: rgba(124, 77, 214, 0.5); background: rgba(139, 92, 246, 0.06); }
+
+/* ------------------------------------------------------ calibration library */
+.calib-picker { display: flex; flex-direction: column; gap: 12px; flex: 1; min-width: 0; }
+.calib-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(196px, 1fr)); gap: 10px;
+  align-content: start;
+}
+.calib-card {
+  display: flex; flex-direction: column; gap: 6px; padding: 10px;
+  border: 1px solid var(--line); border-radius: 11px; background: rgba(255, 255, 255, 0.9);
+}
+.calib-card.current { border-color: rgba(0, 194, 194, 0.65); box-shadow: 0 0 0 1px rgba(0, 194, 194, 0.28); }
+.calib-preview {
+  display: flex; align-items: center; justify-content: center;
+  min-height: 86px; padding: 6px; border-radius: 8px; background: rgba(0, 26, 77, 0.04);
+}
+.calib-thumb { display: block; }
+.calib-title { font-size: 12px; font-weight: 600; color: var(--navy); }
+.calib-title em {
+  font-style: normal; font-size: 10px; font-weight: 600; color: var(--teal-deep);
+  text-transform: uppercase; letter-spacing: 0.08em;
+}
+.calib-meta { font-size: 10.5px; line-height: 1.4; color: var(--ink-muted); }
+.calib-actions { display: flex; gap: 6px; margin-top: auto; }
+.calib-actions .btn { flex: 1; padding: 5px 8px; font-size: 11px; }
 
 /* -------------------------------------------------------------------- toast */
 

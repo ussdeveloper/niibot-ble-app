@@ -200,6 +200,12 @@ Dragging and resizing snap to 0.5 mm (hold Alt for 0.1 mm), and the grid matches
 Zones are stored per roll (`regions` with their `shapes`) and drive the design stage overlay,
 `Mirror cells` (design in the first zone, the rest is filled automatically) and sheet printing.
 
+Every connection re-reads the calibration for the inserted roll code. A roll with no stored
+calibration opens the **calibration library** — cards with a preview of the zones, the sticker size
+and the print page, so an existing layout can be reused (`Use`), edited or replaced. Off-line the
+last calibration stays on screen with an `⚠ offline calibration` badge, because the printer only
+reports the roll code while it is connected.
+
 ---
 
 ## Windows print queue (IPP)

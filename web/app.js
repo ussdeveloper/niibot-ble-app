@@ -166,6 +166,11 @@ const state = {
   previewPending: false,
   catalog: [],
   lastDevices: null,
+  /* Calibration that was in use when the printer was last connected — kept on screen
+     (with a warning) while the printer is away, because an offline printer reports no RFID. */
+  lastProfile: null,
+  calibrationOffline: false,
+  appliedProfileKey: null,
 };
 
 const selectedElement = () => state.spec?.elements.find((element) => element.id === state.selectedId) || null;
@@ -486,9 +491,15 @@ function renderStageMeta() {
   const hasSticker = Number(rollProfile?.sticker_w_mm) > 0 && Number(rollProfile?.sticker_h_mm) > 0;
   const stickerText = hasSticker
     ? `${round2(rollProfile.sticker_w_mm)} × ${round2(rollProfile.sticker_h_mm)} mm` : null;
-  const chips = [`<button type="button" class="meta-chip" id="meta-roll-size"
+  const chips = [];
+  if (state.calibrationOffline && rollProfile) {
+    chips.push(`<span class="meta-chip warn" id="meta-calib-offline"
+      title="The printer is disconnected, so the roll code cannot be read — showing the calibration of the last roll used. It is not synced with the printer.">
+      <i data-lucide="alert-triangle"></i> offline calibration</span>`);
+  }
+  chips.push(`<button type="button" class="meta-chip" id="meta-roll-size"
     title="Sticker size — click to calibrate. Print page: ${round2(spec.width_mm)} × ${round2(spec.height_mm)} mm">
-    <b>${stickerText || `${round2(spec.width_mm)} × ${round2(spec.height_mm)} mm`}</b></button>`];
+    <b>${stickerText || `${round2(spec.width_mm)} × ${round2(spec.height_mm)} mm`}</b></button>`);
   if (geo.typeName) chips.push(`<span class="meta-chip type">paper: ${escapeHtml(geo.typeName)}</span>`);
   {
     // A roll without a typed name is described by its sticker size, never by the RFID code.
@@ -497,12 +508,12 @@ function renderStageMeta() {
     const shown = useful ? typed : (stickerText || rollName);
     if (shown) chips.push(`<span class="meta-chip mono">${escapeHtml(shown)}</span>`);
   }
-  if (state.connected) {
-    chips.push(`<button type="button" class="meta-chip${known ? '' : ' warn'}" id="meta-calibrate"
-      title="Size and printable cells of this roll — reopen the calibrator any time">
-      <i data-lucide="ruler"></i> ${known ? 'Correct calibration' : 'Calibrate this roll'}
-    </button>`);
-  }
+  // Reachable off-line too: the calibrator can be edited and stored for the remembered roll.
+  chips.push(`<button type="button" class="meta-chip${known ? '' : ' warn'}" id="meta-calibrate"
+    title="${known ? 'Size and printable cells of this roll — reopen the calibrator any time'
+      : 'No calibration for this roll yet — draw its item zones'}">
+    <i data-lucide="ruler"></i> ${known ? 'Correct calibration' : 'Calibrate this roll'}
+  </button>`);
   if (rollProfile && rollProfile.width_mm && rollProfile.height_mm) {
     const headLimit = printheadWidthMm() || Math.max(rollProfile.width_mm, rollProfile.height_mm);
     const rollA = { w: Math.min(rollProfile.width_mm, headLimit), h: rollProfile.height_mm };
@@ -569,11 +580,16 @@ function renderStageMeta() {
 function openRollSizeDialog(options = {}) {
   const paper = state.printer?.paper || {};
   const rollName = paper.sku || paper.catalog?.name || paper.barcode || 'this roll';
-  const profile = state.printer?.profile || null;
+  /* ``options.profile`` edits a calibration picked from the library (a copy for this roll). */
+  const profile = options.profile || state.printer?.profile || null;
+  const targetBarcode = paper.barcode
+    || String(profile?.key || '').replace(/^bc:/, '') || '';
   /* A friendly name for this roll (the barcode is a poor label everywhere in the UI). */
   const codeOnly = (value) => !value || /^\d+$/.test(String(value).trim());
-  const rollLabel = !codeOnly(profile?.name) ? String(profile.name)
-    : !codeOnly(paper.catalog?.name) ? String(paper.catalog.name) : '';
+  const rollLabel = options.profile
+    ? calibrationName(options.profile)
+    : !codeOnly(profile?.name) ? String(profile.name)
+      : !codeOnly(paper.catalog?.name) ? String(paper.catalog.name) : '';
   const presets = (state.options?.paper_presets || []).map((preset) => ({
     label: preset.name || `${round2(preset.width_mm)} × ${round2(preset.height_mm)} mm`,
     width: preset.width_mm,
@@ -2092,6 +2108,10 @@ function openRollSizeDialog(options = {}) {
   /* ---------------------------------------------------------------- save */
   $('[data-cal-cancel]', footer).onclick = () => closeModal('roll-size');
   $('[data-cal-save]', footer).onclick = async () => {
+    if (!targetBarcode) {
+      toast('Connect the printer (or insert the roll) so the calibration can be stored for it', 'error');
+      return;
+    }
     readSize();
     const typedName = ($('[data-key="cal-name"]', body)?.value || '').trim();
     /* No name typed: the roll is described by its sticker size, not by the RFID code. */
@@ -2102,7 +2122,7 @@ function openRollSizeDialog(options = {}) {
     closeModal('roll-size');
     try {
       const payload = await api('/api/roll-format', 'POST', {
-        barcode: paper.barcode || 'unknown',
+        barcode: targetBarcode,
         name: savedName,
         width_mm: width,
         height_mm: height,
@@ -2141,6 +2161,179 @@ function openRollSizeDialog(options = {}) {
     resizeCanvas();
     refreshIcons(body);
   });
+}
+
+/* ==================================================== calibration library */
+/** Small preview of a stored calibration: the page with its item zones drawn on it. */
+function calibrationThumb(profile, maxWidth = 168) {
+  const width = Number(profile?.width_mm) || 1;
+  const height = Number(profile?.height_mm) || 1;
+  const scale = Math.min(maxWidth / width, 96 / height);
+  const regions = (profile?.regions || []).filter((region) => Number(region.w) > 0.2 && Number(region.h) > 0.2);
+  const parts = [];
+  regions.forEach((region) => {
+    const outlines = Array.isArray(region.shapes) && region.shapes.length
+      ? region.shapes
+      : [{
+        kind: region.shape === 'circle' ? 'circle' : 'rect',
+        x: region.x, y: region.y, w: region.w, h: region.h,
+      }];
+    outlines.forEach((shape) => {
+      const style = 'fill="rgba(0,194,194,0.16)" stroke="#0a8f92" stroke-width="1"';
+      if (shape.kind === 'circle') {
+        parts.push(`<ellipse cx="${((shape.x + shape.w / 2) * scale).toFixed(2)}"
+          cy="${((shape.y + shape.h / 2) * scale).toFixed(2)}"
+          rx="${((shape.w / 2) * scale).toFixed(2)}" ry="${((shape.h / 2) * scale).toFixed(2)}" ${style}/>`);
+      } else {
+        parts.push(`<rect x="${(shape.x * scale).toFixed(2)}" y="${(shape.y * scale).toFixed(2)}"
+          width="${(shape.w * scale).toFixed(2)}" height="${(shape.h * scale).toFixed(2)}" ${style}/>`);
+      }
+    });
+  });
+  const w = (width * scale).toFixed(2);
+  const h = (height * scale).toFixed(2);
+  return `<svg class="calib-thumb" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" xmlns="http://www.w3.org/2000/svg">
+    <rect x="0" y="0" width="${w}" height="${h}" fill="#ffffff" stroke="#b9c7d6" stroke-width="1"/>
+    ${parts.join('')}
+  </svg>`;
+}
+
+/** Sticker size of a stored calibration (older records only have the page size). */
+function calibrationSticker(profile) {
+  const cols = Math.max(1, Number(profile?.cols) || 1);
+  const rows = Math.max(1, Number(profile?.rows) || 1);
+  const w = Number(profile?.sticker_w_mm) || (Number(profile?.width_mm) || 0) / cols;
+  const h = Number(profile?.sticker_h_mm) || (Number(profile?.height_mm) || 0) / rows;
+  return { w: round2(w), h: round2(h), cols, rows };
+}
+
+function calibrationName(profile) {
+  const sticker = calibrationSticker(profile);
+  const name = String(profile?.name || '').trim();
+  const code = String(profile?.key || '').replace(/^bc:/, '');
+  if (!name || name === code || /^\d+$/.test(name)) return `${sticker.w} × ${sticker.h} mm`;
+  return name;
+}
+
+/**
+ * Every calibration in the database, with a preview of its zones. Opens on its own when a roll
+ * with no stored calibration is inserted, and from View → Calibration library.
+ */
+async function openCalibrationPicker({ reason = 'browse' } = {}) {
+  const paper = state.printer?.paper || {};
+  const barcode = paper.barcode || String(state.printer?.profile?.key || '').replace(/^bc:/, '') || '';
+  let profiles = [];
+  try {
+    const payload = await api('/api/profiles');
+    profiles = (payload.profiles || []).filter((profile) => Array.isArray(profile.regions) && profile.regions.length);
+  } catch (error) {
+    toast(error.message, 'error');
+    return;
+  }
+  profiles.sort((a, b) => Number(b.updated_at || 0) - Number(a.updated_at || 0));
+
+  const body = document.createElement('div');
+  body.className = 'calib-picker';
+  const unknown = reason === 'unknown';
+  body.innerHTML = `
+    <div class="hint">${unknown
+      ? `The database has no calibration for roll <code>${escapeHtml(barcode || 'unknown')}</code>. `
+        + 'Create one, or pick a calibration you already have — it is copied onto this roll.'
+      : 'Calibrations stored in the database. Pick one to use for the inserted roll, or edit it.'}</div>
+    ${profiles.length ? `<div class="calib-grid">${profiles.map((profile, index) => {
+    const sticker = calibrationSticker(profile);
+    const zones = profile.regions.length;
+    const current = profile.key === state.printer?.profile?.key;
+    return `<div class="calib-card${current ? ' current' : ''}" data-calib="${index}">
+        <div class="calib-preview">${calibrationThumb(profile)}</div>
+        <div class="calib-title">${escapeHtml(calibrationName(profile))}${current ? ' <em>in use</em>' : ''}</div>
+        <div class="calib-meta">sticker ${sticker.w} × ${sticker.h} mm
+          · page ${round2(profile.width_mm)} × ${round2(profile.height_mm)} mm
+          · ${zones} ${zones === 1 ? 'zone' : 'zones'}</div>
+        <div class="calib-actions">
+          <button type="button" class="btn primary" data-use="${index}"${barcode ? '' : ' disabled'}>Use</button>
+          <button type="button" class="btn" data-edit="${index}">Edit</button>
+        </div>
+      </div>`;
+  }).join('')}</div>`
+    : '<div class="hint">No calibrations stored yet.</div>'}`;
+
+  const footer = document.createElement('div');
+  footer.className = 'row';
+  footer.style.cssText = 'justify-content:flex-end;gap:8px';
+  footer.innerHTML = `
+    <button class="btn" data-calib-cancel>Cancel</button>
+    <button class="btn primary" data-calib-new><i data-lucide="ruler"></i> New calibration</button>`;
+
+  const modal = openModal({
+    id: 'calibration-picker',
+    title: unknown ? 'No calibration for this roll' : 'Calibration library',
+    icon: 'library',
+    width: 720,
+    height: 560,
+    body,
+    footer,
+  });
+  fitModalToContent(modal, { min: 320, max: 700 });
+
+  const useProfile = async (profile) => {
+    if (!barcode) {
+      toast('Connect the printer so the calibration can be stored for this roll', 'error');
+      return;
+    }
+    const sticker = calibrationSticker(profile);
+    const cols = Math.max(1, sticker.cols);
+    const rows = Math.max(1, sticker.rows);
+    try {
+      const payload = await api('/api/roll-format', 'POST', {
+        barcode,
+        name: calibrationName(profile),
+        width_mm: Number(profile.width_mm),
+        height_mm: Number(profile.height_mm),
+        rows,
+        cols,
+        gap_mm: Number(profile.gap_mm) || 0,
+        label_type: paper.label_type ?? state.spec?.label_type ?? 1,
+        capacity: paper.capacity ?? null,
+        regions: profile.regions,
+        sticker_w_mm: sticker.w,
+        sticker_h_mm: sticker.h,
+        row_space_mm: Number(profile.row_space_mm) || 0,
+        col_space_mm: Number(profile.col_space_mm) || 0,
+      });
+      closeModal('calibration-picker');
+      applyState(payload);
+      applySize(Number(profile.width_mm), Number(profile.height_mm), {
+        gap_mm: Number(profile.gap_mm) || 0,
+        label_type: paper.label_type ?? state.spec?.label_type,
+      });
+      renderPaperRegions();
+      schedulePreview();
+      toast(`Calibration „${calibrationName(profile)}” applied to roll ${barcode}`, 'ok');
+    } catch (error) {
+      toast(error.message, 'error');
+    }
+  };
+
+  body.addEventListener('click', (event) => {
+    const use = event.target.closest('[data-use]');
+    if (use) {
+      useProfile(profiles[Number(use.dataset.use)]);
+      return;
+    }
+    const edit = event.target.closest('[data-edit]');
+    if (edit) {
+      const profile = profiles[Number(edit.dataset.edit)];
+      closeModal('calibration-picker');
+      openRollSizeDialog({ profile });
+    }
+  });
+
+  footer.querySelector('[data-calib-cancel]').onclick = () => closeModal('calibration-picker');
+  footer.querySelector('[data-calib-new]').onclick = () => {
+    closeModal('calibration-picker');
+    openRollSizeDialog();
+  };
 }
 
 function toggleMirror() {
@@ -4722,6 +4915,7 @@ const MENUS = {
       { icon: 'crop', label: 'Print regions', checked: () => state.showRegions, run: () => toggleRegions() },
       { sep: true },
       { icon: 'rotate-cw', label: 'Orientation…', run: () => openOrientationDialog() },
+      { icon: 'library', label: 'Calibration library…', run: () => openCalibrationPicker().catch(() => {}) },
       { sep: true },
       { icon: 'scan-line', label: 'Detect roll format', run: () => detectSize(), disabled: () => !state.connected },
       { icon: 'refresh-cw', label: 'Refresh printer state', run: () => refreshPrinter(), disabled: () => !state.connected },
@@ -5405,16 +5599,56 @@ function storeLocal(key, value) {
   try { localStorage.setItem(`niibot.${key}`, value); } catch (_) { /* ignore */ }
 }
 
+/* --------------------------------------------------- last used calibration */
+/* The screen keeps showing the calibration of the last roll that was inserted; the printer
+   only reports the roll code while it is connected, so this survives a reload off-line. */
+function rememberLastProfile(profile) {
+  try { localStorage.setItem('niibot.lastProfile', JSON.stringify(profile)); } catch (_) { /* ignore */ }
+}
+
+function loadLastProfile() {
+  try {
+    const saved = JSON.parse(localStorage.getItem('niibot.lastProfile') || 'null');
+    if (saved && saved.key) {
+      state.lastProfile = saved;
+      return saved;
+    }
+  } catch (_) { /* ignore */ }
+  return null;
+}
+
 /* =================================================================== state */
 function applyState(payload) {
   const wasConnected = state.connected;
   state.printer = payload;
   state.connected = Boolean(payload.connected);
+  /* A calibration always follows the database for the roll that is inserted; without a
+     printer there is no roll code, so the last-used one stays on screen and is flagged. */
+  const syncProfile = payload.profile || null;
+  if (syncProfile) {
+    state.lastProfile = syncProfile;
+    rememberLastProfile(syncProfile);
+  } else if (state.lastProfile) {
+    state.printer.profile = state.lastProfile;
+  }
+  /* Off-line the roll code cannot be checked against the database: flag what is on screen. */
+  state.calibrationOffline = !state.connected && !!state.printer.profile;
   renderStatusBar();
   renderStageMeta();
   renderPaperRegions();
   renderJobStatus(payload.job || null);
   if (state.connected) startStatusTimer(); else stopStatusTimer();
+
+  /* The roll changed (or the printer just connected): re-apply the stored calibration. */
+  const profileKey = syncProfile?.key || null;
+  if (profileKey !== state.appliedProfileKey) {
+    state.appliedProfileKey = profileKey;
+    if (syncProfile) {
+      renderPaperRegions();
+      renderStageMeta();
+      schedulePreview();
+    }
+  }
   if (state.spec) layoutStage();
   if (isModalOpen('settings')) renderSettingsTab();
 
@@ -5431,9 +5665,11 @@ function applyState(payload) {
       // An unrecognised roll always starts the calibrator — once per insertion, not per poll.
       if (state.promptedRoll !== paper.barcode) {
         state.promptedRoll = paper.barcode;
-        toast(`Roll ${paper.barcode}: unknown format — calibrate it once.`, 'error');
+        toast(`Roll ${paper.barcode}: no calibration in the database for it.`, 'error');
         setTimeout(() => {
-          if (state.connected && !isModalOpen('roll-size')) openRollSizeDialog();
+          if (state.connected && !isModalOpen('roll-size') && !isModalOpen('calibration-picker')) {
+            openCalibrationPicker({ reason: 'unknown' });
+          }
         }, 400);
       }
     } else if (knownSize) {
@@ -5606,6 +5842,7 @@ async function init() {
   bindControls();
   loadViewPrefs();
   syncViewToggles();
+  loadLastProfile();
   try {
     const [options, payload] = await Promise.all([api('/api/options'), api('/api/state')]);
     state.options = options;

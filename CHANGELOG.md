@@ -4,6 +4,22 @@ All notable changes to **Niibot Studio** are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project uses [Semantic Versioning](https://semver.org/).
 
+## [0.13.2] — 2026-11-14
+
+### Added
+- **Calibration library** (`View → Calibration library…`): every stored calibration as a card with a
+  preview of its item zones, the sticker size, the print page and the zone count — with `Use`
+  (copies it onto the inserted roll), `Edit` (opens the calibrator with it) and `New calibration`.
+- A roll with **no calibration in the database** now asks first: the library opens with the stored
+  calibrations, so an existing layout can be reused instead of drawing it again.
+- **Off-line badge**: while the printer is disconnected the last calibration stays on screen and a
+  warning chip (⚠ *offline calibration*) marks it as not synced with the printer. The calibrate chip
+  stays available off-line and edits the remembered roll.
+
+### Changed
+- Every connection re-reads the calibration from the database for the inserted roll code and
+  re-applies it to the stage.
+
 ## [0.13.1] — 2026-11-14
 
 ### Fixed
