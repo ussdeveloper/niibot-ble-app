@@ -158,18 +158,23 @@ def device_scope() -> str:
     return state.last_scope or f"{state.protocol}:UNKNOWN"
 
 
-def _apply_device_geometry() -> None:
-    """Give the active driver the geometry override saved in the settings."""
+def _apply_geometry_to(driver) -> None:
+    """Give one driver the geometry override saved in the settings."""
     settings = store.load_settings()
     geometry = settings.get("device_geometry") or {}
-    state.printer.set_geometry_override(
+    driver.set_geometry_override(
         geometry.get("dpi"), geometry.get("printhead_px"), geometry.get("print_task")
     )
-    if hasattr(state.printer, "feed_mm"):
+    if hasattr(driver, "feed_mm"):
         try:
-            state.printer.feed_mm = float(settings.get("feed_mm") or 0.0)
+            driver.feed_mm = float(settings.get("feed_mm") or 0.0)
         except (TypeError, ValueError):
-            state.printer.feed_mm = 0.0
+            driver.feed_mm = 0.0
+
+
+def _apply_device_geometry() -> None:
+    """Give the active driver the geometry override saved in the settings."""
+    _apply_geometry_to(state.printer)
 
 
 def make_printer(protocol: str):
@@ -661,34 +666,6 @@ def _clear_connect_failure(address: str) -> None:
     _CONNECT_BACKOFF.pop(address.lower(), None)
 
 
-def _alternative_printer(exclude: str, devices: list[dict]) -> dict | None:
-    """Another printer we know, advertising right now — used when the remembered one is away.
-
-    Without this the app sits on a printer that is switched off even though a printer with its
-    own library is in range and ready.
-    """
-    seen_addresses = {str(device.get("address", "")).lower() for device in devices}
-    seen_names = {normalise_device_name(str(device.get("name", ""))) for device in devices}
-    for row in store.list_printers():
-        address = str(row.get("address") or "")
-        if not address or address.lower() == exclude.lower():
-            continue
-        if _backing_off(address):
-            continue
-        if address.lower() in seen_addresses:
-            return {"address": address, "name": row.get("name") or address, "protocol": row.get("protocol")}
-        if normalise_device_name(str(row.get("name") or "")) in seen_names:
-            # A known printer that came back under a new random address.
-            for device in devices:
-                if normalise_device_name(str(device.get("name", ""))) == normalise_device_name(str(row.get("name") or "")):
-                    return {
-                        "address": str(device.get("address")),
-                        "name": row.get("name") or str(device.get("name")),
-                        "protocol": row.get("protocol"),
-                    }
-    return None
-
-
 def _device_name(device: dict) -> str:
     name = str(device.get("name") or "").strip()
     return "" if name in {"", "(no name)"} else name
@@ -719,31 +696,31 @@ def _match_device(row: dict, devices: list[dict]) -> dict | None:
 
 
 async def _open_connection(address: str, name: str, protocol: str) -> "Connection | None":
-    """Connect one printer and keep its driver in the registry (several may be open at once)."""
+    """Connect one printer and keep its driver in the registry (several may be open at once).
+
+    The driver is prepared and connected off to the side: ``state.printer`` keeps pointing at the
+    printer that prints, so the UI and a print job are never disturbed by a background attempt.
+    """
     key = address.lower()
     existing = state.connections.get(key)
     if existing is not None and existing.printer.connected:
         return existing
     driver = make_printer(protocol)
-    previous = state.printer
-    state.printer = driver
     try:
-        _apply_device_geometry()
-        await driver.connect(address)
+        _apply_geometry_to(driver)
+        async with state.lock:
+            await driver.connect(address)
     except asyncio.CancelledError:
-        state.printer = previous
         raise
     except Exception as exc:  # noqa: BLE001 - the caller decides what happens next
-        state.printer = previous
         _note_connect_failure(address)
         log.warning("Could not connect to %s: %s", name or address, _describe_error(exc))
         return None
-    state.printer = previous
     try:
         await driver.refresh()
     except Exception:  # pragma: no cover - status is best effort
         pass
-    connection = Connection(address, name or driver.link.name or "", protocol, driver)
+    connection = Connection(address, name or getattr(driver.link, "name", "") or "", protocol, driver)
     state.connections[key] = connection
     _clear_connect_failure(address)
     log.warning("Connected to %s (%s) — %s link(s) open", connection.name or address, address, len(state.connections))
@@ -818,34 +795,6 @@ async def _ensure_connections(devices: list[dict] | None = None) -> int:
     elif not state.connected:
         state.auto_status = "no printer in range"
     return len(state.connections)
-
-
-async def _connect_with_retries(address: str, protocol: str, label: str, attempts: int = 3) -> str:
-    """Open the link, retrying a couple of times: the printer stops advertising while the
-    first connection is being set up, and Windows often answers the first attempt with a
-    plain ``TimeoutError``. Returns a status line, raises when every attempt failed."""
-    attempts = max(1, int(attempts))
-    last_error: BaseException | None = None
-    for attempt in range(1, attempts + 1):
-        try:
-            async with state.lock:
-                state.use_protocol(protocol)
-                _apply_device_geometry()
-                await state.printer.connect(address)
-            return "connected"
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:  # noqa: BLE001 - retried below
-            last_error = exc
-            state.auto_status = f"connect attempt {attempt}/{attempts} failed ({_describe_error(exc)})"
-            log.warning("Connect attempt %s/%s to %s failed: %s", attempt, attempts, label, _describe_error(exc))
-            try:
-                await state.printer.disconnect()
-            except Exception:  # noqa: BLE001 - best effort
-                pass
-            if attempt < attempts:
-                await asyncio.sleep(2.0)
-    raise last_error if last_error is not None else RuntimeError("connect failed")
 
 
 async def _auto_connect_once() -> tuple[bool, str]:

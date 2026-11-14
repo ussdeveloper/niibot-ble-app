@@ -4,6 +4,18 @@ All notable changes to **Niibot Studio** are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project uses [Semantic Versioning](https://semver.org/).
 
+## [0.14.8] — 2026-11-14
+
+### Fixed
+- A background connection attempt no longer takes the printer away from the app: the new link is
+  prepared off to the side, so the panel keeps printing on the active printer while another one is
+  being connected (before, the UI briefly reported "not connected" for the whole attempt).
+- The first printer that answers becomes the active one immediately, instead of waiting for every
+  other known printer to be tried first.
+
+### Removed
+- The single-printer retry/alternative helpers left over from the previous design.
+
 ## [0.14.7] — 2026-11-14
 
 ### Added
