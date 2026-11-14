@@ -115,8 +115,9 @@
         <div class="sheet-hint" id="sheet-hint"></div>
       </div>
 
-      <!-- floating toolbar above the work area -->
+      <!-- floating palette above the work area (top-right, draggable like Photoshop) -->
       <div class="floating-toolbar" id="floating-toolbar" hidden>
+        <span class="ft-grip" title="Drag to move the palette"><i data-lucide="grip-vertical"></i></span>
         <span class="ft-label" id="ft-label">element</span>
         <div class="ft-sep"></div>
         <button data-ft="align-h" title="Centre horizontally"><i data-lucide="align-center-horizontal"></i></button>
@@ -130,6 +131,13 @@
       </div>
 
       <div class="warnings" id="warnings"></div>
+
+      <!-- zoom / pan for the work area -->
+      <div class="stage-zoom" id="stage-zoom" title="Zoom (Ctrl+wheel) · pan: middle-drag, space+drag or drag the empty canvas">
+        <button type="button" data-zoom="out" title="Zoom out (Ctrl+-)"><i data-lucide="minus"></i></button>
+        <button type="button" data-zoom="reset" id="zoom-value" title="Fit the label (Ctrl+0)">100%</button>
+        <button type="button" data-zoom="in" title="Zoom in (Ctrl+=)"><i data-lucide="plus"></i></button>
+      </div>
     </div>
 
     <!-- status bar -->

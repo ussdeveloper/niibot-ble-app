@@ -4,6 +4,24 @@ All notable changes to **Niibot Studio** are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project uses [Semantic Versioning](https://semver.org/).
 
+## [0.14.12] — 2026-11-14
+
+### Added
+- **Zoom and pan on the work area.** `Ctrl`+wheel zooms around the cursor (the label point under the
+  pointer stays put), the chip in the bottom-right corner steps through the levels with a *fit*
+  button, `Ctrl+=` / `Ctrl+-` / `Ctrl+0` do the same from the keyboard. Pan with the middle button,
+  `Space`+drag or by dragging the empty canvas. The zoom level is stored in the database.
+- The element palette moved to the **top-right corner** of the work area (it used to float above the
+  label) and its grip drags it anywhere; the position is remembered, double-clicking the grip puts
+  it back in the corner.
+
+### Fixed
+- **Selecting stacked elements follows what they paint.** Hit-testing used the whole bounding box, so
+  a large text box with `auto_fit` (or a QR in a wide box, or an image with *contain*) swallowed
+  clicks aimed at the artwork underneath even where it drew nothing. A text element now answers only
+  over its glyph block, a QR only over its square matrix, an image only over the fitted picture, and
+  an unfilled frame only on its border — with a small tolerance so thin items stay easy to grab.
+
 ## [0.14.11] — 2026-11-14
 
 ### Added

@@ -26,6 +26,19 @@ function uid() {
   return Math.random().toString(16).slice(2, 10);
 }
 
+/* Work-area zoom: 1 = fit to the window. Panning scrolls the canvas area. */
+const ZOOM_MIN = 0.25;
+const ZOOM_MAX = 6;
+const ZOOM_STEPS = [0.25, 0.33, 0.5, 0.67, 0.8, 1, 1.25, 1.5, 2, 2.5, 3, 4, 5, 6];
+
+function nextZoom(current, direction) {
+  const value = Number(current) || 1;
+  if (direction > 0) {
+    return ZOOM_STEPS.find((step) => step > value + 0.001) ?? ZOOM_MAX;
+  }
+  return [...ZOOM_STEPS].reverse().find((step) => step < value - 0.001) ?? ZOOM_MIN;
+}
+
 /* Element types whose size is quantised by the printer resolution (see clampCodeSize). */
 const CODE_TYPES = new Set(['qr', 'barcode']);
 
@@ -514,6 +527,13 @@ const state = {
   /* Print history from /api/queue, newest first, plus the running job. */
   queue: { jobs: [], current: null },
   queueTimer: null,
+  /* Work-area view: zoom (1 = fit) and the dragged position of the element palette. */
+  zoom: 1,
+  fitWidth: 0,
+  fitHeight: 0,
+  pan: { x: 0, y: 0 },
+  spaceDown: false,
+  palettePos: null,
   catalog: [],
   lastDevices: null,
   printerProtocol: 'auto',
@@ -845,19 +865,28 @@ function layoutStage() {
   const labelShare = state.spec.height_mm / Math.max(1e-6, state.spec.height_mm + Math.max(0, gapMm));
   const ratio = state.spec.width_mm / Math.max(0.1, state.spec.height_mm);
 
-  let height = availableHeight * labelShare;
-  let width = height * ratio;
-  if (width > availableWidth) {
-    width = availableWidth;
-    height = width / ratio;
+  let fitHeight = availableHeight * labelShare;
+  let fitWidth = fitHeight * ratio;
+  if (fitWidth > availableWidth) {
+    fitWidth = availableWidth;
+    fitHeight = fitWidth / ratio;
   }
-  width = Math.max(60, Math.floor(width));
-  height = Math.max(30, Math.floor(height));
+  fitWidth = Math.max(60, Math.floor(fitWidth));
+  fitHeight = Math.max(30, Math.floor(fitHeight));
+  state.fitWidth = fitWidth;
+  state.fitHeight = fitHeight;
+
+  // Zoom multiplies the fitted size; the canvas area scrolls, so a zoomed label can be panned.
+  const zoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, Number(state.zoom) || 1));
+  const width = Math.max(24, Math.round(fitWidth * zoom));
+  const height = Math.max(12, Math.round(fitHeight * zoom));
 
   const stage = $('#stage');
   stage.style.width = `${width}px`;
   stage.style.height = `${height}px`;
   state.pxPerMm = width / state.spec.width_mm;
+  const zoomLabel = $('#zoom-value');
+  if (zoomLabel) zoomLabel.textContent = `${Math.round(zoom * 100)}%`;
 
   const gapEl = $('#gap-preview');
   const gapPx = Math.round(gapMm * state.pxPerMm);
@@ -873,6 +902,7 @@ function layoutStage() {
   renderPaperRegions();
   renderStageMeta();
   applyGridSize();
+  applyStagePan();
   renderOverlay();
 }
 
@@ -3784,15 +3814,209 @@ function updateFloatingToolbar() {
 
 function layoutFloatingToolbar() {
   const bar = $('#floating-toolbar');
+  const editor = $('.editor');
+  if (!bar || !editor) return;
+  // Photoshop-like palette: default spot is the top-right corner of the work area, and the grip
+  // lets the user park it anywhere so it never sits on the label.
+  const pos = state.palettePos;
+  if (!pos) {
+    bar.style.left = '';
+    bar.style.top = '';
+    bar.style.right = '';
+    return;
+  }
+  const bounds = editor.getBoundingClientRect();
+  const width = bar.offsetWidth || 260;
+  const height = bar.offsetHeight || 36;
+  const left = Math.max(4, Math.min(bounds.width - width - 4, pos.x));
+  const top = Math.max(4, Math.min(bounds.height - height - 4, pos.y));
+  bar.style.left = `${Math.round(left)}px`;
+  bar.style.top = `${Math.round(top)}px`;
+  bar.style.right = 'auto';
+}
+
+/* Drag the palette by its grip; the position is remembered in the database. */
+function bindPaletteDrag() {
+  const bar = $('#floating-toolbar');
+  const grip = bar?.querySelector('.ft-grip');
+  const editor = $('.editor');
+  if (!bar || !grip || !editor) return;
+  grip.addEventListener('pointerdown', (event) => {
+    event.preventDefault();
+    const barRect = bar.getBoundingClientRect();
+    const editorRect = editor.getBoundingClientRect();
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const originX = barRect.left - editorRect.left;
+    const originY = barRect.top - editorRect.top;
+    bar.classList.add('dragging');
+    try { grip.setPointerCapture(event.pointerId); } catch (_) { /* ignore */ }
+    const move = (moveEvent) => {
+      state.palettePos = {
+        x: Math.round(originX + (moveEvent.clientX - startX)),
+        y: Math.round(originY + (moveEvent.clientY - startY)),
+      };
+      layoutFloatingToolbar();
+    };
+    const up = () => {
+      bar.classList.remove('dragging');
+      grip.removeEventListener('pointermove', move);
+      grip.removeEventListener('pointerup', up);
+      writePref('palettePos', state.palettePos);
+    };
+    grip.addEventListener('pointermove', move);
+    grip.addEventListener('pointerup', up);
+  });
+  bar.addEventListener('dblclick', (event) => {
+    if (event.target.closest('button')) return;
+    state.palettePos = null;
+    layoutFloatingToolbar();
+    writePref('palettePos', null);
+  });
+}
+
+/* ============================================================== zoom and pan */
+/** Zoom while keeping the label point under the cursor in place. */
+function setZoom(next, clientX = null, clientY = null) {
   const wrap = $('#canvas-wrap');
-  if (!bar || !wrap) return;
-  // Fixed spot above the canvas — the bar must not follow the dragged element.
+  const stage = $('#stage');
+  if (!wrap || !stage || !state.spec) return;
+  const before = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, Number(state.zoom) || 1));
+  const value = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, Number(next) || 1));
+  if (Math.abs(value - before) < 0.001) return;
   const wrapRect = wrap.getBoundingClientRect();
-  const host = bar.offsetParent && bar.offsetParent.getBoundingClientRect
-    ? bar.offsetParent.getBoundingClientRect()
-    : { left: 0, top: 0 };
-  bar.style.left = `${Math.round(wrapRect.left - host.left + wrapRect.width / 2)}px`;
-  bar.style.top = `${Math.max(4, Math.round(wrapRect.top - host.top + 10))}px`;
+  const anchorX = clientX ?? wrapRect.left + wrapRect.width / 2;
+  const anchorY = clientY ?? wrapRect.top + wrapRect.height / 2;
+  const stageRect = stage.getBoundingClientRect();
+  const pxPerMmBefore = state.pxPerMm || 1;
+  const point = {
+    x: (anchorX - stageRect.left) / pxPerMmBefore,
+    y: (anchorY - stageRect.top) / pxPerMmBefore,
+  };
+  state.zoom = value;
+  writePref('zoom', value);
+  layoutStage();
+  // Keep the same label point under the cursor by shifting the (transformed) stage.
+  const afterRect = stage.getBoundingClientRect();
+  const wantedLeft = anchorX - point.x * (state.pxPerMm || 1);
+  const wantedTop = anchorY - point.y * (state.pxPerMm || 1);
+  state.pan = {
+    x: (state.pan?.x || 0) + (wantedLeft - afterRect.left),
+    y: (state.pan?.y || 0) + (wantedTop - afterRect.top),
+  };
+  applyStagePan();
+}
+
+function applyStagePan() {
+  const stage = $('#stage');
+  if (!stage) return;
+  const pan = state.pan || { x: 0, y: 0 };
+  stage.style.transform = pan.x || pan.y ? `translate(${Math.round(pan.x)}px, ${Math.round(pan.y)}px)` : '';
+}
+
+function fitZoom() {
+  // Fit means: back to 100 % of the fitted size, centred — no pan offset, no anchor maths.
+  state.zoom = 1;
+  state.pan = { x: 0, y: 0 };
+  writePref('zoom', 1);
+  layoutStage();
+  applyStagePan();
+}
+
+/* Panning: middle button anywhere, space+drag, or dragging the empty canvas. */
+function bindZoomAndPan() {
+  const wrap = $('#canvas-wrap');
+  if (!wrap) return;
+  wrap.addEventListener('wheel', (event) => {
+    if (!(event.ctrlKey || event.metaKey)) return; // plain wheel keeps scrolling
+    event.preventDefault();
+    setZoom(nextZoom(state.zoom, event.deltaY < 0 ? 1 : -1), event.clientX, event.clientY);
+  }, { passive: false });
+
+  const zoomBar = $('#stage-zoom');
+  if (zoomBar) {
+    zoomBar.addEventListener('click', (event) => {
+      const button = event.target.closest('button[data-zoom]');
+      if (!button) return;
+      if (button.dataset.zoom === 'in') setZoom(nextZoom(state.zoom, 1));
+      else if (button.dataset.zoom === 'out') setZoom(nextZoom(state.zoom, -1));
+      else fitZoom();
+    });
+  }
+
+  let pan = null;
+  const startPan = (event) => {
+    if (pan) return;
+    pan = { x: event.clientX, y: event.clientY, origin: { ...(state.pan || { x: 0, y: 0 }) }, id: event.pointerId };
+    wrap.classList.add('panning');
+    try { wrap.setPointerCapture(event.pointerId); } catch (_) { /* ignore */ }
+  };
+  const movePan = (event) => {
+    if (!pan) return;
+    state.pan = {
+      x: pan.origin.x + (event.clientX - pan.x),
+      y: pan.origin.y + (event.clientY - pan.y),
+    };
+    applyStagePan();
+  };
+  const endPan = () => {
+    pan = null;
+    wrap.classList.remove('panning');
+    wrap.classList.remove('hand');
+  };
+  wrap.addEventListener('pointerdown', (event) => {
+    if (event.button === 1) { event.preventDefault(); startPan(event); }
+    else if (event.button === 0 && state.spaceDown) { event.preventDefault(); startPan(event); }
+  });
+  wrap.addEventListener('pointermove', movePan);
+  wrap.addEventListener('pointerup', endPan);
+  wrap.addEventListener('pointercancel', endPan);
+
+  // Dragging the empty canvas pans the view (Photoshop habit); a click without movement still
+  // deselects, because `onPointerDown` has already cleared the selection.
+  let emptyDrag = null;
+  wrap.addEventListener('pointerdown', (event) => {
+    if (event.button !== 0 || state.spaceDown) return;
+    const empty = ['stage', 'preview', 'grid-layer', 'guides', 'overlay', 'canvas-wrap'].includes(event.target?.id);
+    if (!empty) return;
+    emptyDrag = { x: event.clientX, y: event.clientY, origin: { ...(state.pan || { x: 0, y: 0 }) }, moved: false };
+  });
+  wrap.addEventListener('pointermove', (event) => {
+    if (!emptyDrag) return;
+    const dx = event.clientX - emptyDrag.x;
+    const dy = event.clientY - emptyDrag.y;
+    if (!emptyDrag.moved && Math.abs(dx) < 4 && Math.abs(dy) < 4) return;
+    emptyDrag.moved = true;
+    wrap.classList.add('panning');
+    state.pan = { x: emptyDrag.origin.x + dx, y: emptyDrag.origin.y + dy };
+    applyStagePan();
+  });
+  const endEmptyDrag = () => {
+    emptyDrag = null;
+    wrap.classList.remove('panning');
+  };
+  wrap.addEventListener('pointerup', endEmptyDrag);
+  wrap.addEventListener('pointercancel', endEmptyDrag);
+
+  document.addEventListener('keydown', (event) => {
+    const tag = (event.target.tagName || '').toLowerCase();
+    if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+    if (event.code === 'Space') {
+      state.spaceDown = true;
+      wrap.classList.add('hand');
+      return;
+    }
+    const mod = event.ctrlKey || event.metaKey;
+    if (!mod) return;
+    if (event.key === '=' || event.key === '+') { event.preventDefault(); setZoom(nextZoom(state.zoom, 1)); }
+    else if (event.key === '-' || event.key === '_') { event.preventDefault(); setZoom(nextZoom(state.zoom, -1)); }
+    else if (event.key === '0') { event.preventDefault(); fitZoom(); }
+  });
+  document.addEventListener('keyup', (event) => {
+    if (event.code !== 'Space') return;
+    state.spaceDown = false;
+    wrap.classList.remove('hand');
+  });
 }
 
 /* ============================================================== element ops */
@@ -4064,6 +4288,63 @@ function labelPoint(clientX, clientY) {
   };
 }
 
+let measureCtx = null;
+function textMeasureContext() {
+  if (!measureCtx) measureCtx = document.createElement('canvas').getContext('2d');
+  return measureCtx;
+}
+
+/** Where the element actually paints inside its box (mm).
+
+ * A text box with `auto_fit` or a QR in a wide box covers far more area than its ink: hit-testing
+ * the whole box made the invisible part swallow clicks aimed at the item underneath, which is what
+ * made overlapping elements impossible to pick. This returns the painted part (approximated, but
+ * from the same numbers the renderer uses).
+ */
+function elementContentRect(element) {
+  const box = { x: element.x, y: element.y, w: element.w, h: element.h };
+  if (element.type === 'text') {
+    const fontMm = Math.max(1, (Number(element.font_size_pt) || 9) * 0.3528);
+    const lines = String(element.text ?? '').split('\n');
+    const spacing = Number(element.line_spacing) || 1.15;
+    const blockH = Math.min(box.h, Math.max(fontMm, lines.length * fontMm * spacing));
+    const ctx = textMeasureContext();
+    let textW = 0;
+    if (ctx) {
+      const weight = element.bold ? '700' : '400';
+      const style = element.italic ? 'italic' : 'normal';
+      ctx.font = `${style} ${weight} 100px "${element.font || 'Arial'}"`;
+      for (const line of lines) {
+        textW = Math.max(textW, ctx.measureText(line || ' ').width || 0);
+      }
+    }
+    const blockW = Math.min(box.w, Math.max(fontMm * 0.6, (textW / 100) * fontMm));
+    const x = element.align === 'center' ? box.x + (box.w - blockW) / 2
+      : element.align === 'right' ? box.x + box.w - blockW : box.x;
+    const y = element.valign === 'middle' ? box.y + (box.h - blockH) / 2
+      : element.valign === 'bottom' ? box.y + box.h - blockH : box.y;
+    return { x, y, w: blockW, h: blockH };
+  }
+  if (element.type === 'qr') {
+    // The matrix is square and centred in the box.
+    const side = Math.min(box.w, box.h);
+    return { x: box.x + (box.w - side) / 2, y: box.y + (box.h - side) / 2, w: side, h: side };
+  }
+  if (element.type === 'image') {
+    const fit = element.image_fit === 'cover' ? 'cover' : element.image_fit === 'stretch' ? 'stretch' : 'contain';
+    const entry = elementImage(element);
+    const img = entry?.img;
+    if (fit === 'contain' && img?.naturalWidth && img?.naturalHeight) {
+      const scale = Math.min(box.w / img.naturalWidth, box.h / img.naturalHeight);
+      const w = img.naturalWidth * scale;
+      const h = img.naturalHeight * scale;
+      return { x: box.x + (box.w - w) / 2, y: box.y + (box.h - h) / 2, w, h };
+    }
+    return box;
+  }
+  return box;
+}
+
 function elementUnderPoint(element, x, y) {
   if (x < element.x || x > element.x + element.w || y < element.y || y > element.y + element.h) {
     return false;
@@ -4075,8 +4356,12 @@ function elementUnderPoint(element, x, y) {
       && y > element.y + band && y < element.y + element.h - band) {
       return false;
     }
+    return true;
   }
-  return true;
+  const content = elementContentRect(element);
+  const tolerance = 0.7; // small items stay grabbable, hair-thin text included
+  return x >= content.x - tolerance && x <= content.x + content.w + tolerance
+    && y >= content.y - tolerance && y <= content.y + content.h + tolerance;
 }
 
 /* Every element under the cursor, front-most first. */
@@ -6231,6 +6516,12 @@ function loadViewPrefs() {
   const queueHeight = Number(readPref('queueHeight', 0));
   state.queueHeight = Number.isFinite(queueHeight) && queueHeight > 0 ? Math.round(queueHeight) : 0;
   applyQueueHeight();
+  const zoom = Number(readPref('zoom', 1));
+  state.zoom = Number.isFinite(zoom) && zoom >= ZOOM_MIN && zoom <= ZOOM_MAX ? zoom : 1;
+  const palettePos = readPref('palettePos', null);
+  state.palettePos = palettePos && Number.isFinite(palettePos.x) && Number.isFinite(palettePos.y)
+    ? { x: Math.round(palettePos.x), y: Math.round(palettePos.y) }
+    : null;
   const saved = readPref('view');
   if (!saved) return;
   if (typeof saved.showGrid === 'boolean') state.showGrid = saved.showGrid;
@@ -7282,6 +7573,8 @@ async function init() {
   bindControls();
   bindQueueActions();
   bindQueueSplitter();
+  bindPaletteDrag();
+  bindZoomAndPan();
   startQueueWatch();
   loadViewPrefs();
   syncViewToggles();

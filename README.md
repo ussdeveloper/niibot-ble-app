@@ -121,16 +121,18 @@ device, and they need a different transport than the one used here.
 
 | Area | What it does |
 | --- | --- |
-| menu bar | **File / Edit / View / Settings / Help** — save (also *Save as…*, *Save as template…*), undo, view toggles, settings |
+| menu bar | **File / Edit / View / Settings / Help** — save (also *Save as…*, *Save as template…*), undo, view toggles, settings, language |
+| menu bar, right | **Ready / Not Ready** chip: whether the local backend answers (`/api/health`, 3 s poll, tooltip with version, uptime and latency) |
 | left toolbar | add elements, icon library, undo/redo, save, PNG export, print, **grid** and **snap** toggles |
-| floating toolbar | actions on the selected element (centre, rotate, reorder, duplicate, delete) |
-| right panel | **Properties** of the selection and the **Layers** list |
-| bottom-left tabs | switch the work area between **Design** and **Sheet** |
-| status bar | connection, paper status, format size, density, database |
+| element palette | actions on the selected element (centre, rotate, reorder, duplicate, delete); it starts in the **top-right corner** of the work area and the grip drags it anywhere |
+| right panel | **Properties** of the selection (with the **Design / Sheet** switch in its header), the **Items** list and the **Printer queue** with its own resizer |
+| status bar | Bluetooth connection (right-click = printer switcher), paper status, format size, temperature, database |
+| zoom chip | bottom-right of the work area: −, percentage, + and *fit* |
 
 Keyboard: `Ctrl+Z/Y` undo/redo, `Ctrl+S` save, `Ctrl+P` print, `Ctrl+D` duplicate,
 `Delete` remove, arrows nudge by 1 mm (`Shift` = 0.2 mm), `G` grid, `S` snapping,
-`Alt` while dragging = free movement, `Shift` while dragging = one axis.
+`Ctrl+=`/`Ctrl+-`/`Ctrl+0` zoom in/out/fit, `Alt` while dragging = free movement,
+`Shift` while dragging = one axis.
 
 ### Canvas, grid and guides
 
@@ -139,11 +141,29 @@ rest of the preview dims. While dragging, edges and centres of other elements as
 label edges/centre produce subtle alignment guides (centre lines use a different colour).
 With snapping on, positions snap to the 1 mm grid and to those guides.
 
+**Zoom and pan** work like an image editor: `Ctrl`+wheel zooms around the cursor (the point under
+the pointer stays put), the chip in the corner steps through the zoom levels, `Ctrl+0` fits the
+label. Pan with the middle button, `Space`+drag or by dragging the empty canvas; *fit* also resets
+the pan. The zoom level is remembered in the database.
+
 **Hovering shows what a click would grab**: the element under the pointer gets a dashed frame and
-a name chip, so it is clear what will move before pressing. An **unfilled frame** is caught on its
-border only — everything it surrounds stays clickable. When several elements overlap, the chip
+a name chip, so it is clear what will move before pressing. Picking follows what the element
+**paints**, not its invisible box: a text box only answers over its glyph block, a QR code only over
+its square matrix, an image with *contain* only over the picture, and an unfilled frame only on its
+border. Everything those boxes surround stays clickable. When several elements overlap, the chip
 counts the stack (`1/3`) and **Ctrl+click** (Cmd on macOS) steps one element deeper, with the hover
 frame following, so artwork hidden under a big block can still be picked.
+
+### Items and the printer queue
+
+The right panel lists every element as an **item**: eye to hide/show it, thumbnail, click to select,
+drag to reorder, and the trash button deletes. The **Printer queue** sits under it with its own
+resizer — every job with state, size, time and printer, **Repeat** to print the stored label again,
+**Remove** to drop it from the history, **Cancel** for the running job.
+
+Right-click an element for **Duplicate / Move up / Move down / Hide / Delete**; right-click the
+connection chip in the status bar to switch printers. `Delete` is the only key that removes an
+element — `Backspace` stays a text-editing key.
 
 ### Sheet view
 

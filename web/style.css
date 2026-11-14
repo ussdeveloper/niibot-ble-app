@@ -472,20 +472,29 @@ svg.lucide { width: 16px; height: 16px; stroke-width: 1.7; }
 /* ------------------------------------------------------- floating toolbar */
 .floating-toolbar {
   position: absolute;
+  right: 14px;
+  top: 36px;
   z-index: 20;
   display: flex;
   align-items: center;
   gap: 2px;
   padding: 4px;
-  border-radius: 999px;
+  border-radius: 12px;
   background: rgba(255, 255, 255, 0.95);
   -webkit-backdrop-filter: blur(18px);
   backdrop-filter: blur(18px);
   border: 1px solid var(--line-strong);
   box-shadow: var(--shadow);
-  transform: translate(-50%, 0);
 }
 .floating-toolbar[hidden] { display: none; }
+/* Photoshop-style palette: it sits in a corner of the work area and can be dragged away. */
+.floating-toolbar .ft-grip {
+  display: flex; align-items: center; justify-content: center;
+  width: 16px; height: 24px; color: rgba(0, 26, 77, 0.28);
+  cursor: grab; touch-action: none;
+}
+.floating-toolbar .ft-grip svg { width: 14px; height: 14px; }
+.floating-toolbar.dragging .ft-grip { cursor: grabbing; }
 .floating-toolbar .ft-label {
   font-size: 10.5px;
   letter-spacing: 0.1em;
@@ -507,6 +516,34 @@ svg.lucide { width: 16px; height: 16px; stroke-width: 1.7; }
 .floating-toolbar button:hover { background: rgba(0, 194, 194, 0.16); color: var(--teal-deep); }
 .floating-toolbar button.danger:hover { background: rgba(207, 75, 75, 0.14); color: var(--err); }
 .floating-toolbar .ft-sep { width: 1px; height: 18px; margin: 0 3px; background: var(--line); }
+
+/* ------------------------------------------------------- zoom / pan (work area) */
+.stage-zoom {
+  position: absolute;
+  right: 22px;
+  bottom: 16px;
+  z-index: 16;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.92);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  border: 1px solid var(--line-strong);
+  box-shadow: 0 4px 14px rgba(0, 26, 77, 0.12);
+}
+.stage-zoom button {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 24px; height: 24px; padding: 0 7px;
+  border: none; border-radius: 999px; background: transparent;
+  color: var(--ink); cursor: pointer; font-size: 11px; font-weight: 600;
+}
+.stage-zoom button:hover { background: rgba(0, 194, 194, 0.16); color: var(--teal-deep); }
+.stage-zoom button svg { width: 13px; height: 13px; }
+.canvas-wrap.hand { cursor: grab; }
+.canvas-wrap.panning { cursor: grabbing; }
 
 /* --------------------------------------------------------------- status bar */
 .statusbar {
