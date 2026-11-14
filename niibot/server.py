@@ -216,12 +216,15 @@ class AppState:
         self.protocol = "niimbot"
         self.printer = NiimbotPrinter(BleLink())
         self.lock = asyncio.Lock()
+        #: Separate from ``lock``: a slow BLE connect must never stop the keep-alive pings.
+        self.connect_lock = asyncio.Lock()
         self.job: Job | None = None
         self.job_task: asyncio.Task | None = None
         self.auto_connect_task: asyncio.Task | None = None
         self.auto_status: str = "idle"
         self.last_scan: list[dict] = []
         self.keepalive_task: asyncio.Task | None = None
+        self.ping_task: asyncio.Task | None = None
         #: When the last keep-alive ping succeeded (``time.monotonic``).
         self.last_ping: float | None = None
         self.reconnects: int = 0
@@ -279,12 +282,15 @@ async def lifespan(_app: FastAPI):
             log.info("Imported %d formats from the NIIMBOT app", len(entries))
     except Exception as exc:  # pragma: no cover - optional convenience
         log.debug("Vendor catalogue import failed: %s", exc)
-    # One background loop owns the links: it connects every known printer that is in range and
-    # pings each of them, so several printers stay connected at the same time.
+    # One loop pings the links, another one looks for printers: a slow scan or connect attempt
+    # must never starve the keep-alive, or the linked printer drops off on its own.
+    ping_task = asyncio.create_task(_ping_loop())
     keepalive_task = asyncio.create_task(_keep_alive_loop())
     state.keepalive_task = keepalive_task
+    state.ping_task = ping_task
     yield
     keepalive_task.cancel()
+    ping_task.cancel()
     await _shutdown()
 
 
@@ -650,20 +656,40 @@ def _describe_error(exc: BaseException) -> str:
 #: while, so a sleeping printer still looks reachable. Skip them for a minute instead of paying a
 #: connect timeout on every cycle.
 _CONNECT_BACKOFF: dict[str, float] = {}
-CONNECT_BACKOFF_S = 90.0
+CONNECT_BACKOFF_S = 60.0
+#: Why the last attempt for an address failed, in words the panel can show.
+_PRINTER_ERRORS: dict[str, str] = {}
 
 
 def _backing_off(address: str) -> bool:
     stamp = _CONNECT_BACKOFF.get(address.lower())
-    return stamp is not None and (time.monotonic() - stamp) < CONNECT_BACKOFF_S
+    # The Fichero re-advertises only for short windows, so retry it sooner than the rest.
+    limit = 20.0 if store.printer_protocol(address) == "luckprinter" else CONNECT_BACKOFF_S
+    return stamp is not None and (time.monotonic() - stamp) < limit
 
 
-def _note_connect_failure(address: str) -> None:
+def _connect_reason(exc: BaseException) -> str:
+    """Turn a bleak failure into something a user can act on."""
+    text = f"{type(exc).__name__}: {exc}"
+    lower = text.lower()
+    if "not found" in lower or "devicenotfound" in lower:
+        return "not advertising — switched off, asleep, or connected to another device"
+    if isinstance(exc, TimeoutError) or "timeout" in lower:
+        return "no answer — switched off, out of range, or holding another connection"
+    if "disconnect" in lower:
+        return "dropped the link right after connecting"
+    return _describe_error(exc)
+
+
+def _note_connect_failure(address: str, exc: BaseException | None = None) -> None:
     _CONNECT_BACKOFF[address.lower()] = time.monotonic()
+    if exc is not None:
+        _PRINTER_ERRORS[address.lower()] = _connect_reason(exc)
 
 
 def _clear_connect_failure(address: str) -> None:
     _CONNECT_BACKOFF.pop(address.lower(), None)
+    _PRINTER_ERRORS.pop(address.lower(), None)
 
 
 def _device_name(device: dict) -> str:
@@ -708,13 +734,15 @@ async def _open_connection(address: str, name: str, protocol: str) -> "Connectio
     driver = make_printer(protocol)
     try:
         _apply_geometry_to(driver)
-        async with state.lock:
+        # connect_lock, not lock: a slow attempt must not silence the keep-alive of the printer
+        # that is already working (that is what dropped the B1 when the Fichero was tried).
+        async with state.connect_lock:
             await driver.connect(address)
     except asyncio.CancelledError:
         raise
     except Exception as exc:  # noqa: BLE001 - the caller decides what happens next
-        _note_connect_failure(address)
-        log.warning("Could not connect to %s: %s", name or address, _describe_error(exc))
+        _note_connect_failure(address, exc)
+        log.warning("Could not connect to %s: %s", name or address, _connect_reason(exc))
         return None
     try:
         await driver.refresh()
@@ -814,57 +842,70 @@ async def _auto_connect_once() -> tuple[bool, str]:
     )
 
 
-KEEP_ALIVE_S = 5.0
-MANAGER_SCAN_S = 12.0
+KEEP_ALIVE_S = 4.0
+MANAGER_SCAN_S = 15.0
 
 
-async def _keep_alive_loop() -> None:
-    """Hold every open link alive and connect known printers that show up.
+async def _ping_loop() -> None:
+    """Ping every open link so Windows and the printer keep them alive.
 
-    Several printers can be connected at once: the loop pings each of them so Windows and the
-    printer do not drop an idle link, removes the ones that died, and — as long as the user wants
-    printers kept online — connects any other known printer that is advertising. It never scans
-    while a job is printing, because the radio must stay free for the label.
+    This runs on its own task: discovery and connection attempts must never delay a ping, or the
+    printer's supervision timeout drops the link that was working perfectly well.
     """
-    await asyncio.sleep(2.5)
-    last_scan = 0.0
+    await asyncio.sleep(2.0)
     while True:
         try:
             job_running = bool(state.job and state.job.state == "running")
-            if not job_running:
-                for key, connection in list(state.connections.items()):
-                    keep_alive = getattr(connection.printer, "keep_alive", None)
-                    alive = True
-                    if keep_alive is not None:
-                        try:
+            for key, connection in list(state.connections.items()):
+                is_active = connection.printer is state.printer
+                if is_active and job_running:
+                    # A running job is its own keep-alive.
+                    continue
+                keep_alive = getattr(connection.printer, "keep_alive", None)
+                alive = True
+                if keep_alive is not None:
+                    try:
+                        if is_active:
                             async with state.lock:
                                 alive = bool(await keep_alive())
-                        except Exception:  # noqa: BLE001 - treat as a dead link
-                            alive = False
-                    elif not connection.printer.connected:
+                        else:
+                            alive = bool(await keep_alive())
+                    except Exception:  # noqa: BLE001 - a failed ping means a dead link
                         alive = False
-                    if alive:
-                        connection.last_ping = time.monotonic()
-                        if connection.printer is state.printer:
-                            state.last_ping = connection.last_ping
-                        continue
-                    log.warning("Keep-alive lost %s", connection.name or key)
-                    try:
-                        await connection.printer.disconnect()
-                    except Exception:  # noqa: BLE001 - best effort
-                        pass
-                    state.connections.pop(key, None)
-                    _note_connect_failure(key)
-
-            if state.maintain_links and not job_running:
-                if (time.monotonic() - last_scan) >= MANAGER_SCAN_S:
-                    last_scan = time.monotonic()
-                    await _ensure_connections()
+                elif not connection.printer.connected:
+                    alive = False
+                if alive:
+                    connection.last_ping = time.monotonic()
+                    if is_active:
+                        state.last_ping = connection.last_ping
+                    continue
+                log.warning("Keep-alive lost %s", connection.name or key)
+                try:
+                    await connection.printer.disconnect()
+                except Exception:  # noqa: BLE001 - best effort
+                    pass
+                state.connections.pop(key, None)
+                _note_connect_failure(key)
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 - keep the loop alive
             log.warning("Keep-alive error: %s", exc)
         await asyncio.sleep(KEEP_ALIVE_S)
+
+
+async def _keep_alive_loop() -> None:
+    """Discovery: connect every known printer that is advertising (pings live in `_ping_loop`)."""
+    await asyncio.sleep(4.0)
+    while True:
+        try:
+            job_running = bool(state.job and state.job.state == "running")
+            if state.maintain_links and not job_running:
+                await _ensure_connections()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - keep the loop alive
+            log.warning("Discovery error: %s", exc)
+        await asyncio.sleep(MANAGER_SCAN_S)
 
 
 @app.post("/api/keepalive/drop")
@@ -921,6 +962,7 @@ async def api_connections() -> dict:
             connection.to_dict(active=connection.printer is state.printer)
             for connection in state.connections.values()
         ],
+        "errors": dict(_PRINTER_ERRORS),
         "maintain": state.maintain_links,
     }
 
@@ -1088,6 +1130,7 @@ async def api_printers(all: bool = False) -> dict:
             "connected": bool(connection and connection.printer.connected),
             "active": bool(current and row["address"] == current),
             "active_scope": row.get("scope") == device_scope(),
+            "last_error": _PRINTER_ERRORS.get(str(row["address"]).lower()),
         })
     for device in state.last_scan:
         address = device.get("address")
@@ -1129,7 +1172,9 @@ async def api_printer_forget(address: str) -> dict:
 
 @app.post("/api/connect")
 async def api_connect(request: ConnectRequest) -> dict:
-    async with state.lock:
+    # connect_lock: while this attempt runs, the printers that are already connected must keep
+    # receiving their keep-alive pings.
+    async with state.connect_lock:
         settings = store.load_settings()
         # "auto" (or nothing) means: trust the advertised name, and if the first attempt
         # fails try the other protocol before giving up.

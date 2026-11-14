@@ -4322,6 +4322,7 @@ async function openPrinterSwitcher(event) {
       hint: [
         PROTOCOL_LABELS[printer.protocol] || printer.protocol,
         active ? 'printing now' : connected ? 'connected — click to switch' : printer.available ? 'in range — click to connect' : 'known, not in range',
+        !connected && printer.last_error ? printer.last_error : '',
       ].filter(Boolean).join(' · '),
       disabled: active,
       run: () => (connected

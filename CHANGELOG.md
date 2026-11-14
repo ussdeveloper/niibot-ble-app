@@ -4,6 +4,22 @@ All notable changes to **Niibot Studio** are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project uses [Semantic Versioning](https://semver.org/).
 
+## [0.14.9] — 2026-11-14
+
+### Fixed
+- **A printer that was already connected no longer drops while another one is being connected.**
+  Connecting held the print lock for up to 25 s, which stopped the keep-alive pings and let the
+  linked printer hit its supervision timeout (observed: the B1 dropped every time the Fichero was
+  tried). Connection attempts now use their own lock and the pings run in a separate loop, so a
+  slow scan or connect cannot starve them — measured `ping_age_s` 3–4 s during a Fichero attempt.
+- **Connection errors are readable.** Instead of `Could not connect: ` (a bare `TimeoutError` has no
+  message) the panel now says what happened: *not advertising — switched off, asleep, or connected
+  to another device*, *no answer — switched off, out of range, or holding another connection*, or
+  *dropped the link right after connecting*. The reason shows in the right-click printer menu next
+  to the printer that failed.
+- The Fichero family is retried sooner (20 s) than other printers (60 s) after a failed attempt,
+  because these units re-advertise only for short windows.
+
 ## [0.14.8] — 2026-11-14
 
 ### Fixed
