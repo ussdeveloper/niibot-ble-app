@@ -4,6 +4,26 @@ All notable changes to **Niibot Studio** are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project uses [Semantic Versioning](https://semver.org/).
 
+## [0.14.7] — 2026-11-14
+
+### Added
+- **Several printers connected at the same time.** A background manager keeps a link to every
+  printer the app knows while that printer is advertising, pings each of them (so none idles out)
+  and drops the ones that were switched off. Everything the app printed before is still per
+  printer — switching just changes which library and which link is active.
+- **Instant printer switching.** `POST /api/activate` swaps the active link with no Bluetooth work
+  (measured: 225 ms including a status refresh, 3 ms for the refusal when the printer is away), and
+  the right-click menu on the connection chip no longer scans — it opens at once and marks every
+  printer as *printing now*, *connected*, *in range* or *known, not in range*. Switching shows a
+  toast while it happens and one when it is done.
+- **Connect all printers in range** in the same menu, and the status bar lists every open link in
+  its tooltip with the active one marked.
+- `GET /api/connections` and a `connections` array in `GET /api/state`.
+
+### Changed
+- **Design is the default view.** A restored draft never reopens in the sheet; the switch in the
+  Properties header is one click away.
+
 ## [0.14.6] — 2026-11-14
 
 ### Added

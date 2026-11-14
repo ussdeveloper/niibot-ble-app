@@ -24,57 +24,46 @@ class NameMatcherTest(unittest.TestCase):
 class ScanTriggerTest(unittest.TestCase):
     def setUp(self) -> None:
         self.calls: list[str] = []
-        patcher_remember = mock.patch.object(
-            server,
-            "_remembered_printer",
-            return_value=("C9:48:8A:00:00:01", "luckprinter", ("D11s_0A0B_BLE",)),
-        )
-        patcher_once = mock.patch.object(server, "_auto_connect_once", side_effect=self._fake_attempt)
-        patcher_task = mock.patch.object(server, "_auto_connect_loop", side_effect=self._fake_loop)
-        self.addCleanup(patcher_remember.stop)
-        self.addCleanup(patcher_once.stop)
-        self.addCleanup(patcher_task.stop)
-        patcher_remember.start()
-        patcher_once.start()
-        patcher_task.start()
-        self.saved = (server.state.connected, server.state.reconnecting, server.state.auto_connect_task)
+        self.rows = [
+            {"address": "C9:48:8A:00:00:01", "name": "D11s_0A0B_BLE", "protocol": "luckprinter"},
+            {"address": "C9:48:8A:00:00:02", "name": "B1-G000000001", "protocol": "niimbot"},
+        ]
+        patchers = [
+            mock.patch.object(server, "_known_printers", side_effect=lambda: list(self.rows)),
+            mock.patch.object(server, "_auto_connect_once", side_effect=self._fake_attempt),
+        ]
+        for patcher in patchers:
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        self.addCleanup(setattr, server.state, "reconnecting", server.state.reconnecting)
         server.state.reconnecting = False
-        server.state.auto_connect_task = None
-        self.addCleanup(self._restore)
-
-    def _restore(self) -> None:
-        connected, reconnecting, task = self.saved
-        server.state.reconnecting = reconnecting
-        server.state.auto_connect_task = task
-        if task is None:
-            return
-        server.state.auto_connect_task = None
 
     async def _fake_attempt(self):
         self.calls.append("attempt")
         return True, "connected"
 
-    async def _fake_loop(self):
-        self.calls.append("loop")
-
     async def _call(self, devices: list[dict]) -> None:
-        with mock.patch.object(server.AppState, "connected", property(lambda _self: False)):
-            server._connect_if_remembered_seen(devices)
-            await asyncio.sleep(0)
+        server._connect_if_remembered_seen(devices)
+        await asyncio.sleep(0)
 
     def _run(self, devices: list[dict]) -> None:
         asyncio.run(self._call(devices))
 
-    def test_connects_when_the_address_is_seen(self) -> None:
-        self._run([{"address": "c9:48:8a:00:00:01", "name": "something"}])
-        self.assertIn("attempt", self.calls)
+    def test_connects_when_a_known_address_is_seen(self) -> None:
+        self._run([{"address": "c9:48:8a:00:00:01", "name": "D11s_0A0B_BLE"}])
+        self.assertEqual(self.calls, ["attempt"])
 
     def test_connects_when_the_name_matches_after_a_new_address(self) -> None:
         self._run([{"address": "de:ad:be:ef:00:01", "name": "D11s_55AA_BLE"}])
-        self.assertIn("attempt", self.calls)
+        self.assertEqual(self.calls, ["attempt"])
 
     def test_stays_quiet_for_other_devices(self) -> None:
-        self._run([{"address": "C9:48:8A:00:00:02", "name": "B1-G000000001"}])
+        self._run([{"address": "11:22:33:44:55:66", "name": "FnR 6ATAG72R"}])
+        self.assertEqual(self.calls, [])
+
+    def test_cached_nameless_advertisement_does_not_trigger(self) -> None:
+        # Windows hands back address-only entries for printers that are switched off.
+        self._run([{"address": "c9:48:8a:00:00:01", "name": ""}])
         self.assertEqual(self.calls, [])
 
     def test_does_nothing_while_reconnecting(self) -> None:

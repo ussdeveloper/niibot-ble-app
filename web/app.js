@@ -116,12 +116,14 @@ function refreshIcons(root) {
   }
 }
 
-function toast(message, kind = 'info') {
+function toast(message, kind = 'info', duration = 0) {
   const node = document.createElement('div');
   node.className = `toast ${kind}`;
   node.textContent = message;
   $('#toast').appendChild(node);
-  setTimeout(() => node.remove(), kind === 'error' ? 6000 : 3000);
+  const ms = duration > 0 ? duration : kind === 'error' ? 6000 : 3000;
+  if (ms > 0) setTimeout(() => node.remove(), ms);
+  return node;
 }
 
 async function api(path, method = 'GET', body) {
@@ -589,7 +591,8 @@ function restoreDraft() {
   const draft = readPref(draftKey());
   if (!draft || !draft.spec || !Array.isArray(draft.spec.elements)) return false;
   setSpec(draft.spec, { labelId: draft.labelId || null });
-  if (draft.view === 'sheet') switchView('sheet');
+  // Design is the default view: never open in the sheet (the switch is one click away).
+  if (state.view !== 'design') switchView('design');
   return true;
 }
 
@@ -4300,32 +4303,72 @@ function showContextMenu(event, items) {
 /* Right-click on the connection chip: pick the printer to print on. Every printer keeps its
    own labels, templates and calibrations, so switching also switches the library. */
 async function openPrinterSwitcher(event) {
-  showContextMenu(event, [{ key: 'loading', icon: 'loader', label: 'Looking for printers…', disabled: true }]);
-  let payload = { printers: [], current: null };
+  // No scan here: every printer the app knows is either already connected (the background loop
+  // keeps them alive) or listed as known — so the menu opens at once and switching is instant.
+  let payload = { printers: state.printers || [], current: null };
   try {
-    await api('/api/scan', 'POST', { timeout: 3, show_all: true });
     payload = await api(`/api/printers${state.showAllBle ? '?all=true' : ''}`);
     state.printers = payload.printers || [];
     state.printerInventory = payload;
-  } catch (_) {
-    payload = { printers: state.printers || [], current: null };
-  }
+  } catch (_) { /* fall back to what we already know */ }
   const printers = payload.printers || [];
-  const items = printers.map((printer) => ({
-    key: printer.address,
-    icon: printer.connected ? 'bluetooth-connected' : 'bluetooth',
-    label: printer.model_name || printer.name || printer.address,
-    hint: [
-      PROTOCOL_LABELS[printer.protocol] || printer.protocol,
-      printer.connected ? 'connected' : printer.available ? 'in range' : 'known',
-      printer.known ? 'own library' : '',
-    ].filter(Boolean).join(' · '),
-    disabled: printer.connected,
-    run: () => connect(printer.address, 'auto'),
-  }));
+  const items = printers.map((printer) => {
+    const connected = !!printer.connected;
+    const active = !!printer.active;
+    return {
+      key: printer.address,
+      icon: active ? 'bluetooth-connected' : connected ? 'bluetooth' : printer.available ? 'signal' : 'bluetooth-off',
+      label: `${printer.model_name || printer.name || printer.address}${active ? ' ✓' : ''}`,
+      hint: [
+        PROTOCOL_LABELS[printer.protocol] || printer.protocol,
+        active ? 'printing now' : connected ? 'connected — click to switch' : printer.available ? 'in range — click to connect' : 'known, not in range',
+      ].filter(Boolean).join(' · '),
+      disabled: active,
+      run: () => (connected
+        ? activatePrinter(printer)
+        : connect(printer.address, 'auto', printer.model_name || printer.name || printer.address)),
+    };
+  });
   if (printers.length) items.push({ sep: true });
+  items.push({
+    key: 'connect-all',
+    icon: 'plug',
+    label: 'Connect all printers in range',
+    run: () => connectAllPrinters(),
+  });
   items.push({ key: 'scan', icon: 'search', label: 'Scan for printers…', run: () => { openSettings('printer'); } });
   showContextMenu(event, items);
+}
+
+/** Switch to a printer that is already connected — no Bluetooth work, so it is instant. */
+async function activatePrinter(printer) {
+  const label = printer.model_name || printer.name || printer.address;
+  const spinner = toast(`Switching to ${label}…`, 'info', 0);
+  const started = performance.now();
+  try {
+    const payload = await api('/api/activate', 'POST', { address: printer.address });
+    applyState(payload);
+    const ms = Math.round(performance.now() - started);
+    spinner?.remove();
+    toast(`Now printing on ${label} (${ms} ms)`, 'ok');
+  } catch (error) {
+    spinner?.remove();
+    toast(`Could not switch to ${label}: ${error.message}`, 'error');
+  }
+}
+
+async function connectAllPrinters() {
+  const spinner = toast('Connecting every printer in range…', 'info', 0);
+  try {
+    const payload = await api('/api/auto-connect', 'POST');
+    applyState(payload);
+    const count = (payload.connections || []).length;
+    spinner?.remove();
+    toast(`${count} printer${count === 1 ? '' : 's'} connected`, 'ok');
+  } catch (error) {
+    spinner?.remove();
+    toast(error.message, 'error');
+  }
 }
 
 /* =============================================================== status bar */
@@ -4337,12 +4380,21 @@ function updateConnectionChip(payload = state.printer || {}) {
   if (!connBox || !connText) return;
   const info = payload.info || {};
   const title = 'Connection — right-click to choose the printer (each printer keeps its own labels, templates and calibrations)';
+  const connections = payload.connections || [];
+  const others = connections.filter((connection) => !connection.active);
   if (state.connected) {
     connBox.classList.add('ok');
     connBox.classList.remove('err');
     const protocol = payload.protocol === 'luckprinter' ? 'LuckPrinter' : 'Niimbot';
-    connText.textContent = `${info.model_name || 'printer'} · ${protocol} · ${payload.link?.name || payload.link?.address || ''}`.trim();
-    connBox.title = title;
+    const alsoOn = others.length
+      ? ` · +${others.length} connected (${others.map((c) => c.model_name || c.name).join(', ')})`
+      : '';
+    connText.textContent = `${info.model_name || 'printer'} · ${protocol} · ${payload.link?.name || payload.link?.address || ''}${alsoOn}`.trim();
+    connBox.title = [
+      title,
+      connections.length > 1 ? `connected: ${connections.length}` : '',
+      ...connections.map((c) => `${c.active ? '▶' : '·'} ${c.model_name || c.name} (${c.address})`),
+    ].filter(Boolean).join('\n');
     return;
   }
   connBox.classList.remove('ok');
@@ -6796,21 +6848,28 @@ function pollJob() {
 }
 
 /* ================================================================= connect */
-async function connect(address, protocol) {
+async function connect(address, protocol, label = '') {
   const chosen = protocol && protocol !== 'auto' ? protocol : (state.printerProtocol === 'auto' ? 'auto' : state.printerProtocol);
-  const payload = await api('/api/connect', 'POST', { address, protocol: chosen || 'auto' });
-  applyState(payload);
-  toast(`Connected: ${payload.info.model_name}`, 'ok');
-  const paper = payload.paper || {};
-  if (!applyKnownFormat(paper) && payload.profile) {
-    applySize(payload.profile.width_mm, payload.profile.height_mm, {
-      gap_mm: payload.profile.gap_mm ?? state.spec.gap_mm,
-      label_type: payload.profile.label_type ?? state.spec.label_type,
-    });
+  const spinner = toast(`Connecting to ${label || address}…`, 'info', 0);
+  try {
+    const payload = await api('/api/connect', 'POST', { address, protocol: chosen || 'auto' });
+    spinner.remove();
+    applyState(payload);
+    toast(`Connected: ${payload.info.model_name}`, 'ok');
+    const paper = payload.paper || {};
+    if (!applyKnownFormat(paper) && payload.profile) {
+      applySize(payload.profile.width_mm, payload.profile.height_mm, {
+        gap_mm: payload.profile.gap_mm ?? state.spec.gap_mm,
+        label_type: payload.profile.label_type ?? state.spec.label_type,
+      });
+    }
+    await requestPreview();
+    captureSettingFromModel();
+    renderSettingsTab();
+  } catch (error) {
+    spinner.remove();
+    toast(`Could not connect to ${label || address}: ${error.message}`, 'error');
   }
-  await requestPreview();
-  captureSettingFromModel();
-  renderSettingsTab();
 }
 
 function captureSettingFromModel() {

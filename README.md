@@ -300,6 +300,13 @@ queue) are kept for reference but cannot be repeated. The history is capped at 5
 
 ## Several printers, one library per printer
 
+Switching printers is instant: a background manager keeps **every** printer the app knows
+connected while it is advertising (and pings them so Windows does not drop the links), so the
+right-click menu on the connection chip only lists what is already there — *printing now*,
+*connected*, *in range* or *known, not in range* — and clicking a connected printer switches to it
+with `POST /api/activate`, no scan involved. A printer that is off simply disappears from the
+connected list and comes back when it is switched on again.
+
 The app keeps **one workspace per printer type** (`niimbot:B1`, `luckprinter:FICHERO`, …):
 
 | Belongs to | Where |
