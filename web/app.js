@@ -582,7 +582,7 @@ function openRollSizeDialog(options = {}) {
   const rollName = paper.sku || paper.catalog?.name || paper.barcode || 'this roll';
   /* ``options.profile`` edits a calibration picked from the library (a copy for this roll). */
   const profile = options.profile || state.printer?.profile || null;
-  const targetBarcode = paper.barcode
+  const currentBarcode = () => state.printer?.paper?.barcode
     || String(profile?.key || '').replace(/^bc:/, '') || '';
   /* A friendly name for this roll (the barcode is a poor label everywhere in the UI). */
   const codeOnly = (value) => !value || /^\d+$/.test(String(value).trim());
@@ -697,6 +697,10 @@ function openRollSizeDialog(options = {}) {
             </select></div>` : '<div></div>'}
         </div>
         <div class="hint" id="cal-page"></div>
+        <div class="field">
+          <label for="cal-library">Start from a saved calibration</label>
+          <select id="cal-library"><option value="">— draw a new one —</option></select>
+        </div>
       </div>
 
       <div class="cal-section">
@@ -784,11 +788,13 @@ function openRollSizeDialog(options = {}) {
   `;
 
   const footer = document.createElement('div');
-  footer.className = 'row';
-  footer.style.cssText = 'justify-content:flex-end;gap:8px';
+  footer.style.cssText = 'display:flex;align-items:center;gap:10px;width:100%';
   footer.innerHTML = `
-    <button class="btn" data-cal-cancel>Cancel</button>
-    <button class="btn primary" data-cal-save><i data-lucide="ruler"></i> Save for this roll</button>`;
+    <div class="cal-status" id="cal-status"></div>
+    <div class="row" style="gap:8px;flex:0 0 auto">
+      <button class="btn" data-cal-cancel>Cancel</button>
+      <button class="btn primary" data-cal-save><i data-lucide="ruler"></i> Save for this roll</button>
+    </div>`;
 
   const modal = openModal({
     id: 'roll-size',
@@ -799,6 +805,34 @@ function openRollSizeDialog(options = {}) {
     body,
     footer,
   });
+
+  /* Print and preview of the zone borders live next to the close button. */
+  const titlebar = modal.querySelector('.modal-titlebar');
+  const titleActions = document.createElement('div');
+  titleActions.className = 'modal-actions';
+  titleActions.innerHTML = `
+    <button type="button" class="modal-icon" data-title-action="preview" title="Preview the zone borders">
+      <i data-lucide="eye"></i></button>
+    <button type="button" class="modal-icon" data-title-action="print" title="Print the zone borders on this roll">
+      <i data-lucide="printer"></i></button>`;
+  titlebar.insertBefore(titleActions, titlebar.querySelector('.modal-close'));
+  refreshIcons(titleActions);
+
+  /* Which roll this calibration belongs to — code and tag serial from the printer. */
+  const renderCalStatus = () => {
+    const status = $('#cal-status', footer);
+    if (!status) return;
+    const info = state.printer?.info || {};
+    const paperNow = state.printer?.paper || {};
+    const bits = [];
+    const barcode = currentBarcode();
+    if (barcode) bits.push(`<span class="cal-status-item"><em>roll</em> <b>${escapeHtml(barcode)}</b></span>`);
+    const serial = paperNow.serial || info.serial;
+    if (serial) bits.push(`<span class="cal-status-item"><em>SN</em> <b>${escapeHtml(serial)}</b></span>`);
+    bits.push(`<span class="cal-status-item">${stickerLabel()} · page ${round2(width)} × ${round2(height)} mm</span>`);
+    if (!state.connected) bits.push('<span class="cal-status-item bad">printer off-line</span>');
+    status.innerHTML = bits.join('');
+  };
 
   const wrap = $('#cal-canvas-wrap', body);
   const canvas = $('#cal-canvas', body);
@@ -1432,6 +1466,7 @@ function openRollSizeDialog(options = {}) {
       + ` · page ${round2(width)} × ${round2(height)} mm`
       + ` · ${zones.length} item${zones.length === 1 ? '' : 's'}`
       + ` · ${outlines} outline${outlines === 1 ? '' : 's'}`;
+    renderCalStatus();
   };
 
   const renderChips = () => {
@@ -2224,9 +2259,82 @@ function openRollSizeDialog(options = {}) {
     }
   }
 
+  titleActions.addEventListener('click', (event) => {
+    const action = event.target.closest('[data-title-action]')?.dataset.titleAction;
+    if (action === 'preview') showOutlinePreview();
+    if (action === 'print') printOutline();
+  });
+
+  /* -------------------------------------------------- saved calibrations */
+  /* Loading a stored calibration replaces what is drawn here, so it can be reused for this roll
+     without editing anything — or used as the starting point for small changes. */
+  const applyProfileToDialog = (saved) => {
+    const sticker = calibrationSticker(saved);
+    stickerW = Math.max(2, sticker.w);
+    stickerH = Math.max(2, sticker.h);
+    rows = Math.max(1, sticker.rows);
+    cols = Math.max(1, sticker.cols);
+    rowSpace = Math.max(0, Number(saved.row_space_mm) || 0);
+    colSpace = Math.max(0, Number(saved.col_space_mm) || 0);
+    pageSize();
+    const values = {
+      'cal-width': round2(stickerW),
+      'cal-height': round2(stickerH),
+      'cal-rows': rows,
+      'cal-cols': cols,
+      'cal-rowspace': round2(rowSpace),
+      'cal-colspace': round2(colSpace),
+      'cal-gap': round2(Number(saved.gap_mm) || 0),
+      'cal-name': calibrationName(saved),
+    };
+    Object.entries(values).forEach(([key, value]) => {
+      const input = $(`[data-key="${key}"]`, body);
+      if (input) input.value = value;
+    });
+    const loaded = (saved.regions || []).map(zoneFromRegion).filter((zone) => zone.shapes.length);
+    if (loaded.length) zones = loaded;
+    autoZone = false;
+    selection = new Set(zones.length ? [0] : []);
+    activeShape = null;
+    history = [JSON.stringify(zones)];
+    historyIndex = 0;
+    renderPageNote();
+    renderInspector();
+    centreView();
+    renderCalStatus();
+    toast(`Loaded „${calibrationName(saved)}” — ${zones.length} item${zones.length === 1 ? '' : 's'} · Save for this roll to keep it`, 'ok');
+  };
+
+  api('/api/profiles').then((payload) => {
+    const select = $('#cal-library', body);
+    if (!select) return;
+    const list = (payload.profiles || []).filter((item) => Array.isArray(item.regions) && item.regions.length);
+    if (!list.length) {
+      select.disabled = true;
+      select.options[0].textContent = '— no saved calibrations yet —';
+      return;
+    }
+    list.forEach((item, index) => {
+      const sticker = calibrationSticker(item);
+      const option = document.createElement('option');
+      option.value = String(index);
+      const name = calibrationName(item);
+      const size = `${sticker.w} × ${sticker.h} mm`;
+      option.textContent = `${name && name !== size ? `${name} · ` : ''}${size} · `
+        + `${item.regions.length} zone${item.regions.length === 1 ? '' : 's'}`;
+      select.appendChild(option);
+    });
+    select.onchange = () => {
+      const item = list[Number(select.value)];
+      select.value = '';
+      if (item) applyProfileToDialog(item);
+    };
+  }).catch(() => { /* the list simply stays empty */ });
+
   /* ---------------------------------------------------------------- save */
   $('[data-cal-cancel]', footer).onclick = () => closeModal('roll-size');
   $('[data-cal-save]', footer).onclick = async () => {
+    const targetBarcode = currentBarcode();
     if (!targetBarcode) {
       toast('Connect the printer (or insert the roll) so the calibration can be stored for it', 'error');
       return;
@@ -2248,8 +2356,8 @@ function openRollSizeDialog(options = {}) {
         rows: layoutRows,
         cols: layoutCols,
         gap_mm: gap,
-        label_type: paper.label_type ?? state.spec.label_type,
-        capacity: paper.capacity ?? null,
+        label_type: state.printer?.paper?.label_type ?? paper.label_type ?? state.spec.label_type,
+        capacity: state.printer?.paper?.capacity ?? paper.capacity ?? null,
         regions: payloadRegions,
         sticker_w_mm: stickerW,
         sticker_h_mm: stickerH,

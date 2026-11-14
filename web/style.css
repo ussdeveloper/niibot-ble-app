@@ -1191,6 +1191,28 @@ button.btn.wide { width: 100%; }
 .crop-actions .btn { flex: 1; padding: 5px 8px; font-size: 11px; }
 .warn-text { color: #a85b17; }
 
+/* extra buttons in a modal title bar (calibrator: preview + print) */
+.modal-actions { display: flex; align-items: center; gap: 2px; margin-right: 2px; }
+.modal-icon {
+  width: 26px; height: 26px; display: flex; align-items: center; justify-content: center;
+  border: none; border-radius: 7px; background: transparent; color: var(--ink-muted); cursor: pointer;
+}
+.modal-icon svg { width: 16px; height: 16px; }
+.modal-icon:hover { background: rgba(0, 194, 194, 0.14); color: var(--teal-deep); }
+
+/* roll identity along the bottom of the calibrator */
+.cal-status {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 10px;
+  flex: 1; min-width: 0; font-size: 10.5px; color: var(--ink-muted);
+}
+.cal-status-item { display: inline-flex; align-items: baseline; gap: 4px; white-space: nowrap; }
+.cal-status-item em {
+  font-style: normal; text-transform: uppercase; letter-spacing: 0.1em; font-size: 9.5px;
+  color: rgba(0, 26, 77, 0.42);
+}
+.cal-status-item b { font-weight: 600; color: var(--navy); font-size: 11px; }
+.cal-status-item.bad { color: var(--err); font-weight: 600; }
+
 /* ---------------------------------------------------------- roll calibrator */
 .calibrator {
   display: grid; grid-template-columns: 318px minmax(0, 1fr); gap: 16px;

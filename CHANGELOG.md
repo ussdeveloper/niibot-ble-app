@@ -4,6 +4,17 @@ All notable changes to **Niibot Studio** are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project uses [Semantic Versioning](https://semver.org/).
 
+## [0.13.4] — 2026-11-14
+
+### Added
+- **Saved calibrations inside the calibrator**: `Start from a saved calibration` loads any stored
+  layout (size, grid, zones, name) straight into the window, so a known roll can reuse one without
+  drawing anything — then `Save for this roll` stores it for the inserted roll code.
+- **Roll identity in the calibrator footer**: roll code (RFID), tag SN and the sticker/page size,
+  plus a red *printer off-line* note when disconnected.
+- **Preview and print in the calibrator title bar**, next to the close button — the same zone-border
+  check print as the `Print check` section.
+
 ## [0.13.3] — 2026-11-14
 
 ### Added
