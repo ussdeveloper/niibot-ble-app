@@ -17,6 +17,8 @@ from qrcode.constants import ERROR_CORRECT_H, ERROR_CORRECT_L, ERROR_CORRECT_M, 
 
 from .spec import Element, LabelSpec
 from .paths import data_dir
+from . import codes
+from .codes import minimum_size
 
 MM_PER_INCH = 25.4
 EPS = 1e-6
@@ -388,19 +390,30 @@ def _draw_barcode(layer: Image.Image, element: Element, dpi: int, warnings: list
         text_height = font.getmetrics()[0] + font.getmetrics()[1]
 
     usable = max(1, height - text_height)
-    # Whole pixels per module keep the bars crisp; a fractional module width
-    # smears the pattern at 203 dpi and makes scanners unreliable.
-    module_px = int(width // modules)
-    if module_px >= 1:
-        module_w = module_px
-        offset_x = int((width - module_px * modules) // 2)
-    else:
-        module_w = width / modules
-        offset_x = 0
+    # Whole pixels per module keep the bars crisp; a fractional module width smears the
+    # pattern and whole-dot printers make it worse, so below the limit the code is refused
+    # instead of printed unreadably.
+    quiet = codes.BARCODE_QUIET_ZONE
+    # Give the code the quiet zone scanners need when there is room, otherwise use the box.
+    module_px = int(width // (modules + quiet * 2))
+    if module_px < codes.GOOD_MODULE_DOTS:
+        module_px = int(width // modules)
+    if module_px < codes.HARD_MODULE_DOTS:
+        limit = minimum_size("barcode", dpi, data, barcode_format=element.barcode_format)
         warnings.append(
-            f"Barcode {element.barcode_format} has {modules} modules — too wide for this box "
-            f"({width:.0f} px). Increase the width or shorten the data."
+            f"Barcode {element.barcode_format} needs {limit['min_w_mm']} mm for {modules} modules "
+            f"at {dpi} dpi — this box is {width * MM_PER_INCH / dpi:.1f} mm, so it was not printed. "
+            f"Widen the box or shorten the data."
         )
+        return
+    if module_px < codes.GOOD_MODULE_DOTS:
+        limit = minimum_size("barcode", dpi, data, barcode_format=element.barcode_format)
+        warnings.append(
+            f"Barcode modules are {limit['hard_module_mm']} mm (one dot) — scanners may struggle. "
+            f"{limit['recommended_w_mm']} mm gives two dots per module."
+        )
+    module_w = module_px
+    offset_x = int((width - module_px * modules) // 2)
 
     draw = ImageDraw.Draw(layer)
     start = None
@@ -409,11 +422,9 @@ def _draw_barcode(layer: Image.Image, element: Element, dpi: int, warnings: list
             if start is None:
                 start = index
         elif start is not None:
-            x0 = offset_x + int(round(start * module_w))
-            x1 = offset_x + int(round(index * module_w))
-            if x1 <= x0:
-                x1 = x0 + 1
-            draw.rectangle([x0, 0, x1 - 1, usable - 1], fill=(0, 0, 0, 255))
+            x0 = offset_x + start * module_w
+            x1 = offset_x + index * module_w
+            draw.rectangle([x0, 0, max(x0, x1 - 1), usable - 1], fill=(0, 0, 0, 255))
             start = None
 
     if element.show_text and font is not None:
@@ -473,7 +484,7 @@ def _text_block(
     return block.resize((width, height), Image.LANCZOS)
 
 
-def _draw_qr(layer: Image.Image, element: Element, warnings: list[str]) -> None:
+def _draw_qr(layer: Image.Image, element: Element, dpi: int, warnings: list[str]) -> None:
     data = (element.text or "").strip()
     if not data:
         return
@@ -485,24 +496,43 @@ def _draw_qr(layer: Image.Image, element: Element, warnings: list[str]) -> None:
     if count == 0:
         return
     width, height = layer.size
-    # Integer module size: no rounding gaps between adjacent modules.
-    module = max(1, min(width, height) // count)
-    size = module * count
-    if size > min(width, height):
-        warnings.append("The QR code is too dense for this box — make it larger.")
-        size = min(width, height)
-        module = max(1, size // count)
-        size = module * count
-    offset_x = (width - size) // 2
-    offset_y = (height - size) // 2
+    limit = minimum_size("qr", dpi, data, element.ec_level)
+    # Each module is a whole block of dots. The matrix is centred, and a quiet zone is added
+    # when it fits; when the box is tight the matrix may use all of it, because a fractional
+    # or sub-dot module is what makes a printed QR unscannable.
+    shortest = min(width, height)
+    module = shortest // limit["span"]
+    if module < codes.GOOD_MODULE_DOTS:
+        module = shortest // count
+    if module < codes.HARD_MODULE_DOTS:
+        warnings.append(
+            f"QR code needs {limit['min_w_mm']} mm at {dpi} dpi "
+            f"({count} modules) — this box is {shortest * MM_PER_INCH / dpi:.1f} mm, "
+            f"so it was not printed. Enlarge the box or shorten the text."
+        )
+        return
+    if module < codes.GOOD_MODULE_DOTS:
+        warnings.append(
+            f"QR modules are {limit['hard_module_mm']} mm (one dot) — scanners may struggle. "
+            f"{limit['recommended_w_mm']} mm gives two dots per module."
+        )
+    body = module * count
+    offset_x = (width - body) // 2
+    offset_y = (height - body) // 2
     draw = ImageDraw.Draw(layer)
     for row, row_data in enumerate(matrix):
-        for col, value in enumerate(row_data):
-            if not value:
+        y0 = offset_y + row * module
+        # Paint each horizontal run as one rectangle: no seams between neighbours.
+        col = 0
+        while col < count:
+            if not row_data[col]:
+                col += 1
                 continue
-            x0 = offset_x + col * module
-            y0 = offset_y + row * module
-            draw.rectangle([x0, y0, x0 + module - 1, y0 + module - 1], fill=(0, 0, 0, 255))
+            start = col
+            while col < count and row_data[col]:
+                col += 1
+            x0 = offset_x + start * module
+            draw.rectangle([x0, y0, x0 + (col - start) * module - 1, y0 + module - 1], fill=(0, 0, 0, 255))
 
 
 def _draw_rect(layer: Image.Image, element: Element, dpi: int) -> None:
@@ -644,7 +674,7 @@ def _draw_element(
     elif element.type == "barcode":
         _draw_barcode(layer, element, dpi, warnings)
     elif element.type == "qr":
-        _draw_qr(layer, element, warnings)
+        _draw_qr(layer, element, dpi, warnings)
     elif element.type == "rect":
         _draw_rect(layer, element, dpi)
     elif element.type == "line":

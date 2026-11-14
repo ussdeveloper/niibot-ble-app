@@ -351,6 +351,33 @@ fixes the geometry, not the command frames.
 
 ---
 
+## Code size: why a QR or barcode cannot be shrunk forever
+
+Both code types are grids of **modules** (a bar is one or more modules wide, a QR is a square of
+them) and the printhead can only place whole dots, so the physical size is quantised:
+
+```
+module width = floor(box width in dots / module count)
+```
+
+`niibot/codes.py` counts the modules for the current payload and converts them to millimetres at the
+connected dpi. Two numbers matter:
+
+| | modules | 203 dpi (B1) | 300 dpi (B1 Pro) |
+|---|---|---|---|
+| floor — one dot per module | payload dependent | 0.125 mm | 0.083 mm |
+| safe — two dots per module | payload dependent | 0.25 mm | 0.17 mm |
+
+A 29-module QR needs 3.6 mm at 203 dpi to print at all and 9.3 mm to scan comfortably, while a
+Code128 barcode of ten digits is 90 modules long — 11 mm bare, 27.5 mm with the quiet zone. The
+editor therefore **stops the resize handle at the one-dot floor**, marks the element amber while it
+is still under the safe size and shows both numbers (with the module count) in the inspector;
+**Fit** grows the element to the safe size. The renderer refuses to print a code that cannot hold
+one dot per module and reserves the quiet zone scanners need whenever the box has room for it.
+`POST /api/code-size` returns the same numbers for any payload and format.
+
+---
+
 ## Windows print queue (IPP)
 
 Windows does not allow unsigned kernel drivers, so the app exposes an IPP endpoint

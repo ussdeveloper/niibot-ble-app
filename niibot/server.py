@@ -35,6 +35,7 @@ from .paths import resource_dir
 from .printer import NiimbotPrinter
 from .protocol import LABEL_TYPE_NAMES, ProtocolError
 from .render import available_fonts, font_catalog, preview_payload, render_label
+from .codes import minimum_size
 from .spec import BARCODE_FORMATS, ELEMENT_TYPES, TEMPLATES, Element, LabelSpec, default_spec
 from .version import APP_NAME, APP_TAGLINE, __version__
 
@@ -306,6 +307,15 @@ class ElementPreviewRequest(BaseModel):
 class SpecPreviewRequest(BaseModel):
     spec: LabelSpec
     max_width: int = 320
+
+
+class CodeSizeRequest(BaseModel):
+    """How small a QR/barcode may get on the attached printer before it stops scanning."""
+
+    kind: str = "qr"
+    text: str = ""
+    ec_level: str = "M"
+    barcode_format: str = "code128"
 
 
 class SaveLabelRequest(BaseModel):
@@ -1116,6 +1126,24 @@ async def api_preview(request: PreviewRequest) -> dict:
         return preview_payload(_with_mirror(request.spec, request.mirror), dpi, printhead, store.upload_path)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/code-size")
+async def api_code_size(request: CodeSizeRequest) -> dict:
+    """Minimum box for a code element: every module must hold >= 2 printer dots."""
+    dpi, _printhead = _geometry()
+    try:
+        limit = minimum_size(
+            request.kind,
+            dpi,
+            request.text,
+            request.ec_level,
+            request.barcode_format,
+        )
+    except Exception as exc:  # unknown format / empty data
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    limit.update({"dpi": dpi, "kind": request.kind})
+    return limit
 
 
 @app.post("/api/spec-preview")

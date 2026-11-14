@@ -4,6 +4,27 @@ All notable changes to **Niibot Studio** are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project uses [Semantic Versioning](https://semver.org/).
 
+## [0.14.4] — 2026-11-14
+
+### Fixed
+- **QR codes and barcodes print with uneven modules.** Both were drawn from a fractional module
+  width once the box was narrow, so bars landed on half dots and a phone could not read the result.
+  Modules are now always a whole number of dots, the matrix is centred, and a **quiet zone** is
+  reserved whenever the box has room for it — that white margin is what scanners lock onto.
+- A QR code smaller than its own module count used to be drawn clipped (a corner of the matrix
+  simply fell outside the box). It is now either drawn whole or refused with an explicit warning
+  instead of printing an unreadable label.
+
+### Added
+- **The editor blocks shrinking a code below what the printer can print.** `niibot/codes.py` counts
+  the modules of the QR payload (or the barcode pattern) and converts them to millimetres at the
+  connected printer's dpi: one dot per module is the hard floor the resize handle stops at, two dots
+  per module (0.25 mm at 203 dpi, 0.17 mm at 300 dpi) is the size scanners are happy with. The
+  inspector shows both numbers with the module count, an amber frame marks a code that is printable
+  but risky, and **Fit** grows it to the safe size.
+- `POST /api/code-size` exposes the same numbers to the UI for any payload/format without rendering.
+- QR codes now stay square while resizing — a stretched matrix does not scan.
+
 ## [0.14.3] — 2026-11-14
 
 ### Changed
