@@ -215,6 +215,23 @@ svg.lucide { width: 16px; height: 16px; stroke-width: 1.7; }
 .menu-dropdown .md-sep { height: 1px; margin: 4px 6px; background: var(--line); }
 .menu-dropdown .md-key { margin-left: auto; font-size: 11px; color: var(--ink-muted); letter-spacing: 0.06em; }
 .menu-dropdown button.checked::after { content: "✓"; margin-left: auto; color: var(--teal-deep); }
+.menu-dropdown .md-info { padding: 7px 10px 8px; border-bottom: 1px solid var(--line); background: rgba(0, 26, 77, 0.03); }
+.menu-dropdown .md-info-head {
+  display: flex; align-items: center; gap: 6px; margin-bottom: 4px;
+  font-size: 10.5px; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase; color: var(--ink-muted);
+}
+.menu-dropdown .md-info-head svg { width: 13px; height: 13px; }
+.menu-dropdown .md-info-row {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  font-size: 11.5px; line-height: 1.5; color: var(--ink);
+}
+.menu-dropdown .md-info-row .mono { font-size: 11px; color: var(--ink-muted); }
+.menu-dropdown .md-info-row .md-k {
+  min-width: 30px; font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-muted);
+}
+.menu-dropdown .md-info-row .md-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--line); flex: 0 0 auto; }
+.menu-dropdown .md-info-row .md-dot.ok { background: #16a34a; box-shadow: 0 0 0 2px rgba(22, 163, 74, 0.16); }
+.menu-dropdown .md-info-row .md-dot.err { background: #b91c1c; box-shadow: 0 0 0 2px rgba(185, 28, 28, 0.14); }
 
 /* -------------------------------------------------------------------- shell */
 .shell {
@@ -369,14 +386,28 @@ svg.lucide { width: 16px; height: 16px; stroke-width: 1.7; }
 .drag-ghost {
   position: absolute;
   pointer-events: none;
-  z-index: 5;
+  z-index: 9;
   filter: drop-shadow(0 8px 16px rgba(0, 26, 77, 0.22));
   outline: 1px solid rgba(0, 194, 194, 0.55);
   border-radius: 1px;
 }
 #overlay { z-index: 6; }
-#paper-regions, #guides { z-index: 8; }
-.stage.lifting #preview { opacity: 0.28; }
+#paper-regions { z-index: 8; }
+/* The lifted element rides above the region tints so it stays fully crisp, but guides stay on top. */
+#guides { z-index: 10; }
+/* While an element travels, only the hole it leaves behind changes — the neighbours underneath
+   stay at full contrast, which is what the dashed patch is for. */
+.drag-hole {
+  position: absolute;
+  z-index: 4;
+  border-radius: 2px;
+  background-color: #fff;
+  background-image: repeating-linear-gradient(45deg, rgba(0, 26, 77, 0.055) 0 5px, transparent 5px 10px);
+  outline: 1px dashed rgba(0, 26, 77, 0.22);
+  outline-offset: -1px;
+  pointer-events: none;
+}
+.drag-hole[hidden] { display: none; }
 /* The frame of the element a click would grab (it may sit under a bigger one). */
 .element-box.hover {
   border: 1.5px dashed var(--teal);

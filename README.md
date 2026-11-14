@@ -121,7 +121,7 @@ device, and they need a different transport than the one used here.
 
 | Area | What it does |
 | --- | --- |
-| menu bar | **File / Edit / View / Settings / Help** — save (also *Save as…*, *Save as template…*), undo, view toggles, settings, language |
+| menu bar | **File / Edit / View / Settings / Help** — save (also *Save as…*, *Save as template…*), undo, view toggles, settings, language. **Settings** opens with a live Bluetooth block (active printer, protocol, BLE address, dpi, battery, extra links) and a *Choose printer…* entry |
 | menu bar, right | **Ready / Not Ready** chip: whether the local backend answers (`/api/health`, 3 s poll, tooltip with version, uptime and latency) |
 | left toolbar | add elements, icon library, undo/redo, save, PNG export, print, **grid** and **snap** toggles |
 | element palette | actions on the selected element (centre, rotate, reorder, duplicate, delete); it starts in the **top-right corner** of the work area and the grip drags it anywhere |
@@ -136,10 +136,11 @@ Keyboard: `Ctrl+Z/Y` undo/redo, `Ctrl+S` save, `Ctrl+P` print, `Ctrl+D` duplicat
 
 ### Canvas, grid and guides
 
-Dragging is live: the element's own artwork lifts off the page and follows the pointer, the
-rest of the preview dims. While dragging, edges and centres of other elements as well as the
-label edges/centre produce subtle alignment guides (centre lines use a different colour).
-With snapping on, positions snap to the 1 mm grid and to those guides.
+Dragging is live: the element's own artwork lifts off the page and follows the pointer, leaving a
+hatched patch exactly where it was picked up. Nothing else changes brightness, so the elements
+around and underneath stay readable while you aim. While dragging, edges and centres of other
+elements as well as the label edges/centre produce subtle alignment guides (centre lines use a
+different colour). With snapping on, positions snap to the 1 mm grid and to those guides.
 
 **Zoom and pan** work like an image editor: `Ctrl`+wheel zooms around the cursor (the point under
 the pointer stays put), the chip in the corner steps through the zoom levels, `Ctrl+0` fits the

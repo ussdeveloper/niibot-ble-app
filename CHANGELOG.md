@@ -4,6 +4,21 @@ All notable changes to **Niibot Studio** are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project uses [Semantic Versioning](https://semver.org/).
 
+## [0.14.13] — 2026-11-14
+
+### Added
+- **Bluetooth status inside the Settings menu.** The top-bar *Settings* dropdown now starts with a
+  live block: a green dot and the model plus protocol of the active printer, its link name and BLE
+  address, the print head (dpi / px) and battery level, then one line per extra connected printer —
+  or, when nothing is linked, the remembered printer and the auto-connect state. The menu also gained
+  **Choose printer…**, which opens the same switcher as the status bar without rescanning.
+
+### Fixed
+- **Dragging an element no longer dims its neighbours.** The whole preview used to drop to 28 %
+  opacity while an element travelled, which also faded everything underneath it. The lifted element
+  now leaves a hatched patch exactly where it was picked up, the rest of the label keeps full
+  contrast, and the ghost rides above the mirror-region tints so the moving artwork stays crisp.
+
 ## [0.14.12] — 2026-11-14
 
 ### Added

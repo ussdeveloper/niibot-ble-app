@@ -4237,7 +4237,6 @@ function makeDragGhost(element) {
   }
 
   stage.appendChild(ghost);
-  stage.classList.add('lifting');
   return ghost;
 }
 
@@ -4266,7 +4265,23 @@ function paintGhost(ghost, element, drag) {
 
 function dropDragGhost(ghost) {
   if (ghost) ghost.remove();
-  $('#stage')?.classList.remove('lifting');
+  const hole = $('#drag-hole');
+  if (hole) hole.hidden = true;
+}
+
+/** The patch the moving element leaves behind: neighbours stay crisp, nothing else dims. */
+function paintDragHole(drag) {
+  const hole = $('#drag-hole');
+  if (!hole) return;
+  const origin = drag?.origin;
+  if (!origin || !state.spec) {
+    hole.hidden = true;
+    return;
+  }
+  // The hole marks the spot the element was lifted from; the ghost itself covers the live area,
+  // so no other pixel of the label has to be touched.
+  hole.hidden = false;
+  paintBox(hole, origin);
 }
 
 /* ---------------------------------------------------------------- picking
@@ -4470,6 +4485,7 @@ function onPointerDown(event) {
     drag.ghostOrigin = { w: element.w, h: element.h };
     paintGhost(drag.ghost, element, drag);
   }
+  paintDragHole(drag);
   state.dragging = true;
   event.preventDefault();
 }
@@ -6385,6 +6401,42 @@ function renderAboutTab() {
 }
 
 /* ================================================================ menus */
+
+/** Compact Bluetooth readout for the Settings menu — the active link plus whatever else is open. */
+function connectionSummaryHtml() {
+  const payload = state.printer || {};
+  const info = payload.info || {};
+  const link = payload.link || {};
+  const connections = payload.connections || [];
+  const others = connections.filter((connection) => !connection.active);
+  const rows = [];
+  if (state.connected) {
+    const protocol = payload.protocol === 'luckprinter' ? 'LuckPrinter' : 'Niimbot';
+    rows.push(`<span class="md-dot ok"></span><b>${escapeHtml(info.model_name || 'printer')}</b> · ${protocol}`);
+    const address = link.name && link.address && link.name !== link.address
+      ? `${link.name} (${link.address})`
+      : (link.address || link.name || '');
+    if (address) rows.push(`<span class="md-k">link</span><span class="mono">${escapeHtml(address)}</span>`);
+    const head = [
+      info.dpi ? `${info.dpi} dpi` : '',
+      info.printhead_px ? `${info.printhead_px} px` : '',
+    ].filter(Boolean).join(' · ');
+    if (head) rows.push(`<span class="md-k">head</span><span class="mono">${escapeHtml(head)}</span>`);
+    if (Number.isFinite(info.battery)) rows.push(`<span class="md-k">batt</span><span class="mono">${info.battery}%</span>`);
+    others.forEach((connection) => {
+      rows.push(`<span class="md-dot"></span>${escapeHtml(connection.model_name || connection.name)} · ${escapeHtml(connection.address || '')}`);
+    });
+  } else {
+    const auto = payload.auto_connect || {};
+    const remembered = payload.last_name || payload.last_address || '';
+    rows.push('<span class="md-dot err"></span><b>No printer connected</b>');
+    if (remembered) rows.push(`<span class="md-k">last</span><span class="mono">${escapeHtml(remembered)}</span>`);
+    rows.push(`<span class="md-k">auto</span>${auto.enabled ? 'on' : 'off'}${auto.status ? ` · ${escapeHtml(auto.status)}` : ''}`);
+  }
+  return `<div class="md-info"><div class="md-info-head"><i data-lucide="bluetooth"></i><span>Bluetooth</span></div>${rows
+    .map((row) => `<div class="md-info-row">${row}</div>`)
+    .join('')}</div>`;
+}
 const MENUS = {
   file: {
     label: 'File',
@@ -6440,8 +6492,20 @@ const MENUS = {
   },
   settings: {
     label: 'Settings',
+    info: () => connectionSummaryHtml(),
     items: [
       { icon: 'settings', label: 'Settings…', key: 'Ctrl+,', run: () => openSettings('printer') },
+      {
+        icon: 'bluetooth',
+        label: 'Choose printer…',
+        // The switcher expects a pointer anchor; anchor it under the Settings button when opened
+        // from the menu so the list lands where the user is looking.
+        run: () => {
+          const anchor = $('.menu-item[data-menu="settings"]');
+          const rect = anchor ? anchor.getBoundingClientRect() : { left: 24, bottom: 40 };
+          openPrinterSwitcher({ clientX: rect.left + 10, clientY: rect.bottom + 260 });
+        },
+      },
       { icon: 'tag', label: 'Paper & roll…', run: () => openSettings('paper') },
       { icon: 'monitor', label: 'Print from Windows…', run: () => openSettings('windows') },
       { sep: true },
@@ -6472,7 +6536,7 @@ function toggleMenu(key) {
   $$('.menu-item').forEach((item) => item.classList.toggle('active', item.dataset.menu === key));
   const menu = MENUS[key];
   if (!menu) return;
-  existing.innerHTML = menu.items.map((item, index) => {
+  existing.innerHTML = (menu.info ? menu.info() : '') + menu.items.map((item, index) => {
     if (item.sep) return '<div class="md-sep"></div>';
     const disabled = item.disabled ? item.disabled() : false;
     const checked = item.checked ? item.checked() : false;
