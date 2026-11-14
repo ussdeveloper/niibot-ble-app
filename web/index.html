@@ -76,13 +76,15 @@
 
       <div class="canvas-wrap" id="canvas-wrap">
         <div class="paper-column" id="paper-column">
-          <div class="stage" id="stage">
-            <img id="preview" alt="Label preview">
-            <div id="grid-layer" class="grid-layer" hidden></div>
-            <div id="paper-regions"></div>
-            <div id="guides" class="guides"></div>
-            <div id="drag-hole" class="drag-hole" hidden></div>
-            <div id="overlay"></div>
+          <div class="stage-frame" id="stage-frame">
+            <div class="stage" id="stage">
+              <img id="preview" alt="Label preview">
+              <div id="grid-layer" class="grid-layer" hidden></div>
+              <div id="paper-regions"></div>
+              <div id="guides" class="guides"></div>
+              <div id="drag-hole" class="drag-hole" hidden></div>
+              <div id="overlay"></div>
+            </div>
           </div>
           <div class="gap-preview" id="gap-preview"><span id="gap-preview-label">gap</span></div>
         </div>
@@ -138,6 +140,7 @@
         <button type="button" data-zoom="out" title="Zoom out (Ctrl+-)"><i data-lucide="minus"></i></button>
         <button type="button" data-zoom="reset" id="zoom-value" title="Fit the label (Ctrl+0)">100%</button>
         <button type="button" data-zoom="in" title="Zoom in (Ctrl+=)"><i data-lucide="plus"></i></button>
+        <button type="button" data-zoom="rotate" id="view-rotate" title="Turn the editing view 90° right — the label and the print stay exactly as they are (double-click to put it back)"><i data-lucide="rotate-cw"></i></button>
       </div>
     </div>
 

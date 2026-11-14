@@ -127,7 +127,7 @@ device, and they need a different transport than the one used here.
 | element palette | actions on the selected element (centre, rotate, reorder, duplicate, delete); it starts in the **top-right corner** of the work area and the grip drags it anywhere |
 | right panel | **Properties** of the selection (with the **Design / Sheet** switch in its header), the **Items** list and the **Printer queue** with its own resizer |
 | status bar | Bluetooth connection (right-click = printer switcher), paper status, format size, temperature, database |
-| zoom chip | bottom-right of the work area: −, percentage, + and *fit* |
+| zoom chip | bottom-right of the work area: −, percentage, +, *fit* and the ⟳ turn of the editing view (printing unchanged) |
 
 Keyboard: `Ctrl+Z/Y` undo/redo, `Ctrl+S` save, `Ctrl+P` print, `Ctrl+D` duplicate,
 `Delete` remove, arrows nudge by 1 mm (`Shift` = 0.2 mm), `G` grid, `S` snapping,
@@ -146,6 +146,13 @@ different colour). With snapping on, positions snap to the 1 mm grid and to thos
 the pointer stays put), the chip in the corner steps through the zoom levels, `Ctrl+0` fits the
 label. Pan with the middle button, `Space`+drag or by dragging the empty canvas; *fit* also resets
 the pan. The zoom level is remembered in the database.
+
+**Turning the view** is the ⟳ button in that same chip: it rotates the canvas 90° to the right so a
+tall sticker can be edited lying down, then 180°, 270° and back (double-click resets). Nothing about
+the label changes — the size, the calibration template with its item zones and the bitmap the
+printer receives are exactly the same, the canvas is just drawn turned. Picking, dragging, resizing
+and zoom-around-the-cursor keep working, and the angle is remembered. The gap strip under the label
+is hidden while the view is turned because it would point sideways.
 
 **Hovering shows what a click would grab**: the element under the pointer gets a dashed frame and
 a name chip, so it is clear what will move before pressing. Picking follows what the element

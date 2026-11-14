@@ -4,6 +4,23 @@ All notable changes to **Niibot Studio** are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project uses [Semantic Versioning](https://semver.org/).
 
+## [0.15.1] — 2026-11-14
+
+### Added
+- **Turn the editing view a quarter to the right** — the ⟳ button next to the zoom chip (or
+  *View → Orientation*). A tall sticker such as a 10 × 20 mm cell can then be typed on lying down;
+  the label, its calibration template and the printed bitmap stay exactly as they are, because the
+  turn is only how the canvas is drawn. Click again for 180°/270°, double-click to go back to 0°;
+  the angle is remembered per browser profile.
+- Picking, dragging, resizing and `Ctrl`+wheel zoom all work in the turned view: the pointer is
+  rotated back into label millimetres, and the resize grip keeps following the element's own
+  bottom-right corner instead of a screen corner.
+
+### Changed
+- *View → Orientation* now separates the two things it used to mix: turning the **view** (no shape
+  change) and swapping the label's own width/height (which really changes the print page and warns
+  when the roll already has a calibration).
+
 ## [0.15.0] — 2026-11-14
 
 ### Changed

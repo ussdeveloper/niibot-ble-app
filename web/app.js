@@ -532,6 +532,8 @@ const state = {
   fitWidth: 0,
   fitHeight: 0,
   pan: { x: 0, y: 0 },
+  /* Quarter turns of the editing view only (0/90/180/270) — the label and the print never change. */
+  viewRotation: 0,
   spaceDown: false,
   palettePos: null,
   catalog: [],
@@ -862,8 +864,14 @@ function layoutStage() {
   const gapMm = state.showRegions && hasGapPaper() ? gapInfoMm() : 0;
   const availableWidth = Math.max(120, wrap.clientWidth - 48);
   const availableHeight = Math.max(120, wrap.clientHeight - 48);
-  const labelShare = state.spec.height_mm / Math.max(1e-6, state.spec.height_mm + Math.max(0, gapMm));
-  const ratio = state.spec.width_mm / Math.max(0.1, state.spec.height_mm);
+  const rotation = normalisedViewRotation();
+  const sideways = rotation === 90 || rotation === 270;
+  // Everything below works in *displayed* millimetres: a 90° view shows the label turned, so the
+  // room it needs is the swapped one. The spec itself is never touched — printing is unchanged.
+  const shownWidthMm = sideways ? state.spec.height_mm : state.spec.width_mm;
+  const shownHeightMm = sideways ? state.spec.width_mm : state.spec.height_mm;
+  const labelShare = shownHeightMm / Math.max(1e-6, shownHeightMm + Math.max(0, gapMm));
+  const ratio = shownWidthMm / Math.max(0.1, shownHeightMm);
 
   let fitHeight = availableHeight * labelShare;
   let fitWidth = fitHeight * ratio;
@@ -882,15 +890,26 @@ function layoutStage() {
   const height = Math.max(12, Math.round(fitHeight * zoom));
 
   const stage = $('#stage');
-  stage.style.width = `${width}px`;
-  stage.style.height = `${height}px`;
-  state.pxPerMm = width / state.spec.width_mm;
+  const frame = $('#stage-frame');
+  if (frame) {
+    frame.style.width = `${width}px`;
+    frame.style.height = `${height}px`;
+  }
+  // The surface keeps the label's own proportions; turning it by 90° fills the frame exactly.
+  const surfaceWidth = sideways ? height : width;
+  const surfaceHeight = sideways ? width : height;
+  stage.style.width = `${surfaceWidth}px`;
+  stage.style.height = `${surfaceHeight}px`;
+  state.pxPerMm = surfaceWidth / state.spec.width_mm;
   const zoomLabel = $('#zoom-value');
   if (zoomLabel) zoomLabel.textContent = `${Math.round(zoom * 100)}%`;
+  const rotateChip = $('#view-rotate');
+  if (rotateChip) rotateChip.classList.toggle('turned', rotation !== 0);
 
   const gapEl = $('#gap-preview');
   const gapPx = Math.round(gapMm * state.pxPerMm);
-  if (gapMm > 0 && gapPx >= 6) {
+  // A gap strip only makes sense along the paper axis; in a turned view it would point sideways.
+  if (gapMm > 0 && gapPx >= 6 && !sideways) {
     gapEl.classList.remove('hidden');
     gapEl.style.height = `${gapPx}px`;
     gapEl.style.width = `${width}px`;
@@ -904,6 +923,25 @@ function layoutStage() {
   applyGridSize();
   applyStagePan();
   renderOverlay();
+}
+
+/** View rotation in degrees, always one of 0/90/180/270. */
+function normalisedViewRotation() {
+  const value = ((Number(state.viewRotation) || 0) % 360 + 360) % 360;
+  return value === 90 || value === 180 || value === 270 ? value : 0;
+}
+
+/** Turn the editing view a quarter to the right. The label, the calibration and the print are
+ *  untouched — the canvas is only drawn turned so a 10 × 20 mm sticker can be edited lying down. */
+function rotateView(step = 90) {
+  state.viewRotation = ((normalisedViewRotation() + step) % 360 + 360) % 360;
+  writePref('viewRotation', state.viewRotation);
+  state.pan = { x: 0, y: 0 };
+  layoutStage();
+  const rotation = normalisedViewRotation();
+  toast(rotation
+    ? `Editing view turned ${rotation}° — the label and the print are unchanged`
+    : 'Editing view back to normal', 'ok');
 }
 
 function applyGridSize() {
@@ -3887,23 +3925,18 @@ function setZoom(next, clientX = null, clientY = null) {
   const wrapRect = wrap.getBoundingClientRect();
   const anchorX = clientX ?? wrapRect.left + wrapRect.width / 2;
   const anchorY = clientY ?? wrapRect.top + wrapRect.height / 2;
-  const stageRect = stage.getBoundingClientRect();
-  const pxPerMmBefore = state.pxPerMm || 1;
-  const point = {
-    x: (anchorX - stageRect.left) / pxPerMmBefore,
-    y: (anchorY - stageRect.top) / pxPerMmBefore,
-  };
+  const point = labelPoint(anchorX, anchorY);
   state.zoom = value;
   writePref('zoom', value);
   layoutStage();
   // Keep the same label point under the cursor by shifting the (transformed) stage.
-  const afterRect = stage.getBoundingClientRect();
-  const wantedLeft = anchorX - point.x * (state.pxPerMm || 1);
-  const wantedTop = anchorY - point.y * (state.pxPerMm || 1);
-  state.pan = {
-    x: (state.pan?.x || 0) + (wantedLeft - afterRect.left),
-    y: (state.pan?.y || 0) + (wantedTop - afterRect.top),
-  };
+  const after = point ? labelToScreen(point.x, point.y) : null;
+  if (after) {
+    state.pan = {
+      x: (state.pan?.x || 0) + (anchorX - after.x),
+      y: (state.pan?.y || 0) + (anchorY - after.y),
+    };
+  }
   applyStagePan();
 }
 
@@ -3911,7 +3944,12 @@ function applyStagePan() {
   const stage = $('#stage');
   if (!stage) return;
   const pan = state.pan || { x: 0, y: 0 };
-  stage.style.transform = pan.x || pan.y ? `translate(${Math.round(pan.x)}px, ${Math.round(pan.y)}px)` : '';
+  const rotation = normalisedViewRotation();
+  const parts = [];
+  if (pan.x || pan.y) parts.push(`translate(${Math.round(pan.x)}px, ${Math.round(pan.y)}px)`);
+  // The turn comes last so panning keeps moving the view by screen pixels, not by label axes.
+  if (rotation) parts.push(`rotate(${rotation}deg)`);
+  stage.style.transform = parts.join(' ');
 }
 
 function fitZoom() {
@@ -3940,8 +3978,22 @@ function bindZoomAndPan() {
       if (!button) return;
       if (button.dataset.zoom === 'in') setZoom(nextZoom(state.zoom, 1));
       else if (button.dataset.zoom === 'out') setZoom(nextZoom(state.zoom, -1));
+      else if (button.dataset.zoom === 'rotate') rotateView(90);
       else fitZoom();
     });
+    const rotate = $('#view-rotate');
+    if (rotate) {
+      rotate.addEventListener('dblclick', (event) => {
+        event.preventDefault();
+        if (normalisedViewRotation()) {
+          state.viewRotation = 0;
+          writePref('viewRotation', 0);
+          state.pan = { x: 0, y: 0 };
+          layoutStage();
+          toast('Editing view back to normal', 'ok');
+        }
+      });
+    }
   }
 
   let pan = null;
@@ -3977,7 +4029,7 @@ function bindZoomAndPan() {
   let emptyDrag = null;
   wrap.addEventListener('pointerdown', (event) => {
     if (event.button !== 0 || state.spaceDown) return;
-    const empty = ['stage', 'preview', 'grid-layer', 'guides', 'overlay', 'canvas-wrap'].includes(event.target?.id);
+    const empty = ['stage', 'stage-frame', 'preview', 'grid-layer', 'guides', 'overlay', 'canvas-wrap'].includes(event.target?.id);
     if (!empty) return;
     emptyDrag = { x: event.clientX, y: event.clientY, origin: { ...(state.pan || { x: 0, y: 0 }) }, moved: false };
   });
@@ -4291,15 +4343,42 @@ function paintDragHole(drag) {
    (so whatever it frames stays reachable), and Ctrl+click walks deeper into the stack.
    The hover frame shows the element a click would take, so it is clear what will move. */
 
+/** Where on the label (mm) the pointer is. Works in a turned view too: the canvas is rotated
+ *  about its centre, so the pointer is rotated back before it is scaled to millimetres. */
 function labelPoint(clientX, clientY) {
-  // Element boxes are positioned against the stage (they map 0..label size in mm).
-  const surface = $('#stage') || $('#preview');
-  if (!surface || !state.spec) return null;
-  const rect = surface.getBoundingClientRect();
+  const stage = $('#stage');
+  if (!stage || !state.spec) return null;
+  const rect = stage.getBoundingClientRect();
   if (rect.width < 2 || rect.height < 2) return null;
+  // Turning about the centre leaves the centre where it is, so the bounding box centre is it.
+  const cx = rect.left + rect.width / 2;
+  const cy = rect.top + rect.height / 2;
+  const angle = (-normalisedViewRotation() * Math.PI) / 180;
+  const dx = clientX - cx;
+  const dy = clientY - cy;
+  const localX = dx * Math.cos(angle) - dy * Math.sin(angle);
+  const localY = dx * Math.sin(angle) + dy * Math.cos(angle);
+  const width = stage.offsetWidth || 1;
+  const height = stage.offsetHeight || 1;
   return {
-    x: ((clientX - rect.left) / rect.width) * state.spec.width_mm,
-    y: ((clientY - rect.top) / rect.height) * state.spec.height_mm,
+    x: ((localX + width / 2) / width) * state.spec.width_mm,
+    y: ((localY + height / 2) / height) * state.spec.height_mm,
+  };
+}
+
+/** The opposite: a label point (mm) as screen pixels — used to keep a zoom anchored. */
+function labelToScreen(xMm, yMm) {
+  const stage = $('#stage');
+  if (!stage || !state.spec) return null;
+  const rect = stage.getBoundingClientRect();
+  const width = stage.offsetWidth || 1;
+  const height = stage.offsetHeight || 1;
+  const localX = (xMm / state.spec.width_mm) * width - width / 2;
+  const localY = (yMm / state.spec.height_mm) * height - height / 2;
+  const angle = (normalisedViewRotation() * Math.PI) / 180;
+  return {
+    x: rect.left + rect.width / 2 + localX * Math.cos(angle) - localY * Math.sin(angle),
+    y: rect.top + rect.height / 2 + localX * Math.sin(angle) + localY * Math.cos(angle),
   };
 }
 
@@ -4461,16 +4540,22 @@ function onPointerDown(event) {
   pushHistory();
 
   const freshBox = $('#overlay').querySelector(`.element-box[data-id="${element.id}"]`);
-  const rect = (freshBox || box).getBoundingClientRect();
-  // Resize needs a corner grab on a box that is actually big enough to have a corner —
-  // thin elements (lines, 1 mm strips) stay draggable everywhere.
-  const nearCorner = event.clientX >= rect.right - 14 && event.clientY >= rect.bottom - 14;
-  const bigEnough = rect.width >= 26 && rect.height >= 18;
+  const grab = labelPoint(event.clientX, event.clientY);
+  // The resize grip sits on the element's own bottom-right corner, so it is tested in label
+  // millimetres — that keeps it on the same corner of the artwork when the view is turned.
+  const pxPerMm = state.pxPerMm || 1;
+  const cornerTol = 14 / pxPerMm;
+  const nearCorner = !!grab
+    && grab.x >= element.x + element.w - cornerTol
+    && grab.y >= element.y + element.h - cornerTol;
+  // Thin elements (lines, 1 mm strips) have no room for a corner and stay draggable everywhere.
+  const bigEnough = element.w * pxPerMm >= 26 && element.h * pxPerMm >= 18;
   drag = {
     mode: nearCorner && bigEnough ? 'resize' : 'move',
     element,
     box: freshBox,
     origin: { x: element.x, y: element.y, w: element.w, h: element.h },
+    start: grab || { x: element.x, y: element.y },
     startX: event.clientX,
     startY: event.clientY,
     targets: alignmentTargets(element.id),
@@ -4497,8 +4582,10 @@ function onPointerMove(event) {
   const band = editBand();
   const free = event.altKey;
   const tolerance = GUIDE_TOLERANCE_PX / Math.max(1, state.pxPerMm);
-  let dx = (event.clientX - drag.startX) / state.pxPerMm;
-  let dy = (event.clientY - drag.startY) / state.pxPerMm;
+  // Deltas in label millimetres, so the element follows the pointer in a turned view as well.
+  const now = labelPoint(event.clientX, event.clientY) || drag.start;
+  let dx = now.x - drag.start.x;
+  let dy = now.y - drag.start.y;
   if (event.shiftKey) {
     if (Math.abs(dx) > Math.abs(dy)) dy = 0;
     else dx = 0;
@@ -6592,6 +6679,8 @@ function loadViewPrefs() {
   applyQueueHeight();
   const zoom = Number(readPref('zoom', 1));
   state.zoom = Number.isFinite(zoom) && zoom >= ZOOM_MIN && zoom <= ZOOM_MAX ? zoom : 1;
+  const rotation = Number(readPref('viewRotation', 0));
+  state.viewRotation = [0, 90, 180, 270].includes(rotation) ? rotation : 0;
   const palettePos = readPref('palettePos', null);
   state.palettePos = palettePos && Number.isFinite(palettePos.x) && Number.isFinite(palettePos.y)
     ? { x: Math.round(palettePos.x), y: Math.round(palettePos.y) }
@@ -7044,7 +7133,8 @@ function printLabel() {
   openPrintDialog({ fromSheet: false });
 }
 
-/* Change the label orientation: turn the whole design 90° with the label, or just swap the canvas. */
+/* Swap the print page (40 × 20 ↔ 20 × 40) without touching the artwork — a different thing from
+   turning the editing view: this one really changes the label the printer gets. */
 function setOrientation(mode) {
   const spec = state.spec;
   if (!spec) return;
@@ -7083,14 +7173,20 @@ function setOrientation(mode) {
 function openOrientationDialog() {
   const spec = state.spec;
   if (!spec) return;
+  const rotation = normalisedViewRotation();
+  const calibrated = !!state.printer?.profile;
   const body = document.createElement('div');
   body.className = 'print-dialog';
   body.innerHTML = `
-    <div class="hint">Now: <b>${round2(spec.width_mm)} × ${round2(spec.height_mm)} mm</b>.
-      Turning the label makes it <b>${round2(spec.height_mm)} × ${round2(spec.width_mm)} mm</b>.</div>
-    <button type="button" class="btn wide" data-orient="cw"><i data-lucide="rotate-cw"></i> Rotate design 90° right</button>
-    <button type="button" class="btn wide" data-orient="ccw"><i data-lucide="rotate-ccw"></i> Rotate design 90° left</button>
-    <button type="button" class="btn wide" data-orient="swap"><i data-lucide="rectangle-horizontal"></i> Swap the label only (keep the design)</button>
+    <div class="hint">Turn the <b>editing view</b> — the label, its calibration and the printed
+      result stay exactly as they are. Handy for a tall sticker you want to type on lying down.
+      Now: <b>${rotation}°</b>.</div>
+    <button type="button" class="btn wide" data-orient="view-cw"><i data-lucide="rotate-cw"></i> Turn the view 90° right</button>
+    <button type="button" class="btn wide" data-orient="view-ccw"><i data-lucide="rotate-ccw"></i> Turn the view 90° left</button>
+    <button type="button" class="btn wide" data-orient="view-reset"><i data-lucide="undo-2"></i> Back to normal (0°)</button>
+    <div class="hint">Changing the label size itself is a different thing — it moves the elements:</div>
+    <button type="button" class="btn wide" data-orient="swap"><i data-lucide="rectangle-horizontal"></i> Swap the label to ${round2(spec.height_mm)} × ${round2(spec.width_mm)} mm (keep the design)</button>
+    ${calibrated ? '<div class="hint warn-text">This roll has a calibration (item zones), so swapping the page size would take the design off it. Keep the frame as it is unless the roll really changed.</div>' : ''}
   `;
   const footer = document.createElement('div');
   footer.className = 'row';
@@ -7098,19 +7194,28 @@ function openOrientationDialog() {
   footer.innerHTML = '<button class="btn" data-orient-cancel>Cancel</button>';
   const modal = openModal({
     id: 'orientation',
-    title: 'Label orientation',
+    title: 'Orientation',
     icon: 'rotate-cw',
-    width: 430,
-    height: 300,
+    width: 460,
+    height: 400,
     body,
     footer,
   });
-  fitModalToContent(modal, { min: 220, max: 420 });
+  fitModalToContent(modal, { min: 260, max: 520 });
   $('[data-orient-cancel]', footer).onclick = () => closeModal('orientation');
   $$('[data-orient]', body).forEach((button) => {
     button.onclick = () => {
       closeModal('orientation');
-      setOrientation(button.dataset.orient);
+      const action = button.dataset.orient;
+      if (action === 'view-cw') rotateView(90);
+      else if (action === 'view-ccw') rotateView(-90);
+      else if (action === 'view-reset') {
+        state.viewRotation = 0;
+        writePref('viewRotation', 0);
+        state.pan = { x: 0, y: 0 };
+        layoutStage();
+        toast('Editing view back to normal', 'ok');
+      } else setOrientation('swap');
     };
   });
 }

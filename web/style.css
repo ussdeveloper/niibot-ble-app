@@ -342,6 +342,10 @@ svg.lucide { width: 16px; height: 16px; stroke-width: 1.7; }
 }
 .paper-column { display: flex; flex-direction: column; align-items: stretch; }
 
+/* The frame reserves the room the rotated label actually takes, so centring and scrolling stay
+   right; the label itself lives inside and is turned by the transform. */
+.stage-frame { position: relative; display: grid; place-items: center; }
+
 .stage {
   position: relative;
   background: #fff;
@@ -573,6 +577,8 @@ svg.lucide { width: 16px; height: 16px; stroke-width: 1.7; }
 }
 .stage-zoom button:hover { background: rgba(0, 194, 194, 0.16); color: var(--teal-deep); }
 .stage-zoom button svg { width: 13px; height: 13px; }
+/* The turn button shows that the view is turned, not the label. */
+.stage-zoom button.turned { background: rgba(0, 194, 194, 0.18); color: var(--teal-deep); }
 .canvas-wrap.hand { cursor: grab; }
 .canvas-wrap.panning { cursor: grabbing; }
 
@@ -1093,6 +1099,7 @@ textarea { resize: vertical; min-height: 58px; }
 .hint { color: var(--ink-muted); font-size: 11px; line-height: 1.45; }
 .hint .btn { padding: 2px 8px; font-size: 11px; margin-left: 4px; }
 .hint.warn { color: #9a5b00; background: #fff6e5; border: 1px solid #f0d9a8; border-radius: 6px; padding: 6px 8px; }
+.hint.warn-text { color: #9a5b00; }
 .ctx-menu {
   position: fixed;
   z-index: 400;
