@@ -986,6 +986,31 @@ textarea { resize: vertical; min-height: 58px; }
 .row + .row { margin-top: 7px; }
 .hint { color: var(--ink-muted); font-size: 11px; line-height: 1.45; }
 .hint.warn { color: #9a5b00; background: #fff6e5; border: 1px solid #f0d9a8; border-radius: 6px; padding: 6px 8px; }
+.device-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 8px;
+  font-size: 10px;
+  line-height: 16px;
+  vertical-align: middle;
+}
+.device-tag.known { background: rgba(0, 194, 194, 0.16); color: #0a6f6f; }
+.device-tag.other { background: rgba(0, 26, 77, 0.08); color: var(--ink-muted); }
+.diagnose-report {
+  margin: 0;
+  padding: 10px;
+  max-height: 380px;
+  overflow: auto;
+  background: #f6f8fb;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  user-select: text;
+}
 .geom-override { margin-top: 14px; padding-top: 10px; border-top: 1px dashed var(--line); }
 .geom-override h4 { margin: 0 0 4px; }
 .geom-row { display: flex; align-items: flex-end; gap: 8px; margin-top: 7px; }

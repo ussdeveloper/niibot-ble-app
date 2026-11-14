@@ -27,6 +27,8 @@ class DiscoveredDevice:
     name: str
     rssi: int | None = None
     service_uuids: list[str] = field(default_factory=list)
+    #: True when the advertisement matches the Niimbot printer service or name prefixes.
+    niimbot: bool = False
 
     def to_dict(self) -> dict:
         return {
@@ -34,6 +36,7 @@ class DiscoveredDevice:
             "name": self.name,
             "rssi": self.rssi,
             "service_uuids": self.service_uuids,
+            "niimbot": self.niimbot,
         }
 
 
@@ -80,12 +83,15 @@ class BleLink:
             devices.append(
                 DiscoveredDevice(
                     address=address,
-                    name=name or "(bez nazwy)",
+                    name=name or "(no name)",
                     rssi=adv.rssi,
                     service_uuids=uuids,
+                    niimbot=looks_like_niimbot,
                 )
             )
-        devices.sort(key=lambda d: (d.rssi is None, -(d.rssi or -999)))
+        # Printers we recognise first, then by signal strength: an unknown label printer
+        # (Fichero, Karsten, OEM clones) must still be visible and selectable.
+        devices.sort(key=lambda d: (not d.niimbot, d.rssi is None, -(d.rssi or -999)))
         return devices
 
     # --------------------------------------------------------------- connect

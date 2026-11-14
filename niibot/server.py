@@ -26,6 +26,7 @@ from . import ipp as ipp_mod
 from . import sheet, spreadsheet, store, zones
 from .bitmap import encode_image
 from .ble import BleLink
+from .diagnostics import diagnose
 from .consumables import Consumable, builtin_formats, scan_vendor_catalog
 from .fit import FitOptions, fit_to_label
 from .models import model_for_id, MODELS, PAPER_PRESETS, PaperProfile, Region, ZoneShape
@@ -130,6 +131,11 @@ class ScanRequest(BaseModel):
 
 class ConnectRequest(BaseModel):
     address: str
+
+
+class DiagnoseRequest(BaseModel):
+    address: str
+    seconds: float = 6.0
 
 
 class MirrorRequest(BaseModel):
@@ -537,6 +543,16 @@ async def api_scan(request: ScanRequest) -> dict:
         raise HTTPException(status_code=500, detail=f"Scan failed: {exc}") from exc
     state.last_scan = [device.to_dict() for device in devices]
     return {"devices": state.last_scan}
+
+
+@app.post("/api/device/diagnose")
+async def api_device_diagnose(request: DiagnoseRequest) -> dict:
+    """Identify any BLE device (see :mod:`niibot.diagnostics`)."""
+    try:
+        async with state.lock:
+            return await diagnose(request.address, request.seconds)
+    except Exception as exc:  # noqa: BLE001 - reported to the UI as is
+        raise HTTPException(status_code=502, detail=f"Could not talk to the device: {exc}") from exc
 
 
 @app.post("/api/connect")

@@ -99,6 +99,22 @@ application can print to it.
 The connection uses GATT directly (service `e7810a71-73ae-499d-8c15-faa9aef0c3f2`,
 characteristic `bef8d6c9-9c21-4c9e-b632-bd58c1009f9f`), so no drivers or COM ports are needed.
 
+**Scan lists every Bluetooth LE device**, not only Niimbot ones: a printer from another brand
+(Fichero, Karsten, OEM clones) shows up as *BLE device* and can be selected, connected or
+inspected. Press the stethoscope button next to a device to run **diagnostics** — it dumps the
+GATT tree, reads the readable characteristics and records the notification traffic for a few
+seconds, which is what identifies an unknown protocol (copy the report with one button). The same
+is available from the terminal:
+
+```powershell
+python -m niibot scan --all              # every BLE device, labelled printer vs other
+python -m niibot diagnose <address>      # services, values and notifications
+```
+
+A printer that never appears in the list is switched off, still paired to a phone, or speaks
+**classic Bluetooth (SPP)** only — Windows exposes those as a serial port instead of a BLE
+device, and they need a different transport than the one used here.
+
 ---
 
 ## Interface

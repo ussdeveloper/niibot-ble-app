@@ -4,6 +4,23 @@ All notable changes to **Niibot Studio** are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project uses [Semantic Versioning](https://semver.org/).
 
+## [0.13.12] — 2026-11-14
+
+### Added
+- **Device diagnostics** (`niibot/diagnostics.py`, `POST /api/device/diagnose`, `niibot diagnose
+  <address>`): connects to any BLE device without the Niimbot framing, dumps the GATT tree, reads
+  the readable characteristics and records every notification for a few seconds into a copyable
+  report. This is how an unknown label printer (Fichero, Karsten, OEM clones) is identified — the
+  command frames show which protocol it speaks.
+- The scan result stays visible while a printer is connected, so a second device can be inspected
+  without disconnecting the first; each row has a stethoscope button and a type badge.
+
+### Fixed
+- **Bluetooth scan no longer hides printers it does not recognise.** The list was filtered to
+  Niimbot names/service UUIDs, so any other brand simply never appeared. Every BLE device is listed
+  now (known printers first, then by signal strength) and marked *label printer* or *BLE device*;
+  the empty-scan message explains the classic-Bluetooth (SPP) case.
+
 ## [0.13.11] — 2026-11-14
 
 ### Changed

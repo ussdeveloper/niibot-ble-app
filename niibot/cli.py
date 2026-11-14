@@ -33,6 +33,10 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     info = sub.add_parser("info", help="connect and show the printer and paper state")
     info.add_argument("address")
 
+    diagnose = sub.add_parser("diagnose", help="inspect any BLE device (services + notification traffic)")
+    diagnose.add_argument("address")
+    diagnose.add_argument("--seconds", type=float, default=6.0)
+
     panel = sub.add_parser("panel", help="open the web panel (http://127.0.0.1:8765 by default)")
     panel.add_argument("--host", default="127.0.0.1")
     panel.add_argument("--port", type=int, default=8765)
@@ -60,9 +64,27 @@ async def _cmd_scan(args: argparse.Namespace) -> int:
     if not devices:
         print("No devices found. Check that the printer is on and paired.")
         return 1
-    print(f"{'address':<40} {'RSSI':>5}  name")
+    print(f"{'address':<40} {'RSSI':>5}  {'kind':<14} name")
     for device in devices:
-        print(f"{device.address:<40} {('' if device.rssi is None else device.rssi):>5}  {device.name}")
+        kind = "label printer" if device.niimbot else "ble device"
+        print(f"{device.address:<40} {('' if device.rssi is None else device.rssi):>5}  {kind:<14} {device.name}")
+    if not any(device.niimbot for device in devices):
+        print("\nNo printer from the Niimbot family found. `niibot diagnose <address>` inspects any device.")
+    return 0
+
+
+async def _cmd_diagnose(args: argparse.Namespace) -> int:
+    from .diagnostics import diagnose
+
+    try:
+        result = await diagnose(args.address, args.seconds)
+    except Exception as exc:
+        print(f"Diagnose failed: {exc}", file=sys.stderr)
+        return 2
+    print(result["report"])
+    for item in result["notifications"][:60]:
+        print(f"  {item['at']:>6}s  {item['uuid']}  {item['hex']}")
+    print(f"\n{result['verdict']}")
     return 0
 
 
@@ -256,6 +278,8 @@ def main(argv: list[str] | None = None) -> int:
         return asyncio.run(_cmd_scan(args))
     if args.command == "info":
         return asyncio.run(_cmd_info(args))
+    if args.command == "diagnose":
+        return asyncio.run(_cmd_diagnose(args))
     if args.command == "print":
         return asyncio.run(_cmd_print(args))
     if args.command == "panel":

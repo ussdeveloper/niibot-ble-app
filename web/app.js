@@ -4992,6 +4992,7 @@ function bindSettingsActions(content) {
       if (action === 'import-catalog') await importCatalog(event.target.closest('[data-action]'));
       if (action === 'roll-format') openRollSizeDialog();
       if (action === 'device-save') await saveDeviceGeometry(content);
+      if (action === 'diagnose') await diagnoseDevice(event.target.closest('[data-address]').dataset.address);
       if (action === 'use-format') {
         const index = Number(event.target.closest('[data-index]').dataset.index);
         const item = state.catalog[index];
@@ -5071,24 +5072,35 @@ async function saveDeviceGeometry(content) {
 function renderPrinterTab() {
   const payload = state.printer || {};
   const devices = state.lastDevices;
-  let list = '';
-  if (state.connected) {
-    list = `<div class="device">
-      <div><strong>${escapeHtml(payload.info?.model_name || 'printer')}</strong><small>${escapeHtml(payload.link?.address || '')}</small></div>
-      <div class="row" style="gap:6px">
-        <button class="btn" data-action="test-print"><i data-lucide="printer"></i> Test print</button>
-        <span class="dot ok"></span>
-      </div>
-    </div>`;
-  } else if (devices && devices.length) {
-    list = devices.map((device) => `
+  const connectedAddress = state.connected ? (payload.link?.address || '') : '';
+  const connectedCard = state.connected
+    ? `<div class="device">
+        <div><strong>${escapeHtml(payload.info?.model_name || 'printer')}</strong>
+          <span class="device-tag known">connected</span>
+          <small>${escapeHtml(connectedAddress)}</small></div>
+        <div class="row" style="gap:6px">
+          <button class="btn" data-action="test-print"><i data-lucide="printer"></i> Test print</button>
+          <span class="dot ok"></span>
+        </div>
+      </div>`
+    : '';
+  const scanned = (devices || []).map((device) => `
       <div class="device">
-        <div><strong>${escapeHtml(device.name)}</strong><small>${escapeHtml(device.address)}${device.rssi ? ` · ${device.rssi} dBm` : ''}</small></div>
-        <button class="btn" data-action="connect" data-address="${escapeHtml(device.address)}">Connect</button>
+        <div>
+          <strong>${escapeHtml(device.name)}</strong>
+          <span class="device-tag ${device.niimbot ? 'known' : 'other'}">${device.niimbot ? 'label printer' : 'BLE device'}</span>
+          ${device.address === connectedAddress ? '<span class="device-tag known">current</span>' : ''}
+          <small>${escapeHtml(device.address)}${device.rssi ? ` · ${device.rssi} dBm` : ''}</small>
+        </div>
+        <div class="row" style="gap:6px">
+          <button class="btn" data-action="diagnose" data-address="${escapeHtml(device.address)}" title="Inspect services and notification traffic"><i data-lucide="stethoscope"></i></button>
+          <button class="btn" data-action="connect" data-address="${escapeHtml(device.address)}" ${device.address === connectedAddress ? 'disabled' : ''}>Connect</button>
+        </div>
       </div>`).join('');
-  } else {
-    list = '<div class="empty">Turn the printer on and press “Scan”.</div>';
-  }
+  // A scan result stays visible while connected, so a second printer can be inspected.
+  const list = connectedCard + (scanned || (state.connected
+    ? ''
+    : '<div class="empty">Turn the printer on and press “Scan”.</div>'));
 
   const info = payload.info || {};
   return `
@@ -5101,7 +5113,10 @@ function renderPrinterTab() {
         <button class="btn danger" data-action="disconnect" ${state.connected ? '' : 'disabled'}><i data-lucide="power"></i> Disconnect</button>
       </div>
       <div class="device-list" style="margin-top:10px">${list}</div>
-      <div class="hint" style="margin-top:6px">The test print sends a small sample using the detected paper format — the quickest way to verify the connection and the print quality.</div>
+      <div class="hint" style="margin-top:6px">Every Bluetooth LE device nearby is listed — printers that are not from the Niimbot family show up as
+        <em>BLE device</em>. The test print sends a small sample using the detected paper format — the quickest way to verify the connection and the print quality.
+        A printer that never appears here is either off, already paired to a phone, or speaks classic Bluetooth (SPP) only, which Windows exposes as a serial port
+        rather than a BLE device.</div>
     </section>
     <section>
       <h3>Model</h3>
@@ -5500,16 +5515,69 @@ async function scanDevices(button) {
     refreshIcons(button);
   }
   try {
-    const { devices } = await api('/api/scan', 'POST', { timeout: 6, show_all: false });
+    const { devices } = await api('/api/scan', 'POST', { timeout: 6, show_all: true });
     state.lastDevices = devices;
     renderSettingsTab();
-    if (!devices.length) toast('No printers found — check that they are switched on.', 'error');
+    if (!devices.length) {
+      toast('No Bluetooth device found — is the printer switched on? A printer that only offers classic Bluetooth (SPP) never appears in this list.', 'error');
+    }
   } finally {
     if (button && button.isConnected) {
       button.disabled = false;
       button.innerHTML = previous;
       refreshIcons(button);
     }
+  }
+}
+
+/* Inspect an unknown BLE device: services, characteristics and whatever it says on its
+   notifications. This is how a Fichero/Karsten/OEM printer gets identified — the report can
+   be copied out with one button. */
+async function diagnoseDevice(address) {
+  const body = document.createElement('div');
+  body.className = 'modal-body';
+  body.innerHTML = `<div class="hint"><span class="spinner"></span> Listening to ${escapeHtml(address)} for a few seconds…</div>`;
+  const footer = document.createElement('div');
+  footer.innerHTML = `
+    <span class="hint" id="diagnose-verdict"></span>
+    <button class="btn" data-diagnose="copy" disabled><i data-lucide="copy"></i> Copy report</button>
+    <button class="btn" data-diagnose="close">Close</button>`;
+  const modal = openModal({
+    id: 'diagnose',
+    title: 'Device diagnostics',
+    icon: 'stethoscope',
+    width: 760,
+    height: 520,
+    body,
+    footer,
+  });
+  refreshIcons(modal);
+
+  let report = '';
+  footer.querySelector('[data-diagnose="close"]').onclick = () => closeModal('diagnose');
+  footer.querySelector('[data-diagnose="copy"]').onclick = async (event) => {
+    try {
+      await navigator.clipboard.writeText(report);
+      toast('Report copied', 'ok');
+    } catch (_) {
+      toast('Copy failed — select the text and copy it manually.', 'error');
+    }
+  };
+
+  try {
+    const result = await api('/api/device/diagnose', 'POST', { address, seconds: 6 });
+    const lines = [result.report, '', `notifications ${result.notifications.length} (${result.bytes} bytes)`];
+    for (const item of result.notifications.slice(0, 60)) {
+      lines.push(`  ${String(item.at).padStart(6)}s  ${item.uuid}  ${item.hex}`);
+    }
+    report = lines.join('\n');
+    body.innerHTML = `<pre class="diagnose-report">${escapeHtml(report)}</pre>`;
+    footer.querySelector('#diagnose-verdict').textContent = result.verdict;
+    footer.querySelector('[data-diagnose="copy"]').disabled = false;
+  } catch (error) {
+    report = `diagnose failed: ${error.message}`;
+    body.innerHTML = `<div class="hint">${escapeHtml(error.message)}</div>`;
+    footer.querySelector('#diagnose-verdict').textContent = 'Device did not answer.';
   }
 }
 
