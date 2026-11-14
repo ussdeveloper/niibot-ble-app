@@ -21,6 +21,8 @@ project uses [Semantic Versioning](https://semver.org/).
   still used the author's own Bluetooth addresses and printer serials; they are now synthetic
   (`C9:48:8A:00:00:01`, `B1-G000000001`), and the serial and MAC visible in the screenshots are
   masked. A note under *Screenshots* says that all company and product data there is fictional.
+  The published Git history was rewritten the same way, so earlier commits no longer carry those
+  identifiers either.
 
 ## [0.15.2] — 2026-11-14
 
