@@ -4,6 +4,15 @@ All notable changes to **Niibot Studio** are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project uses [Semantic Versioning](https://semver.org/).
 
+## [0.13.5] — 2026-11-14
+
+### Changed
+- **The first chip in the label bar is the roll itself**: the roll's name in bold when it has one, and
+  the label size („42 × 21 mm”) when it does not — instead of the sticker size, which read like a
+  contradiction next to a 42 × 21 mm label. The separate name chip is gone.
+- The sticker size and print page moved into the chip's tooltip (“sticker 21 × 21 mm · print page
+  42 × 21 mm”) and stay visible where they belong: inside the calibrator.
+
 ## [0.13.4] — 2026-11-14
 
 ### Added

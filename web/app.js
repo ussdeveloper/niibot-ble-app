@@ -484,30 +484,31 @@ function renderStageMeta() {
   const spec = state.spec;
   const geo = paperGeometry();
   const paper = state.printer?.paper || {};
-  const rollName = paper.sku || paper.catalog?.name || paper.barcode;
   const known = !!geo.catalog || Number(paper.detected_width_mm) > 0 || !!state.printer?.profile;
-  /* The size people care about is one sticker — the print page is the grid of them. */
+  /* Headline chip = the roll's name when it has one, otherwise the label (print page) size.
+     The sticker size only matters inside the calibrator, so it lives in the tooltip. */
   const rollProfile = state.printer?.profile;
   const hasSticker = Number(rollProfile?.sticker_w_mm) > 0 && Number(rollProfile?.sticker_h_mm) > 0;
   const stickerText = hasSticker
     ? `${round2(rollProfile.sticker_w_mm)} × ${round2(rollProfile.sticker_h_mm)} mm` : null;
+  const pageText = `${round2(spec.width_mm)} × ${round2(spec.height_mm)} mm`;
+  const typedName = String(rollProfile?.name || '').trim();
+  const nameIsPlaceholder = !typedName
+    || /^\d+$/.test(typedName)
+    || typedName === String(paper.barcode || '')
+    || typedName === stickerText
+    || typedName === pageText;
+  const headline = nameIsPlaceholder ? pageText : typedName;
+  const headlineTitle = `Click to calibrate${stickerText ? ` · sticker ${stickerText}` : ''} · print page ${pageText}`;
   const chips = [];
   if (state.calibrationOffline && rollProfile) {
     chips.push(`<span class="meta-chip warn" id="meta-calib-offline"
       title="The printer is disconnected, so the roll code cannot be read — showing the calibration of the last roll used. It is not synced with the printer.">
       <i data-lucide="alert-triangle"></i> offline calibration</span>`);
   }
-  chips.push(`<button type="button" class="meta-chip" id="meta-roll-size"
-    title="Sticker size — click to calibrate. Print page: ${round2(spec.width_mm)} × ${round2(spec.height_mm)} mm">
-    <b>${stickerText || `${round2(spec.width_mm)} × ${round2(spec.height_mm)} mm`}</b></button>`);
+  chips.push(`<button type="button" class="meta-chip" id="meta-roll-size" title="${escapeHtml(headlineTitle)}">
+    <b>${escapeHtml(headline)}</b></button>`);
   if (geo.typeName) chips.push(`<span class="meta-chip type">paper: ${escapeHtml(geo.typeName)}</span>`);
-  {
-    // A roll without a typed name is described by its sticker size, never by the RFID code.
-    const typed = state.printer?.profile?.name;
-    const useful = typed && !/^\d+$/.test(String(typed).trim()) && String(typed).trim() !== String(paper.barcode || '');
-    const shown = useful ? typed : (stickerText || rollName);
-    if (shown) chips.push(`<span class="meta-chip mono">${escapeHtml(shown)}</span>`);
-  }
   // Reachable off-line too: the calibrator can be edited and stored for the remembered roll.
   chips.push(`<button type="button" class="meta-chip${known ? '' : ' warn'}" id="meta-calibrate"
     title="${known ? 'Size and printable cells of this roll — reopen the calibrator any time'

@@ -193,7 +193,9 @@ the editor and the check print merge them into one area. Rows × columns lay out
 zones in one go, and `Print zone borders` sends only those outlines to the printer so the
 placement can be checked on the physical label.
 
-The **main size is one sticker**; the print page is derived from it and the grid
+The first chip in the label bar names the roll (or shows the label size when the roll has no name).
+
+In the calibrator the **main size is one sticker**; the print page is derived from it and the grid
 (2 across × 1 down = 42 × 21 mm) and the calibrator warns when it exceeds the printhead.
 Dragging and resizing snap to 0.5 mm (hold Alt for 0.1 mm), and the grid matches that step; the
 label centre and quarter lines are drawn behind the zones and catch a dragged edge or centre.
