@@ -134,7 +134,8 @@ device, and they need a different transport than the one used here.
 
 Keyboard: `Ctrl+Z/Y` undo/redo, `Ctrl+S` save, `Ctrl+P` print, `Ctrl+D` duplicate,
 `Delete` remove, arrows nudge by 1 mm (`Shift` = 0.2 mm), `G` grid, `S` snapping,
-`Ctrl+=`/`Ctrl+-`/`Ctrl+0` zoom in/out/fit, `Alt` while dragging = free movement,
+`Ctrl+=`/`Ctrl+-`/`Ctrl+0` zoom in/out/fit, the wheel zooms around the cursor (`Shift`+wheel
+scrolls instead), `Alt` while dragging = free movement,
 `Shift` while dragging = one axis.
 
 ### Canvas, grid and guides
@@ -145,10 +146,11 @@ around and underneath stay readable while you aim. While dragging, edges and cen
 elements as well as the label edges/centre produce subtle alignment guides (centre lines use a
 different colour). With snapping on, positions snap to the 1 mm grid and to those guides.
 
-**Zoom and pan** work like an image editor: `Ctrl`+wheel zooms around the cursor (the point under
-the pointer stays put), the chip in the corner steps through the zoom levels, `Ctrl+0` fits the
-label. Pan with the middle button, `Space`+drag or by dragging the empty canvas; *fit* also resets
-the pan. The zoom level is remembered in the database.
+**Zoom and pan** work like an image editor: the **wheel zooms around the cursor** (the point under
+the pointer stays put — `Ctrl`+wheel does the same, so a trackpad pinch works too), the chip in the
+corner steps through the zoom levels, `Ctrl+0` fits the label. Hold **`Shift` and scroll** to move
+the canvas without zooming, or pan with the middle button, `Space`+drag or by dragging the empty
+canvas; *fit* also resets the pan. The zoom level is remembered in the database.
 
 **Turning the view** is the ⟳ button in that same chip: it rotates the canvas 90° to the right so a
 tall sticker can be edited lying down, then 180°, 270° and back (double-click resets). Nothing about

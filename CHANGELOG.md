@@ -4,6 +4,14 @@ All notable changes to **Niibot Studio** are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project uses [Semantic Versioning](https://semver.org/).
 
+## [0.15.4] — 2026-11-14
+
+### Changed
+- **The mouse wheel zooms the work area.** Before, only `Ctrl`+wheel zoomed and a plain wheel just
+  scrolled, which reads as “zoom does not work” when the whole label is already visible. The wheel
+  now zooms around the cursor (as does `Ctrl`+wheel, so a trackpad pinch keeps working) and
+  **`Shift`+wheel** scrolls the canvas instead. The zoom chip's tooltip says so.
+
 ## [0.15.3] — 2026-11-14
 
 ### Changed

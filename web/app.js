@@ -4014,7 +4014,9 @@ function bindZoomAndPan() {
   const wrap = $('#canvas-wrap');
   if (!wrap) return;
   wrap.addEventListener('wheel', (event) => {
-    if (!(event.ctrlKey || event.metaKey)) return; // plain wheel keeps scrolling
+    // Over the work area the wheel zooms around the pointer — that is what you look at while
+    // designing. Shift+wheel keeps the native scroll, so a zoomed-in label is still reachable.
+    if (event.shiftKey || !event.deltaY) return;
     event.preventDefault();
     setZoom(nextZoom(state.zoom, event.deltaY < 0 ? 1 : -1), event.clientX, event.clientY);
   }, { passive: false });
