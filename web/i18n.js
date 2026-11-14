@@ -19,7 +19,9 @@
 
   const DICT = {
     pl: {
+      'Printer queue': 'Kolejka druku',
       File: 'Plik', Edit: 'Edycja', View: 'Widok', Settings: 'Ustawienia', Help: 'Pomoc',
+      Ready: 'Gotowe', 'Not Ready': 'Brak gotowości', 'Checking…': 'Sprawdzam…',
       Language: 'Język', 'not connected': 'nie połączono', 'Connection state': 'Stan połączenia',
       Design: 'Projekt', Sheet: 'Arkusz', 'Work area view': 'Widok obszaru roboczego',
       Properties: 'Właściwości', Layers: 'Warstwy', 'Select an element on the label to edit it.':
@@ -73,6 +75,8 @@
       'fits roll': 'pasuje do rolki', 'no data yet': 'brak danych',
     },
     de: {
+      'Printer queue': 'Druckwarteschlange',
+      Ready: 'Bereit', 'Not Ready': 'Nicht bereit', 'Checking?': 'Pr?fe?',
       File: 'Datei', Edit: 'Bearbeiten', View: 'Ansicht', Settings: 'Einstellungen', Help: 'Hilfe',
       Language: 'Sprache', 'not connected': 'nicht verbunden', 'Connection state': 'Verbindungsstatus',
       Design: 'Design', Sheet: 'Tabelle', 'Work area view': 'Arbeitsbereich',
@@ -121,6 +125,8 @@
       'fits roll': 'passt zur Rolle', 'no data yet': 'noch keine Daten',
     },
     fr: {
+      'Printer queue': 'File d\'impression',
+      Ready: 'Pr?t', 'Not Ready': 'Indisponible', 'Checking?': 'V?rification?',
       File: 'Fichier', Edit: 'Édition', View: 'Affichage', Settings: 'Paramètres', Help: 'Aide',
       Language: 'Langue', 'not connected': 'non connecté', 'Connection state': 'État de connexion',
       Design: 'Projet', Sheet: 'Feuille', 'Work area view': 'Zone de travail',
@@ -168,6 +174,8 @@
       'fits roll': 'compatible', 'no data yet': 'aucune donnée',
     },
     es: {
+      'Printer queue': 'Cola de impresi?n',
+      Ready: 'Listo', 'Not Ready': 'No disponible', 'Checking?': 'Comprobando?',
       File: 'Archivo', Edit: 'Editar', View: 'Ver', Settings: 'Ajustes', Help: 'Ayuda',
       Language: 'Idioma', 'not connected': 'sin conexión', 'Connection state': 'Estado de conexión',
       Design: 'Diseño', Sheet: 'Hoja', 'Work area view': 'Área de trabajo',
@@ -215,6 +223,8 @@
       'fits roll': 'cabe en el rollo', 'no data yet': 'aún sin datos',
     },
     it: {
+      'Printer queue': 'Coda di stampa',
+      Ready: 'Pronto', 'Not Ready': 'Non pronto', 'Checking?': 'Verifica?',
       File: 'File', Edit: 'Modifica', View: 'Vista', Settings: 'Impostazioni', Help: 'Aiuto',
       Language: 'Lingua', 'not connected': 'non connesso', 'Connection state': 'Stato connessione',
       Design: 'Progetto', Sheet: 'Foglio', 'Work area view': 'Area di lavoro',

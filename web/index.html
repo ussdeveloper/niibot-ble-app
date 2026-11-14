@@ -115,13 +115,6 @@
         <div class="sheet-hint" id="sheet-hint"></div>
       </div>
 
-      <!-- view switcher (bottom left) -->
-      <div class="editor-tabs" id="editor-tabs">
-        <span class="tabs-grip" title="Work area view"><i data-lucide="grip-horizontal"></i></span>
-        <button class="editor-tab active" data-view="design"><i data-lucide="layout-template"></i> Design</button>
-        <button class="editor-tab" data-view="sheet"><i data-lucide="table-2"></i> Sheet</button>
-      </div>
-
       <!-- floating toolbar above the work area -->
       <div class="floating-toolbar" id="floating-toolbar" hidden>
         <span class="ft-label" id="ft-label">element</span>
@@ -162,7 +155,17 @@
 
   <!-- right panel: properties + layers -->
   <aside class="panel">
-    <header class="panel-title"><i data-lucide="sliders-horizontal"></i><span>Properties</span></header>
+    <header class="panel-title">
+      <i data-lucide="sliders-horizontal"></i><span>Properties</span>
+      <div class="editor-tabs" id="editor-tabs" role="tablist">
+        <button class="editor-tab active" data-view="design" role="tab" title="Design view">
+          <i data-lucide="layout-template"></i><span>Design</span>
+        </button>
+        <button class="editor-tab" data-view="sheet" role="tab" title="Sheet view">
+          <i data-lucide="table-2"></i><span>Sheet</span>
+        </button>
+      </div>
+    </header>
     <div class="panel-body" id="inspector-card">
       <div class="panel-empty">Select an element on the label to edit it.</div>
     </div>
@@ -177,6 +180,11 @@
       <button id="layer-duplicate" title="Duplicate (Ctrl+D)"><i data-lucide="copy"></i></button>
       <button id="layer-delete" class="danger" title="Delete (Del)"><i data-lucide="trash-2"></i></button>
     </div>
+    <header class="panel-title">
+      <i data-lucide="list-ordered"></i><span>Printer queue</span>
+      <span class="panel-count" id="queue-count">0</span>
+    </header>
+    <div class="panel-body panel-queue" id="queue-list"></div>
   </aside>
 
   <div class="panel-resizer" id="panel-resizer" title="Drag to resize the panel"></div>

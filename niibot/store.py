@@ -140,7 +140,12 @@ CREATE TABLE IF NOT EXISTS print_jobs (
     sku           TEXT,
     width_mm      REAL,
     height_mm     REAL,
-    error         TEXT
+    error         TEXT,
+    printer       TEXT,
+    protocol      TEXT,
+    kind          TEXT,
+    message       TEXT,
+    payload       TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_jobs_started ON print_jobs(started_at);
 """
@@ -213,6 +218,19 @@ def _migrate_schema(db: sqlite3.Connection) -> None:
         db.execute("ALTER TABLE consumables ADD COLUMN cols INTEGER")
     if "regions" not in consumable_columns:
         db.execute("ALTER TABLE consumables ADD COLUMN regions TEXT")
+
+    # The print queue shows what was printed on which printer and can repeat it, so the
+    # history needs a little more than counters.
+    job_columns = {row["name"] for row in db.execute("PRAGMA table_info(print_jobs)").fetchall()}
+    for column, ddl in (
+        ("printer", "TEXT"),
+        ("protocol", "TEXT"),
+        ("kind", "TEXT"),
+        ("message", "TEXT"),
+        ("payload", "TEXT"),
+    ):
+        if column not in job_columns:
+            db.execute(f"ALTER TABLE print_jobs ADD COLUMN {column} {ddl}")
 
 
 # ----------------------------------------------------------------- migration
@@ -803,12 +821,18 @@ def record_print_job(
     width_mm: float | None = None,
     height_mm: float | None = None,
     error: str | None = None,
+    printer: str | None = None,
+    protocol: str | None = None,
+    kind: str | None = None,
+    message: str | None = None,
+    payload: str | None = None,
 ) -> None:
     with connect() as db:
         db.execute(
             "INSERT INTO print_jobs(job_id, started_at, finished_at, state, rows, cols, packets, copies,"
-            " density, label_type, paper_barcode, sku, width_mm, height_mm, error)"
-            " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " density, label_type, paper_barcode, sku, width_mm, height_mm, error, printer, protocol,"
+            " kind, message, payload)"
+            " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 job_id,
                 started_at,
@@ -825,7 +849,45 @@ def record_print_job(
                 width_mm,
                 height_mm,
                 error,
+                printer,
+                protocol,
+                kind,
+                message,
+                payload,
             ),
+        )
+
+
+def list_print_jobs(limit: int = 25) -> list[dict[str, Any]]:
+    """Newest print jobs first — the printer queue panel reads this."""
+    with connect() as db:
+        rows = db.execute(
+            "SELECT id, job_id, started_at, finished_at, state, copies, width_mm, height_mm, sku,"
+            " paper_barcode, printer, protocol, kind, message, error, payload IS NOT NULL AS repeatable"
+            " FROM print_jobs ORDER BY id DESC LIMIT ?",
+            (max(1, int(limit)),),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def get_print_job(row_id: int) -> dict[str, Any] | None:
+    with connect() as db:
+        row = db.execute("SELECT * FROM print_jobs WHERE id = ?", (int(row_id),)).fetchone()
+    return dict(row) if row else None
+
+
+def delete_print_job(row_id: int) -> bool:
+    with connect() as db:
+        cursor = db.execute("DELETE FROM print_jobs WHERE id = ?", (int(row_id),))
+        return cursor.rowcount > 0
+
+
+def prune_print_jobs(keep: int = 500) -> None:
+    """Keep the history bounded — one label per job and the queue never grows forever."""
+    with connect() as db:
+        db.execute(
+            "DELETE FROM print_jobs WHERE id NOT IN (SELECT id FROM print_jobs ORDER BY id DESC LIMIT ?)",
+            (max(10, int(keep)),),
         )
 
 

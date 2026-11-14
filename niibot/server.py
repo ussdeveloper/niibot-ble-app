@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import io
+import json
 import logging
 import platform
 import struct
@@ -41,6 +42,8 @@ from .version import APP_NAME, APP_TAGLINE, __version__
 
 log = logging.getLogger(__name__)
 WEB_DIR = resource_dir() / "web"
+#: ``time.monotonic()`` when the process started — reported by ``/api/health``.
+STARTED_AT = time.monotonic()
 
 
 def _label_count(count: int) -> str:
@@ -66,6 +69,13 @@ class Job:
     height_mm: float | None = None
     started: float = field(default_factory=time.time)
     finished: float | None = None
+    #: What produced the job — ``label``, ``sheet`` or ``windows`` (IPP queue).
+    kind: str = "label"
+    #: Printer name shown in the queue panel.
+    printer: str | None = None
+    protocol: str | None = None
+    #: JSON of the spec (or the list of specs for a sheet) so the job can be repeated.
+    payload: str | None = None
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -495,6 +505,11 @@ def _state_payload() -> dict:
             "reconnects": state.reconnects,
         },
         "last_address": settings.get("last_address"),
+        "last_name": settings.get("last_name"),
+        "auto_connect": {
+            "enabled": str(settings.get("auto_connect", "1")) not in {"0", "false", "False", ""},
+            "status": getattr(state, "auto_status", "idle"),
+        },
         "last_error": state.printer.last_error or state.printer.link.last_error,
     }
 
@@ -502,6 +517,19 @@ def _state_payload() -> dict:
 @app.get("/api/state")
 async def api_state() -> dict:
     return _state_payload()
+
+
+@app.get("/api/health")
+async def api_health() -> dict:
+    """Cheap liveness probe for the Ready/Not Ready chip — no database, no Bluetooth."""
+    return {
+        "ready": True,
+        "version": __version__,
+        "uptime_s": round(time.monotonic() - STARTED_AT, 1),
+        "connected": state.connected,
+        "protocol": state.protocol,
+        "auto_connect": getattr(state, "auto_status", "idle"),
+    }
 
 
 @app.get("/api/app-info")
@@ -557,44 +585,128 @@ async def api_options() -> dict:
 
 
 # ------------------------------------------------------------------ devices
-AUTO_CONNECT_RETRY_S = 25.0
+#: How often the remembered printer is looked for while it is missing, and how often once the
+#: radio has been quiet for a while (scanning is cheap but keeps the adapter busy).
+AUTO_CONNECT_FAST_S = 10.0
+AUTO_CONNECT_SLOW_S = 25.0
+AUTO_CONNECT_FAST_TRIES = 6
+
+
+def _remembered_printer() -> tuple[str, str, tuple[str, ...]]:
+    """(address, protocol, names) of the printer the app should reconnect to."""
+    settings = store.load_settings()
+    address = str(settings.get("last_address") or "").strip()
+    names = [str(settings.get("last_name") or "").strip()]
+    for row in store.list_printers():
+        if row["address"].lower() == address.lower():
+            names.append(str(row.get("name") or "").strip())
+    return address, _protocol_for(address, settings), tuple(name for name in names if name)
+
+
+def _describe_error(exc: BaseException) -> str:
+    """Readable error text — ``TimeoutError`` and friends carry no message at all."""
+    text = str(exc).strip()
+    return f"{type(exc).__name__}: {text}" if text else type(exc).__name__
+
+
+async def _connect_with_retries(address: str, protocol: str, label: str) -> str:
+    """Open the link, retrying a couple of times: the printer stops advertising while the
+    first connection is being set up, and Windows often answers the first attempt with a
+    plain ``TimeoutError``. Returns a status line, raises when every attempt failed."""
+    last_error: BaseException | None = None
+    for attempt in range(1, 4):
+        try:
+            async with state.lock:
+                state.use_protocol(protocol)
+                _apply_device_geometry()
+                await state.printer.connect(address)
+            return "connected"
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - retried below
+            last_error = exc
+            state.auto_status = f"connect attempt {attempt}/3 failed ({_describe_error(exc)})"
+            log.warning("Connect attempt %s/3 to %s failed: %s", attempt, label, _describe_error(exc))
+            try:
+                await state.printer.disconnect()
+            except Exception:  # noqa: BLE001 - best effort
+                pass
+            if attempt < 3:
+                await asyncio.sleep(2.0)
+    raise last_error if last_error is not None else RuntimeError("connect failed")
+
+
+async def _auto_connect_once() -> tuple[bool, str]:
+    """One attempt. Returns (connected, status line for the UI)."""
+    address, protocol, names = _remembered_printer()
+    if not address:
+        return False, "no printer saved yet"
+    if state.connected:
+        return True, "connected"
+    if state.reconnecting:
+        return False, "reconnecting"
+    label = names[0] if names else address
+    state.auto_status = f"looking for {label}"
+    try:
+        match = await BleLink.find_printer(address, names=names, timeout=6.0)
+    except Exception as exc:  # noqa: BLE001 - a failed scan must not kill the loop
+        state.auto_status = f"scan failed: {_describe_error(exc)}"
+        return False, state.auto_status
+    if not match:
+        state.auto_status = f"{label} is not in range"
+        return False, state.auto_status
+
+    if match["address"].lower() != address.lower():
+        # Same printer, new random BLE address after a power cycle: adopt it.
+        log.warning("Printer %s now advertises as %s — updating the saved address", label, match["address"])
+        store.save_settings({"last_address": match["address"]})
+        address = match["address"]
+    state.auto_status = f"connecting to {label}"
+    await _connect_with_retries(address, protocol, label)
+    store.save_settings({"last_address": address, "last_name": label})
+    try:
+        store.remember_printer({
+            "address": address,
+            "name": state.printer.link.name or label,
+            "protocol": protocol,
+            "device_scope": device_scope(),
+            "model_key": state.printer.info.model_key,
+            "model_name": state.printer.info.model_name,
+            "scope": device_scope(),
+        })
+    except Exception:  # pragma: no cover - registry is best effort
+        pass
+    try:
+        await state.printer.refresh()
+    except Exception:  # pragma: no cover - status is best effort
+        pass
+    state.auto_status = "connected"
+    log.warning("Auto-connected to %s (%s)", label, address)
+    return True, "connected"
 
 
 async def _auto_connect_loop() -> None:
     """Connect to the remembered printer whenever it appears in range."""
-    await asyncio.sleep(2.5)
+    await asyncio.sleep(1.5)
+    misses = 0
     while True:
         try:
             settings = store.load_settings()
-            address = (settings.get("last_address") or "").strip()
             enabled = str(settings.get("auto_connect", "1")) not in {"0", "false", "False", ""}
-            if enabled and address and not state.connected and not state.reconnecting:
-                state.auto_status = f"Looking for {address}\u2026"
-                in_range = await BleLink.find_by_address(address, timeout=6.0)
-                if in_range:
-                    state.auto_status = f"Connecting to {address}\u2026"
-                    async with state.lock:
-                        state.use_protocol(_protocol_for(address, settings))
-                        _apply_device_geometry()
-                        await state.printer.connect(address)
-                        store.save_settings({"last_address": address})
-                        try:
-                            await state.printer.refresh()
-                        except Exception:  # pragma: no cover - status is best effort
-                            pass
-                    state.auto_status = "connected"
-                    log.info("Auto-connected to %s", address)
-                    await asyncio.sleep(AUTO_CONNECT_RETRY_S)
-                    continue
-                state.auto_status = "not in range"
+            if enabled and not state.connected and not state.reconnecting:
+                connected, _status = await _auto_connect_once()
+                misses = 0 if connected else misses + 1
             else:
                 state.auto_status = "connected" if state.connected else "idle"
+                misses = 0
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 - keep the loop alive
             state.auto_status = f"auto-connect failed: {exc}"
-            log.debug("Automatic connect failed: %s", exc)
-        await asyncio.sleep(AUTO_CONNECT_RETRY_S)
+            log.warning("Automatic connect failed: %s", exc)
+            misses += 1
+        delay = AUTO_CONNECT_FAST_S if misses <= AUTO_CONNECT_FAST_TRIES else AUTO_CONNECT_SLOW_S
+        await asyncio.sleep(delay)
 
 
 KEEP_ALIVE_S = 5.0
@@ -693,8 +805,8 @@ async def _keep_alive_loop() -> None:
                     if await _reconnect_printer(address, protocol):
                         state.reconnects += 1
                         log.warning("Printer is back online (%s)", state.printer.info.model_name)
-                elif not state.reconnect_wanted:
-                    state.auto_status = "disconnected" if not state.connected else state.auto_status
+                # Nothing connected and nothing wanted: leave auto_status alone — the
+                # auto-connect loop owns it and the status bar shows what it is doing.
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 - keep the loop alive
@@ -717,21 +829,18 @@ async def api_keepalive_drop() -> dict:
 @app.post("/api/auto-connect")
 async def api_auto_connect() -> dict:
     """Trigger an immediate attempt (the UI calls this right after start-up)."""
-    settings = store.load_settings()
-    address = (settings.get("last_address") or "").strip()
+    address, _protocol, _names = _remembered_printer()
     if not address:
         raise HTTPException(status_code=409, detail="No printer has been paired yet.")
     if state.connected:
         return _state_payload()
-    if not await BleLink.find_by_address(address, timeout=8.0):
-        raise HTTPException(status_code=404, detail=f"Printer {address} is not in range.")
-    async with state.lock:
-        await state.printer.connect(address)
-        try:
-            await state.printer.refresh()
-        except Exception:  # pragma: no cover
-            pass
-    state.auto_status = "connected"
+    if state.reconnecting:
+        await asyncio.sleep(1.5)
+        if state.connected:
+            return _state_payload()
+    connected, status = await _auto_connect_once()
+    if not connected:
+        raise HTTPException(status_code=404, detail=f"Printer not reachable: {status}")
     return _state_payload()
 
 
@@ -954,7 +1063,12 @@ async def api_connect(request: ConnectRequest) -> dict:
             detail = f"Could not connect: {last_error}" if last_error else "Could not connect"
             raise HTTPException(status_code=502, detail=detail) from last_error
         store.save_settings({"printer_protocol": "auto" if auto else state.protocol})
-        store.save_settings({"last_address": request.address})
+        # Name as well as address: a printer with a random BLE address comes back under a new
+        # one after a power cycle, and only the name tells the app it is the same unit.
+        store.save_settings({
+            "last_address": request.address,
+            "last_name": state.printer.link.name or state.printer.info.model_name or request.address,
+        })
         if state.printer.info.model_name and state.printer.info.model_name != "unknown":
             store.save_settings({"last_model": state.printer.info.model_name})
         _remember_current_printer(request.address)
@@ -1682,6 +1796,10 @@ async def _start_job(
         sku=(catalog_entry or {}).get("sku") or (catalog_entry or {}).get("name"),
         width_mm=spec.width_mm,
         height_mm=spec.height_mm,
+        kind="label",
+        printer=_current_printer_name(),
+        protocol=state.protocol,
+        payload=spec.model_dump_json(),
     )
     state.job = job
     state.job_task = asyncio.create_task(_run_print(job, spec, copies, density, label_type))
@@ -1753,6 +1871,10 @@ async def _start_sheet_job(
         sku=(catalog_entry or {}).get("sku") or (catalog_entry or {}).get("name"),
         width_mm=first.width_mm,
         height_mm=first.height_mm,
+        kind="sheet",
+        printer=_current_printer_name(),
+        protocol=state.protocol,
+        payload=json.dumps([spec.model_dump(mode="json") for spec in specs]),
     )
     state.job = job
     state.job_task = asyncio.create_task(_run_sheet(job, specs, copies or 1, density, label_type))
@@ -1811,6 +1933,13 @@ async def _run_sheet(job: Job, specs: list[LabelSpec], copies: int, density: int
         _finish_job(job)
 
 
+def _current_printer_name() -> str:
+    """How the queue panel should name the printer that is doing the work."""
+    link = getattr(state.printer, "link", None)
+    name = getattr(link, "name", None) or state.printer.info.model_name
+    return str(name or getattr(link, "address", "") or state.protocol)
+
+
 def _finish_job(job: Job) -> None:
     job.finished = time.time()
     try:
@@ -1830,9 +1959,111 @@ def _finish_job(job: Job) -> None:
             width_mm=job.width_mm,
             height_mm=job.height_mm,
             error=job.error,
+            printer=job.printer,
+            protocol=job.protocol,
+            kind=job.kind,
+            message=job.message,
+            payload=job.payload,
         )
+        store.prune_print_jobs()
     except Exception:  # pragma: no cover - statistics must never break printing
         log.exception("Could not save the print statistics")
+
+
+def _queue_entry(row: dict) -> dict:
+    """One row for the printer-queue panel."""
+    return {
+        "id": row.get("id"),
+        "job_id": row.get("job_id"),
+        "state": row.get("state") or "done",
+        "kind": row.get("kind") or "label",
+        "message": row.get("message") or "",
+        "error": row.get("error"),
+        "copies": row.get("copies") or 1,
+        "width_mm": row.get("width_mm"),
+        "height_mm": row.get("height_mm"),
+        "sku": row.get("sku") or row.get("paper_barcode"),
+        "printer": row.get("printer"),
+        "protocol": row.get("protocol"),
+        "started_at": row.get("started_at"),
+        "finished_at": row.get("finished_at"),
+        "repeatable": bool(row.get("repeatable")),
+    }
+
+
+@app.get("/api/queue")
+async def api_queue(limit: int = 20) -> dict:
+    """Print history plus the job that is running right now."""
+    current = None
+    if state.job and state.job.state == "running":
+        job = state.job
+        current = {
+            "id": None,
+            "job_id": job.id,
+            "state": job.state,
+            "kind": job.kind,
+            "message": job.message,
+            "error": job.error,
+            "progress": round(job.progress, 3),
+            "copies": job.copies,
+            "width_mm": job.width_mm,
+            "height_mm": job.height_mm,
+            "sku": job.sku,
+            "printer": job.printer,
+            "protocol": job.protocol,
+            "started_at": job.started,
+            "finished_at": None,
+            "repeatable": False,
+        }
+    jobs = [_queue_entry(row) for row in store.list_print_jobs(max(1, min(100, limit)))]
+    return {"jobs": jobs, "current": current}
+
+
+@app.post("/api/queue/{row_id}/repeat")
+async def api_queue_repeat(row_id: int) -> dict:
+    """Print the same label (or sheet) again, exactly as it was sent."""
+    row = store.get_print_job(row_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="That job is no longer in the queue.")
+    if not row.get("payload"):
+        raise HTTPException(
+            status_code=409,
+            detail="This job cannot be repeated — it was not created from a label in the designer.",
+        )
+    if not state.connected:
+        raise HTTPException(status_code=409, detail="The printer is not connected.")
+    _check_ready()
+    if state.job and state.job.state == "running":
+        raise HTTPException(status_code=409, detail="A print job is already running — wait or cancel it.")
+    try:
+        payload = json.loads(row["payload"])
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=409, detail="The stored job data is damaged.") from exc
+    copies = int(row.get("copies") or 1)
+    if row.get("kind") == "sheet":
+        specs = [LabelSpec.model_validate(item) for item in payload]
+        result = await _start_sheet_job(
+            specs,
+            copies=None,
+            density=row.get("density"),
+            label_type=row.get("label_type"),
+        )
+    else:
+        spec = LabelSpec.model_validate(payload)
+        result = await _start_job(
+            spec,
+            copies=copies,
+            density=row.get("density"),
+            label_type=row.get("label_type"),
+        )
+    return result
+
+
+@app.delete("/api/queue/{row_id}")
+async def api_queue_delete(row_id: int) -> dict:
+    if not store.delete_print_job(row_id):
+        raise HTTPException(status_code=404, detail="That job is no longer in the queue.")
+    return await api_queue()
 
 
 @app.get("/api/job")
@@ -1941,6 +2172,9 @@ async def _print_ipp_document(payload: bytes, mime: str, copies: int) -> tuple[b
         rows=encoded.rows,
         cols=encoded.cols,
         packets=encoded.packet_count,
+        kind="windows",
+        printer=_current_printer_name(),
+        protocol=state.protocol,
     )
     state.job = job
     try:

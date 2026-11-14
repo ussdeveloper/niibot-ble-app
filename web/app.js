@@ -130,7 +130,14 @@ async function api(path, method = 'GET', body) {
     options.headers['Content-Type'] = 'application/json';
     options.body = JSON.stringify(body);
   }
-  const response = await fetch(path, options);
+  let response;
+  try {
+    response = await fetch(path, options);
+  } catch (error) {
+    markBackend(false, error.message);
+    throw error;
+  }
+  markBackend(true);
   if (!response.ok) {
     let detail = `${response.status} ${response.statusText}`;
     try {
@@ -143,6 +150,202 @@ async function api(path, method = 'GET', body) {
   }
   if (response.status === 204) return null;
   return response.json();
+}
+
+/* ============================================================ printer queue */
+/* Everything that was sent to a printer, newest first, with a running job on top. Each row can
+   be repeated (the spec is stored with the job) or removed from the history. */
+
+const QUEUE_STATE_ICONS = {
+  running: 'loader',
+  done: 'check',
+  error: 'alert-triangle',
+  cancelled: 'ban',
+};
+
+function queueTime(seconds) {
+  if (!seconds) return '';
+  const date = new Date(seconds * 1000);
+  const today = new Date();
+  const sameDay = date.toDateString() === today.toDateString();
+  const time = date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  return sameDay ? time : `${date.toLocaleDateString(undefined, { day: '2-digit', month: '2-digit' })} ${time}`;
+}
+
+function queueTitle(job) {
+  if (job.state === 'running') return job.message || 'Printing…';
+  if (job.kind === 'sheet') {
+    return `Sheet · ${job.copies} ${job.copies === 1 ? 'label' : 'labels'}`;
+  }
+  if (job.kind === 'windows') return 'Windows print queue';
+  return job.sku || 'Label';
+}
+
+function renderQueue(payload = state.queue) {
+  const list = $('#queue-list');
+  if (!list) return;
+  const jobs = (payload?.jobs || []);
+  const current = payload?.current || null;
+  const rows = current ? [current, ...jobs] : jobs;
+  const count = $('#queue-count');
+  if (count) count.textContent = String(rows.length);
+  if (!rows.length) {
+    list.innerHTML = '<div class="panel-empty">Nothing printed yet. Jobs appear here and can be repeated or removed.</div>';
+    return;
+  }
+  list.innerHTML = rows.map((job) => {
+    const icon = QUEUE_STATE_ICONS[job.state] || 'circle';
+    const size = job.width_mm && job.height_mm ? `${round2(job.width_mm)} × ${round2(job.height_mm)} mm` : '';
+    const when = queueTime(job.finished_at || job.started_at);
+    const meta = [size, when, job.printer].filter(Boolean).join(' · ');
+    const progress = job.state === 'running' && job.progress !== undefined
+      ? `<div class="queue-progress"><span style="width:${Math.round((job.progress || 0) * 100)}%"></span></div>`
+      : '';
+    const repeat = job.repeatable && job.state !== 'running'
+      ? `<button type="button" class="queue-btn" data-queue-repeat="${job.id}" title="Print this job again"><i data-lucide="repeat"></i></button>`
+      : '';
+    const remove = job.state === 'running'
+      ? `<button type="button" class="queue-btn danger" data-queue-cancel="1" title="Cancel this job"><i data-lucide="x"></i></button>`
+      : `<button type="button" class="queue-btn danger" data-queue-remove="${job.id}" title="Remove from the queue"><i data-lucide="x"></i></button>`;
+    const error = job.error ? `<div class="queue-error" title="${escapeHtml(job.error)}">${escapeHtml(job.error)}</div>` : '';
+    return `<div class="queue-row ${job.state}" data-queue-row="${job.id ?? 'current'}">
+      <span class="queue-icon"><i data-lucide="${icon}"></i></span>
+      <div class="queue-main">
+        <div class="queue-title">${escapeHtml(queueTitle(job))}</div>
+        <div class="queue-meta">${escapeHtml(meta)}</div>
+        ${progress}${error}
+      </div>
+      <div class="queue-actions">${repeat}${remove}</div>
+    </div>`;
+  }).join('');
+  refreshIcons(list);
+}
+
+async function loadQueue() {
+  try {
+    state.queue = await api('/api/queue');
+  } catch (_) {
+    state.queue = { jobs: [], current: null };
+  }
+  renderQueue();
+}
+
+function startQueueWatch() {
+  loadQueue();
+  if (state.queueTimer) clearInterval(state.queueTimer);
+  state.queueTimer = setInterval(loadQueue, 4000);
+}
+
+async function repeatQueueJob(rowId) {
+  try {
+    await api(`/api/queue/${rowId}/repeat`, 'POST');
+    toast('Printing the job again', 'ok');
+    await loadQueue();
+    pollJob();
+  } catch (error) {
+    toast(error.message, 'error');
+  }
+}
+
+async function removeQueueJob(rowId) {
+  try {
+    state.queue = await api(`/api/queue/${rowId}`, 'DELETE');
+    renderQueue();
+  } catch (error) {
+    toast(error.message, 'error');
+  }
+}
+
+async function cancelQueueJob() {
+  try {
+    await api('/api/cancel', 'POST');
+    await loadQueue();
+  } catch (error) {
+    toast(error.message, 'error');
+  }
+}
+
+function bindQueueActions() {
+  const list = $('#queue-list');
+  if (!list) return;
+  list.addEventListener('click', (event) => {
+    const repeat = event.target.closest('[data-queue-repeat]');
+    if (repeat) { repeatQueueJob(repeat.dataset.queueRepeat); return; }
+    const remove = event.target.closest('[data-queue-remove]');
+    if (remove) { removeQueueJob(remove.dataset.queueRemove); return; }
+    if (event.target.closest('[data-queue-cancel]')) cancelQueueJob();
+  });
+}
+
+
+/* ============================================================ backend health */
+/* The chip in the top-right corner answers one question: can the browser talk to the local
+   backend? "Ready" means the last probe succeeded, "Not Ready" means it did not — the printer's
+   Bluetooth state is a separate thing and lives in the status bar. */
+
+function markBackend(ok, error = null, payload = null) {
+  const backend = state.backend;
+  backend.ok = ok;
+  backend.at = Date.now();
+  if (error) backend.error = error;
+  if (payload) {
+    backend.version = payload.version || backend.version;
+    backend.detail = payload;
+    backend.error = null;
+  }
+  renderBackendChip();
+}
+
+function renderBackendChip() {
+  const chip = $('#menu-conn');
+  const dot = $('#conn-dot');
+  const text = $('#conn-text');
+  if (!chip || !dot || !text) return;
+  const backend = state.backend;
+  const ready = backend.ok === true;
+  const unknown = backend.ok === null;
+  dot.className = `dot ${unknown ? '' : ready ? 'ok' : 'err'}`;
+  text.textContent = unknown ? 'Checking…' : ready ? 'Ready' : 'Not Ready';
+  chip.classList.toggle('ready', ready);
+  chip.classList.toggle('not-ready', backend.ok === false);
+  const detail = backend.detail || {};
+  chip.title = [
+    ready ? 'Backend is answering' : unknown ? 'Contacting the local backend…' : 'The local backend is not answering',
+    detail.version ? `version ${detail.version}` : '',
+    detail.uptime_s !== undefined ? `up ${Math.round(detail.uptime_s)} s` : '',
+    backend.latencyMs !== null ? `last reply ${backend.latencyMs} ms` : '',
+    detail.connected ? 'printer connected' : 'no printer connected',
+    detail.auto_connect ? `auto-connect: ${detail.auto_connect}` : '',
+    backend.error ? `error: ${backend.error}` : '',
+  ].filter(Boolean).join('\n');
+}
+
+async function pingBackend() {
+  const started = performance.now();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 4000);
+  try {
+    const response = await fetch('/api/health', { cache: 'no-store', signal: controller.signal });
+    if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+    const payload = await response.json();
+    state.backend.latencyMs = Math.round(performance.now() - started);
+    markBackend(true, null, payload);
+  } catch (error) {
+    state.backend.latencyMs = null;
+    markBackend(false, error.name === 'AbortError' ? 'no answer within 4 s' : error.message);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function startBackendWatch() {
+  renderBackendChip();
+  pingBackend();
+  if (state.backendTimer) clearInterval(state.backendTimer);
+  state.backendTimer = setInterval(pingBackend, 3000);
+  window.addEventListener('online', pingBackend);
+  window.addEventListener('offline', () => markBackend(false, 'browser reports offline'));
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) pingBackend(); });
 }
 
 /* ================================================================== ui prefs */
@@ -257,6 +460,12 @@ const state = {
   previewPending: false,
   /* element id -> { min_w_mm, min_h_mm, square } for QR/barcode, from the printer's dpi */
   codeLimits: {},
+  /* Backend liveness shown in the top-right chip: null = still checking. */
+  backend: { ok: null, latencyMs: null, at: null, version: null, error: null, detail: null },
+  backendTimer: null,
+  /* Print history from /api/queue, newest first, plus the running job. */
+  queue: { jobs: [], current: null },
+  queueTimer: null,
   catalog: [],
   lastDevices: null,
   printerProtocol: 'auto',
@@ -4074,30 +4283,42 @@ async function openPrinterSwitcher(event) {
 }
 
 /* =============================================================== status bar */
-function renderStatusBar() {
-  const payload = state.printer || {};
-  const paper = payload.paper || {};
-  const info = payload.info || {};
-
+/** The connection chip alone — also refreshed while disconnected, so the auto-connect
+    status is visible without re-rendering the whole panel every few seconds. */
+function updateConnectionChip(payload = state.printer || {}) {
   const connBox = $('#sb-conn');
   const connText = $('#sb-conn-text');
+  if (!connBox || !connText) return;
+  const info = payload.info || {};
+  const title = 'Connection — right-click to choose the printer (each printer keeps its own labels, templates and calibrations)';
   if (state.connected) {
     connBox.classList.add('ok');
     connBox.classList.remove('err');
     const protocol = payload.protocol === 'luckprinter' ? 'LuckPrinter' : 'Niimbot';
     connText.textContent = `${info.model_name || 'printer'} · ${protocol} · ${payload.link?.name || payload.link?.address || ''}`.trim();
-    connBox.title = 'Connection — right-click to choose the printer (each printer keeps its own labels, templates and calibrations)';
-  } else {
-    connBox.classList.remove('ok');
-    connBox.classList.add('err');
-    connText.textContent = 'not connected';
+    connBox.title = title;
+    return;
   }
+  connBox.classList.remove('ok');
+  connBox.classList.add('err');
+  const auto = payload.auto_connect || {};
+  const remembered = payload.last_name || payload.last_address || '';
+  const busy = auto.enabled && auto.status && !/^(idle|not connected)/i.test(auto.status);
+  connText.textContent = busy ? `not connected · ${auto.status}` : 'not connected';
+  connBox.title = [
+    title,
+    remembered ? `remembered: ${remembered}` : '',
+    auto.enabled ? 'auto-connect is on' : 'auto-connect is off',
+    auto.status ? `status: ${auto.status}` : '',
+  ].filter(Boolean).join('\n');
+}
 
-  const dot = $('#conn-dot');
-  dot.className = `dot ${state.connected ? 'ok' : 'err'}`;
-  $('#conn-text').textContent = state.connected
-    ? `${info.model_name || 'printer'} · ${payload.link?.name || ''}`.trim()
-    : 'not connected';
+function renderStatusBar() {
+  const payload = state.printer || {};
+  const paper = payload.paper || {};
+  const info = payload.info || {};
+
+  updateConnectionChip(payload);
 
   const paperBits = [];
   if (paper.lid_closed === false) paperBits.push('lid open');
@@ -6731,6 +6952,8 @@ function startWatchTimer() {
     if (state.connected) return;
     try {
       const payload = await api('/api/state');
+      state.printer = payload;
+      updateConnectionChip(payload);
       if (payload.connected) {
         applyState(payload);
         toast('Printer connected automatically', 'ok');
@@ -6868,11 +7091,14 @@ function bindControls() {
 async function init() {
   await loadUiPrefs();
   state.showAllBle = readPref('showAllBle', false) === true;
+  startBackendWatch();
   const savedLanguage = readPref('language');
   if (savedLanguage && window.I18N) {
     window.I18N.setLanguage(savedLanguage, { silent: true, persist: false });
   }
   bindControls();
+  bindQueueActions();
+  startQueueWatch();
   loadViewPrefs();
   syncViewToggles();
   loadLastProfile();

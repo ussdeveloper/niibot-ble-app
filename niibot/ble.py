@@ -20,6 +20,31 @@ CHAR_UUID = "bef8d6c9-9c21-4c9e-b632-bd58c1009f9f"
 #: Advertised-name prefixes used by the B1/B2/D1 families.
 NAME_PREFIXES = ("B1", "B2", "D1", "B21", "M2", "N1", "D11", "D110", "B18")
 
+#: Windows only runs one BLE discovery at a time; serialise ours so the UI scan and the
+#: auto-connect probe never fight over the radio.
+_SCAN_LOCK = asyncio.Lock()
+
+
+async def _discover(timeout: float = 6.0) -> list[tuple[str, object, object]]:
+    """One advertisement scan, as ``[(address, device, advertisement), ...]``."""
+    async with _SCAN_LOCK:
+        found = await BleakScanner.discover(timeout=timeout, return_adv=True)
+    return [(address, device, adv) for address, (device, adv) in found.items()]
+
+
+def normalise_device_name(name: str) -> str:
+    """Name without the address/serial chunk some printers embed in it.
+
+    ``D11s_0A0B_BLE`` → ``D11S_BLE``: the four hex digits are the tail of the (random) BLE
+    address, so the same printer advertises a different name after a power cycle.
+    """
+    cleaned = []
+    for part in str(name or "").strip().upper().split("_"):
+        if len(part) >= 4 and all(char in "0123456789ABCDEF" for char in part):
+            continue
+        cleaned.append(part)
+    return "_".join(part for part in cleaned if part)
+
 
 @dataclass
 class DiscoveredDevice:
@@ -61,18 +86,47 @@ class BleLink:
     # ------------------------------------------------------------------ scan
     @staticmethod
     async def find_by_address(address: str, timeout: float = 6.0) -> bool:
-        """True when the remembered device answers — much cheaper than a full scan."""
-        try:
-            found = await BleakScanner.find_device_by_address(address, timeout=timeout)
-        except Exception:  # noqa: BLE001 - bad/unknown address simply means "not in range"
-            return False
-        return found is not None
+        """True when the remembered device answers a real scan."""
+        return await BleLink.find_printer(address, timeout=timeout) is not None
+
+    @staticmethod
+    async def find_printer(
+        address: str,
+        names: tuple[str, ...] = (),
+        timeout: float = 6.0,
+    ) -> dict | None:
+        """Locate a printer by address, falling back to its advertised name.
+
+        ``BleakScanner.find_device_by_address`` is not usable for this on Windows: it hands
+        back a cached, nameless ``BLEDevice`` for an address that is not advertising (and
+        raises on other attempts), so a printer that is switched off looks reachable. Reachability
+        is therefore decided from the same advertisement scan the printer list uses. When the
+        address is unknown but exactly one printer with the remembered name is advertising, that
+        printer is returned — random BLE addresses change when the printer is power-cycled.
+        """
+        found = await _discover(timeout)
+        wanted = (address or "").strip().lower()
+        for addr, device, adv in found:
+            if wanted and addr.lower() == wanted:
+                return {"address": addr, "name": device.name or adv.local_name or "", "matched": "address"}
+
+        wanted_names = {normalise_device_name(name) for name in names if name}
+        wanted_names.discard("")
+        if not wanted_names:
+            return None
+        candidates = [
+            {"address": addr, "name": device.name or adv.local_name or "", "matched": "name"}
+            for addr, device, adv in found
+            if normalise_device_name(device.name or adv.local_name or "") in wanted_names
+        ]
+        # Two identical printers in range: never guess which one is the remembered unit.
+        return candidates[0] if len(candidates) == 1 else None
 
     @staticmethod
     async def scan(timeout: float = 6.0, show_all: bool = False) -> list[DiscoveredDevice]:
-        found = await BleakScanner.discover(timeout=timeout, return_adv=True)
+        found = await _discover(timeout)
         devices: list[DiscoveredDevice] = []
-        for address, (device, adv) in found.items():
+        for address, device, adv in found:
             name = device.name or adv.local_name or ""
             uuids = [u.lower() for u in (adv.service_uuids or [])]
             looks_like_niimbot = SERVICE_UUID in uuids or any(

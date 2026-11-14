@@ -268,6 +268,29 @@ printer that was connected in the meantime.
 `keep_alive.reconnects` (successful recoveries). `POST /api/keepalive/drop` closes the link on
 purpose — a test hook.
 
+### Connecting at start-up
+
+The app reconnects to the printer you used last, without being asked. It scans for that printer
+(by address, then by advertised name — a random BLE address changes when the printer is power
+cycled), connects with three attempts and backs off from 10 s to 25 s while the printer is away.
+Windows' `find_device_by_address` is deliberately **not** used: it returns a cached, nameless
+device for an address that is not advertising, which made a switched-off printer look reachable.
+The status bar shows exactly what the reconnect is doing, and `GET /api/health` (the Ready / Not
+Ready chip in the top-right corner) proves the backend itself is alive.
+
+---
+
+## Printer queue
+
+The bottom of the right panel lists what was printed: state, size, time and printer, with the
+running job on top and a progress bar. **Repeat** sends the exact same label or sheet again (the
+spec is stored with the job, so the label does not have to be open), **Remove** drops the entry
+from the history, and a running job offers **Cancel**.
+
+`GET /api/queue` returns the history plus `current`; `POST /api/queue/{id}/repeat` prints it again
+and `DELETE /api/queue/{id}` removes it. Jobs that did not come from the designer (the Windows IPP
+queue) are kept for reference but cannot be repeated. The history is capped at 500 entries.
+
 ---
 
 ## Several printers, one library per printer

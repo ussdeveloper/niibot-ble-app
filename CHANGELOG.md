@@ -4,6 +4,36 @@ All notable changes to **Niibot Studio** are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project uses [Semantic Versioning](https://semver.org/).
 
+## [0.14.5] — 2026-11-14
+
+### Fixed
+- **The app did not reconnect to the remembered printer after it was switched on.** The
+  reachability probe used `BleakScanner.find_device_by_address`, which on Windows hands back a
+  cached, nameless `BLEDevice` for an address that is *not* advertising (and raises on other
+  attempts) — so a printer that was off either looked reachable or blocked the attempt, and each
+  cycle wasted a 25 s connect timeout. The probe is now the same advertisement scan the printer
+  list uses, a connect is retried three times with a fresh scan, and the retry interval starts at
+  10 s before backing off to 25 s.
+- A printer with a **random BLE address** comes back under a new address after a power cycle: the
+  server now remembers its advertised name too, matches by name (only when exactly one printer
+  matches, never guessing between two identical units) and adopts the new address.
+- The keep-alive loop no longer overwrites the auto-connect status, so the status bar keeps saying
+  what the reconnect is actually doing ("looking for D11s…", "not in range", "connect attempt 1/3
+  failed (TimeoutError)").
+
+### Added
+- **Printer queue** at the bottom of the right panel: every job with its state, size, time and
+  printer, the running job on top with a progress bar. Each row has **Repeat** (prints the exact
+  stored label or sheet again) and **Remove** (drops it from the history); a running job offers
+  **Cancel** instead. Backed by `GET /api/queue`, `POST /api/queue/{id}/repeat` and
+  `DELETE /api/queue/{id}`, with the spec stored in the `print_jobs` history so a repeat needs no
+  open label.
+- **Ready / Not Ready chip** in the top-right corner: it reports whether the local backend answers
+  (`GET /api/health`, polled every 3 s, tooltip with version, uptime, latency and printer state).
+  The Bluetooth printer state stays in the status bar, where it belongs.
+- The **Design / Sheet switch moved into the Properties panel header** — the floating chip over the
+  canvas could not be moved out of the way.
+
 ## [0.14.4] — 2026-11-14
 
 ### Fixed
