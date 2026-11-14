@@ -174,9 +174,17 @@ Everything lives in **`data\\niibot.db`** (SQLite, WAL):
 | `profiles` | remembered geometry per physical roll |
 | `uploads` | images and icons as BLOBs |
 | `print_jobs` | print history → statistics |
+| `ui_state` | everything the window remembers — see below |
 | `schema_meta` | schema version |
 
 Older JSON files (`labels.json`, `profiles.json`, `settings.json`) are migrated once on start.
+
+**The browser stores nothing.** The working draft (the label you have not saved yet), the panel
+widths, the sheet height, the grid/snap/region toggles, the print density, the chosen language and
+the last calibration are all rows of `ui_state` (`GET`/`POST /api/ui`). That is why a reload, a
+second window and the packaged EXE always open on the same picture, and why clearing the browser
+cache cannot lose work. Anything an older build left in `localStorage` is moved into the database
+and deleted on the first start.
 
 ---
 

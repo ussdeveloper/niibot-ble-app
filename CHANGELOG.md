@@ -4,6 +4,18 @@ All notable changes to **Niibot Studio** are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project uses [Semantic Versioning](https://semver.org/).
 
+## [0.13.11] — 2026-11-14
+
+### Changed
+- **Nothing is kept in the browser any more.** The working draft, panel widths, sheet height,
+  grid/snap/region toggles, print density, language and the last calibration moved from
+  `localStorage` into the SQLite database (new `ui_state` table behind `GET`/`POST /api/ui`).
+  A reload, a second window and the packaged EXE now share exactly the same state, and clearing
+  the browser cache no longer throws away unsaved work. Failed writes are retried instead of
+  being dropped.
+- Leftovers from older builds are imported into the database once and then deleted from the
+  browser, so a first start loses nothing and afterwards `localStorage` stays empty.
+
 ## [0.13.10] — 2026-11-14
 
 ### Added

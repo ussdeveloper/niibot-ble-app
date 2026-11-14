@@ -38,8 +38,33 @@ class StorageTests(unittest.TestCase):
                 row["name"]
                 for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
             }
-        for expected in ("consumables", "labels", "settings", "uploads", "print_jobs", "profiles"):
+        for expected in ("consumables", "labels", "settings", "uploads", "print_jobs", "profiles", "ui_state"):
             self.assertIn(expected, tables)
+
+    def test_ui_state_round_trip(self) -> None:
+        """Everything the front-end remembers lives here, not in the browser."""
+        draft = {"spec": {"width_mm": 40, "height_mm": 30, "elements": []}, "view": "design"}
+        self.store.save_ui_state({"draft": draft, "panelWidth": 320, "language": "pl"})
+        state = self.store.load_ui_state()
+        self.assertEqual(state["draft"], draft)
+        self.assertEqual(state["panelWidth"], 320)
+        self.assertEqual(state["language"], "pl")
+
+        # a second write merges instead of replacing the whole set
+        self.store.save_ui_state({"panelWidth": 360})
+        state = self.store.load_ui_state()
+        self.assertEqual(state["panelWidth"], 360)
+        self.assertEqual(state["draft"], draft)
+
+        # None removes a single key
+        self.store.save_ui_state({"language": None})
+        self.assertNotIn("language", self.store.load_ui_state())
+
+    def test_ui_state_rejects_junk(self) -> None:
+        self.store.save_ui_state({"ok": {"a": 1}, "": "empty key", "x" * 80: "too long"})
+        self.assertEqual(set(self.store.load_ui_state()), {"ok"})
+        with self.assertRaises(ValueError):
+            self.store.save_ui_state({"huge": "x" * (self.store.UI_STATE_VALUE_LIMIT + 10)})
 
     def test_consumable_upsert_is_idempotent(self) -> None:
         entry = {

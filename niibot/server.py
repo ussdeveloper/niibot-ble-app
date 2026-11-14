@@ -459,6 +459,30 @@ async def api_auto_connect_set(request: Request) -> dict:
     return {"enabled": bool(payload.get("enabled", True))}
 
 
+# ------------------------------------------------------------------ UI state
+# The browser keeps nothing: drafts, panel sizes, view toggles, density, language and the
+# last calibration live in the ui_state table, so the EXE, a second window and a reload
+# all start from the same picture.
+@app.get("/api/ui")
+async def api_ui_state() -> dict:
+    return {"keys": store.load_ui_state()}
+
+
+@app.post("/api/ui")
+async def api_ui_state_set(request: Request) -> dict:
+    try:
+        payload = await request.json()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Expected a JSON object.") from exc
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Expected a JSON object.")
+    try:
+        store.save_ui_state(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
+    return {"keys": store.load_ui_state()}
+
+
 @app.get("/api/settings/device")
 async def api_device_settings() -> dict:
     geometry = store.load_settings().get("device_geometry") or {}

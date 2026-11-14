@@ -45,6 +45,15 @@ CREATE TABLE IF NOT EXISTS settings (
     updated_at REAL NOT NULL
 );
 
+-- Everything the front-end must remember (draft, panel widths, view toggles, density,
+-- language, last calibration). It lives here and not in the browser, so a reload, a
+-- second window and the packaged EXE all see the same state.
+CREATE TABLE IF NOT EXISTS ui_state (
+    key        TEXT PRIMARY KEY,
+    value      TEXT NOT NULL,
+    updated_at REAL NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS consumables (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     barcode     TEXT UNIQUE,
@@ -264,6 +273,43 @@ def load_settings() -> dict:
         except json.JSONDecodeError:
             result[row["key"]] = row["value"]
     return result
+
+
+#: Refuse absurd payloads (the draft is the biggest thing stored here, ~ tens of KB).
+UI_STATE_VALUE_LIMIT = 512 * 1024
+
+
+def load_ui_state() -> dict[str, Any]:
+    """Every remembered UI value, decoded from JSON."""
+    with connect() as db:
+        rows = db.execute("SELECT key, value FROM ui_state").fetchall()
+    result: dict[str, Any] = {}
+    for row in rows:
+        try:
+            result[row["key"]] = json.loads(row["value"])
+        except json.JSONDecodeError:
+            result[row["key"]] = row["value"]
+    return result
+
+
+def save_ui_state(values: dict[str, Any]) -> None:
+    """Merge ``values`` into the UI state; ``None`` removes a key."""
+    now = _now()
+    with connect() as db:
+        for key, value in values.items():
+            if not isinstance(key, str) or not key or len(key) > 64:
+                continue
+            if value is None:
+                db.execute("DELETE FROM ui_state WHERE key = ?", (key,))
+                continue
+            raw = json.dumps(value, ensure_ascii=False)
+            if len(raw) > UI_STATE_VALUE_LIMIT:
+                raise ValueError(f"ui state value too large for {key!r}")
+            db.execute(
+                "INSERT INTO ui_state(key, value, updated_at) VALUES(?, ?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+                (key, raw, now),
+            )
 
 
 def save_settings(values: dict) -> None:

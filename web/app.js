@@ -142,6 +142,89 @@ async function api(path, method = 'GET', body) {
   return response.json();
 }
 
+/* ================================================================== ui prefs */
+/* The browser stores nothing. Everything the UI remembers — the working draft, panel
+   sizes, view toggles, density, language and the last calibration — is kept in the
+   SQLite database (ui_state table) through /api/ui, so a reload, a second window and
+   the packaged EXE all see the same state. */
+
+const uiPrefs = {};
+let uiPrefsPending = {};
+let uiPrefsTimer = null;
+
+async function loadUiPrefs() {
+  try {
+    const payload = await api('/api/ui');
+    Object.assign(uiPrefs, payload?.keys || {});
+  } catch (_) { /* server not up yet — defaults are used, nothing is lost */ }
+  await importBrowserPrefs();
+}
+
+function readPref(key, fallback = null) {
+  return Object.prototype.hasOwnProperty.call(uiPrefs, key) ? uiPrefs[key] : fallback;
+}
+
+function writePref(key, value) {
+  uiPrefs[key] = value;
+  uiPrefsPending[key] = value;
+  clearTimeout(uiPrefsTimer);
+  uiPrefsTimer = setTimeout(flushPrefs, 350);
+}
+
+function flushPrefs() {
+  clearTimeout(uiPrefsTimer);
+  const patch = uiPrefsPending;
+  uiPrefsPending = {};
+  if (!Object.keys(patch).length) return Promise.resolve();
+  return api('/api/ui', 'POST', patch).then((payload) => {
+    if (payload?.keys) Object.assign(uiPrefs, payload.keys);
+  }).catch(() => {
+    // Keep the change and retry: the database must not silently miss a value.
+    uiPrefsPending = { ...patch, ...uiPrefsPending };
+    clearTimeout(uiPrefsTimer);
+    uiPrefsTimer = setTimeout(flushPrefs, 2000);
+  });
+}
+
+/* One-time move of anything an older build left in the browser; afterwards the keys are gone. */
+const LEGACY_PREF_KEYS = {
+  'niibot.draft': 'draft',
+  'niibot.panelWidth': 'panelWidth',
+  'niibot.sheetHeight': 'sheetHeight',
+  'niibot.view': 'view',
+  'niibot.density': 'density',
+  'niibot.lastModel': 'lastModel',
+  'niibot.lastProfile': 'lastProfile',
+  'niibot.lang': 'language',
+};
+
+/* Nothing may stay in the browser: wipe any leftover from an older build (there is no
+   reading of localStorage anywhere else in the app). */
+function clearLegacyStorage() {
+  try {
+    for (const key of Object.keys(localStorage)) {
+      if (key.startsWith('niibot.')) localStorage.removeItem(key);
+    }
+  } catch (_) { /* storage blocked */ }
+}
+
+async function importBrowserPrefs() {
+  if (readPref('browser_prefs_imported')) { clearLegacyStorage(); return; }
+  const patch = {};
+  try {
+    for (const [storageKey, prefKey] of Object.entries(LEGACY_PREF_KEYS)) {
+      const raw = localStorage.getItem(storageKey);
+      if (raw === null || uiPrefs[prefKey] !== undefined) continue;
+      try { patch[prefKey] = JSON.parse(raw); } catch (_) { patch[prefKey] = raw; }
+    }
+    for (const storageKey of Object.keys(LEGACY_PREF_KEYS)) localStorage.removeItem(storageKey);
+  } catch (_) { /* storage blocked — nothing to move */ }
+  patch.browser_prefs_imported = true;
+  Object.assign(uiPrefs, patch);
+  await api('/api/ui', 'POST', patch).catch(() => {});
+  clearLegacyStorage();
+}
+
 /* ==================================================================== state */
 const state = {
   spec: null,
@@ -197,33 +280,28 @@ function scheduleAutosave() {
 }
 
 function saveDraft() {
-  try {
-    localStorage.setItem('niibot.draft', JSON.stringify({
-      at: Date.now(),
-      labelId: state.labelId,
-      view: state.view,
-      spec: state.spec,
-    }));
-  } catch (_) { /* quota / private mode */ }
+  if (!state.spec) return;
+  writePref('draft', {
+    at: Date.now(),
+    labelId: state.labelId,
+    view: state.view,
+    spec: state.spec,
+  });
 }
 
 function clearDraft() {
   clearTimeout(autosaveTimer);
-  try { localStorage.removeItem('niibot.draft'); } catch (_) { /* ignore */ }
+  if (!Object.prototype.hasOwnProperty.call(uiPrefs, 'draft')) return;
+  writePref('draft', null);
+  flushPrefs();
 }
 
 function restoreDraft() {
-  try {
-    const raw = localStorage.getItem('niibot.draft');
-    if (!raw) return false;
-    const draft = JSON.parse(raw);
-    if (!draft || !draft.spec || !Array.isArray(draft.spec.elements)) return false;
-    setSpec(draft.spec, { labelId: draft.labelId || null });
-    if (draft.view === 'sheet') switchView('sheet');
-    return true;
-  } catch (_) {
-    return false;
-  }
+  const draft = readPref('draft');
+  if (!draft || !draft.spec || !Array.isArray(draft.spec.elements)) return false;
+  setSpec(draft.spec, { labelId: draft.labelId || null });
+  if (draft.view === 'sheet') switchView('sheet');
+  return true;
 }
 
 function undo() {
@@ -3681,6 +3759,13 @@ function onPointerUp() {
   }
 }
 
+/* The language switcher lives in i18n.js; the choice is remembered in the database. */
+document.addEventListener('niibot:language-changed', (event) => {
+  if (event.detail?.persist === false) return;
+  const code = event.detail?.code;
+  if (code) writePref('language', code);
+});
+
 /* =============================================================== status bar */
 function renderStatusBar() {
   const payload = state.printer || {};
@@ -4291,11 +4376,11 @@ function applySplit() {
 }
 
 function bindSplitters() {
-  const panelWidth = Number(localStorage.getItem('niibot.panelWidth'));
+  const panelWidth = Number(readPref('panelWidth'));
   if (panelWidth >= 240 && panelWidth <= 640) {
     document.documentElement.style.setProperty('--panel-w', `${panelWidth}px`);
   }
-  const sheetHeight = Number(localStorage.getItem('niibot.sheetHeight'));
+  const sheetHeight = Number(readPref('sheetHeight'));
   if (sheetHeight > 120) state.sheetHeight = sheetHeight;
 
   const resizer = $('#panel-resizer');
@@ -4316,7 +4401,7 @@ function bindSplitters() {
       resizer.removeEventListener('pointermove', move);
       resizer.removeEventListener('pointerup', up);
       const width = getComputedStyle(document.documentElement).getPropertyValue('--panel-w');
-      try { localStorage.setItem('niibot.panelWidth', String(parseInt(width, 10))); } catch (_) { /* ignore */ }
+      writePref('panelWidth', parseInt(width, 10));
     };
     resizer.addEventListener('pointermove', move);
     resizer.addEventListener('pointerup', up);
@@ -4325,7 +4410,7 @@ function bindSplitters() {
   const sheetSplitter = $('#splitter-sheet');
   const setSheetHeight = (height) => {
     state.sheetHeight = height;
-    try { localStorage.setItem('niibot.sheetHeight', String(height)); } catch (_) { /* ignore */ }
+    writePref('sheetHeight', height);
     applySplit();
   };
   sheetSplitter.addEventListener('pointerdown', (event) => {
@@ -4343,7 +4428,7 @@ function bindSplitters() {
       sheetSplitter.classList.remove('dragging');
       sheetSplitter.removeEventListener('pointermove', move);
       sheetSplitter.removeEventListener('pointerup', up);
-      try { localStorage.setItem('niibot.sheetHeight', String(state.sheetHeight)); } catch (_) { /* ignore */ }
+      writePref('sheetHeight', state.sheetHeight);
     };
     sheetSplitter.addEventListener('pointermove', move);
     sheetSplitter.addEventListener('pointerup', up);
@@ -5371,23 +5456,19 @@ function toggleRegions() {
 }
 
 function saveViewPrefs() {
-  try {
-    localStorage.setItem('niibot.view', JSON.stringify({
-      showGrid: state.showGrid,
-      snapToGrid: state.snapToGrid,
-      showRegions: state.showRegions,
-    }));
-  } catch (_) { /* ignore */ }
+  writePref('view', {
+    showGrid: state.showGrid,
+    snapToGrid: state.snapToGrid,
+    showRegions: state.showRegions,
+  });
 }
 
 function loadViewPrefs() {
-  try {
-    const saved = JSON.parse(localStorage.getItem('niibot.view') || 'null');
-    if (!saved) return;
-    if (typeof saved.showGrid === 'boolean') state.showGrid = saved.showGrid;
-    if (typeof saved.snapToGrid === 'boolean') state.snapToGrid = saved.snapToGrid;
-    if (typeof saved.showRegions === 'boolean') state.showRegions = saved.showRegions;
-  } catch (_) { /* ignore */ }
+  const saved = readPref('view');
+  if (!saved) return;
+  if (typeof saved.showGrid === 'boolean') state.showGrid = saved.showGrid;
+  if (typeof saved.snapToGrid === 'boolean') state.snapToGrid = saved.snapToGrid;
+  if (typeof saved.showRegions === 'boolean') state.showRegions = saved.showRegions;
 }
 
 function syncViewToggles() {
@@ -5577,28 +5658,23 @@ function sheetDataRows() {
 }
 
 const DENSITY_LABELS = ['faintest', 'lighter', 'standard', 'darker', 'darkest'];
-const DENSITY_STORAGE_KEY = 'niibot.density';
 
 /* Density is the printer's own heat setting (the vendor calls it "print density", range 1-5).
    The last value the user picked wins; otherwise follow what the printer reports. */
 function storedDensity() {
   const clamp = (value) => (Number.isFinite(value) ? Math.max(1, Math.min(5, Math.round(value))) : null);
-  try {
-    const raw = localStorage.getItem(DENSITY_STORAGE_KEY);
-    if (raw !== null && String(raw).trim() !== '') {
-      const saved = clamp(Number(raw));
-      if (saved) return saved;
-    }
-  } catch (_) { /* private mode */ }
+  const savedDensity = readPref('density');
+  if (savedDensity !== null && String(savedDensity).trim() !== '') {
+    const saved = clamp(Number(savedDensity));
+    if (saved) return saved;
+  }
   const device = clamp(Number(state.printer?.info?.density));
   if (device) return device;
   return clamp(Number(state.spec?.density)) || 3;
 }
 
 function rememberDensity(value) {
-  try {
-    localStorage.setItem(DENSITY_STORAGE_KEY, String(value));
-  } catch (_) { /* private mode */ }
+  writePref('density', value);
 }
 
 /* One place that starts a print: asks for the copy count and, when the sheet holds more rows
@@ -5979,24 +6055,22 @@ function captureSettingFromModel() {
 }
 
 function storeLocal(key, value) {
-  try { localStorage.setItem(`niibot.${key}`, value); } catch (_) { /* ignore */ }
+  writePref(key, value);
 }
 
 /* --------------------------------------------------- last used calibration */
 /* The screen keeps showing the calibration of the last roll that was inserted; the printer
    only reports the roll code while it is connected, so this survives a reload off-line. */
 function rememberLastProfile(profile) {
-  try { localStorage.setItem('niibot.lastProfile', JSON.stringify(profile)); } catch (_) { /* ignore */ }
+  writePref('lastProfile', profile);
 }
 
 function loadLastProfile() {
-  try {
-    const saved = JSON.parse(localStorage.getItem('niibot.lastProfile') || 'null');
-    if (saved && saved.key) {
-      state.lastProfile = saved;
-      return saved;
-    }
-  } catch (_) { /* ignore */ }
+  const saved = readPref('lastProfile');
+  if (saved && saved.key) {
+    state.lastProfile = saved;
+    return saved;
+  }
   return null;
 }
 
@@ -6287,6 +6361,11 @@ function bindControls() {
 }
 
 async function init() {
+  await loadUiPrefs();
+  const savedLanguage = readPref('language');
+  if (savedLanguage && window.I18N) {
+    window.I18N.setLanguage(savedLanguage, { silent: true, persist: false });
+  }
   bindControls();
   loadViewPrefs();
   syncViewToggles();
