@@ -23,12 +23,12 @@ from PIL import Image, ImageOps
 from pydantic import BaseModel, Field
 
 from . import ipp as ipp_mod
-from . import sheet, spreadsheet, store
+from . import sheet, spreadsheet, store, zones
 from .bitmap import encode_image
 from .ble import BleLink
 from .consumables import Consumable, builtin_formats, scan_vendor_catalog
 from .fit import FitOptions, fit_to_label
-from .models import MODELS, PAPER_PRESETS, PaperProfile, Region
+from .models import MODELS, PAPER_PRESETS, PaperProfile, Region, ZoneShape
 from .paths import resource_dir
 from .printer import NiimbotPrinter
 from .protocol import LABEL_TYPE_NAMES, ProtocolError
@@ -188,8 +188,21 @@ class SaveTemplateRequest(BaseModel):
     spec: LabelSpec
 
 
+class ShapeRequest(BaseModel):
+    """One outline inside an item zone."""
+
+    kind: str = "rect"
+    x: float = Field(default=0.0, ge=-50, le=400)
+    y: float = Field(default=0.0, ge=-50, le=400)
+    w: float = Field(default=30.0, gt=0, le=400)
+    h: float = Field(default=15.0, gt=0, le=400)
+
+
 class RegionRequest(BaseModel):
-    """One printable cell drawn in the calibrator (millimetres from the page corner)."""
+    """One printable item zone drawn in the calibrator (millimetres from the page corner).
+
+    ``shapes`` are the zone's outlines; when it is empty the single ``shape`` box is used.
+    """
 
     shape: str = "rect"
     x: float = Field(default=0.0, ge=-50, le=400)
@@ -199,6 +212,19 @@ class RegionRequest(BaseModel):
     label: str = ""
     angle: float = 0.0
     thickness_mm: float = Field(default=0.8, gt=0, le=10)
+    shapes: list[ShapeRequest] = Field(default_factory=list)
+
+
+class ZoneOutlineRequest(BaseModel):
+    """Ask the server to draw (or print) the zone borders on the physical label."""
+
+    width_mm: float = Field(gt=0, le=200)
+    height_mm: float = Field(gt=0, le=400)
+    regions: list[RegionRequest] = Field(default_factory=list)
+    stroke_mm: float = Field(default=0.3, gt=0, le=2)
+    copies: int = Field(default=1, ge=1, le=20)
+    density: int | None = None
+    label_type: int | None = None
 
 
 class ProfileRequest(BaseModel):
@@ -762,12 +788,22 @@ async def api_stats(recent: int = 10) -> dict:
     return store.print_statistics(recent_limit=max(0, min(100, recent)))
 
 
-@app.post("/api/roll-format")
-async def api_roll_format(request: RollFormatRequest) -> dict:
-    """Store the size (and the drawn cells) of a roll the printer cannot measure."""
-    regions = [
-        Region(
-            shape=item.shape if item.shape in ("rect", "circle", "line") else "rect",
+def _regions_from_request(items: list[RegionRequest]) -> list[Region]:
+    """Turn drawn zones into stored regions, keeping each zone's merged bounding box."""
+    regions: list[Region] = []
+    for item in items:
+        shapes = [
+            ZoneShape(
+                kind="circle" if shape.kind == "circle" else "rect",
+                x=shape.x,
+                y=shape.y,
+                w=shape.w,
+                h=shape.h,
+            )
+            for shape in item.shapes
+        ]
+        region = Region(
+            shape=item.shape if item.shape in ("rect", "circle", "line", "mixed") else "rect",
             x=item.x,
             y=item.y,
             w=item.w,
@@ -775,9 +811,16 @@ async def api_roll_format(request: RollFormatRequest) -> dict:
             label=item.label,
             angle=item.angle,
             thickness_mm=item.thickness_mm,
+            shapes=shapes,
         )
-        for item in request.regions
-    ]
+        regions.append(region.normalize() if shapes else region)
+    return regions
+
+
+@app.post("/api/roll-format")
+async def api_roll_format(request: RollFormatRequest) -> dict:
+    """Store the size (and the drawn item zones) of a roll the printer cannot measure."""
+    regions = _regions_from_request(request.regions)
     entry = {
         "barcode": request.barcode,
         "name": request.name or request.barcode,
@@ -816,21 +859,71 @@ async def api_roll_format(request: RollFormatRequest) -> dict:
     return _state_payload()
 
 
+@app.post("/api/roll-format/outline")
+async def api_roll_outline(request: ZoneOutlineRequest) -> dict:
+    """The exact bitmap the calibrator prints: only the zone borders."""
+    dpi, _printhead = _geometry()
+    regions = _regions_from_request(request.regions)
+    image = zones.outline_image(request.width_mm, request.height_mm, regions, dpi,
+                                stroke_mm=request.stroke_mm)
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    return {
+        "png": base64.b64encode(buffer.getvalue()).decode("ascii"),
+        "width_px": image.width,
+        "height_px": image.height,
+        "dpi": dpi,
+        "zones": len(regions),
+    }
+
+
+@app.post("/api/roll-format/print")
+async def api_roll_print(request: ZoneOutlineRequest) -> dict:
+    """Print the zone borders on the physical roll — a calibration check."""
+    if not state.connected:
+        raise HTTPException(status_code=409, detail="The printer is not connected.")
+    _check_ready()
+    if state.job and state.job.state == "running":
+        raise HTTPException(status_code=409, detail="A print job is already running — wait or cancel it.")
+    dpi, _printhead = _geometry()
+    regions = _regions_from_request(request.regions)
+    image = zones.outline_image(request.width_mm, request.height_mm, regions, dpi,
+                                stroke_mm=request.stroke_mm)
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    image_id = store.save_upload("zone-outline.png", buffer.getvalue())
+    spec = LabelSpec(
+        name="Zone check",
+        width_mm=request.width_mm,
+        height_mm=request.height_mm,
+        elements=[
+            Element(
+                type="image",
+                x=0,
+                y=0,
+                w=request.width_mm,
+                h=request.height_mm,
+                image_id=image_id,
+                image_fit="stretch",
+            )
+        ],
+    )
+    label_type = request.label_type
+    if label_type is None:
+        paper = state.printer.paper
+        label_type = paper.label_type if paper.label_type_source == "rfid" else spec.label_type
+    return await _start_job(
+        spec,
+        copies=max(1, request.copies),
+        density=request.density,
+        label_type=label_type,
+        title="Zone outline check",
+    )
+
+
 @app.post("/api/profiles")
 async def api_profile_save(request: ProfileRequest) -> dict:
-    regions = [
-        Region(
-            shape=item.shape if item.shape in ("rect", "circle", "line") else "rect",
-            x=item.x,
-            y=item.y,
-            w=item.w,
-            h=item.h,
-            label=item.label,
-            angle=item.angle,
-            thickness_mm=item.thickness_mm,
-        )
-        for item in request.regions
-    ]
+    regions = _regions_from_request(request.regions)
     profile = PaperProfile(
         key=request.key,
         name=request.name or f"{request.width_mm:g} × {request.height_mm:g} mm",

@@ -98,13 +98,40 @@ PAPER_PRESETS: tuple[PaperPreset, ...] = (
 
 
 @dataclass
-class Region:
-    """One printable cell the calibrator drew on the roll.
+class ZoneShape:
+    """One outline inside an item zone (millimetres from the page corner)."""
 
-    ``shape`` is ``rect``, ``circle`` or ``line``; coordinates are millimetres from
-    the top-left corner of the label page, exactly as they print. Lines carry an
-    ``angle`` (degrees, clockwise) and a ``thickness_mm``; for rectangles and
-    circles the thickness is the outline weight the user drew.
+    kind: str = "rect"  # rect | circle
+    x: float = 0.0
+    y: float = 0.0
+    w: float = 30.0
+    h: float = 15.0
+
+    def to_dict(self) -> dict:
+        return {"kind": self.kind, "x": self.x, "y": self.y, "w": self.w, "h": self.h}
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "ZoneShape":
+        return cls(
+            kind="circle" if str(data.get("kind")) == "circle" else "rect",
+            x=float(data.get("x") or 0.0),
+            y=float(data.get("y") or 0.0),
+            w=max(0.2, float(data.get("w") or 0.2)),
+            h=max(0.2, float(data.get("h") or 0.2)),
+        )
+
+
+@dataclass
+class Region:
+    """One printable item zone the calibrator drew on the roll.
+
+    A zone is *one* item: it may be made of several outlines (a circle plus a
+    rectangle, say) that together form the printable area. ``x``/``y``/``w``/``h``
+    are always the bounding box of those outlines, so code that only needs the
+    footprint keeps working; ``shapes`` holds the individual outlines.
+
+    ``shape`` is ``rect``, ``circle``, ``mixed`` (several outlines) or the legacy
+    ``line``; coordinates are millimetres from the top-left corner of the label.
     """
 
     shape: str = "rect"
@@ -115,9 +142,33 @@ class Region:
     label: str = ""
     angle: float = 0.0
     thickness_mm: float = 0.8
+    shapes: list[ZoneShape] = field(default_factory=list)
+
+    def outlines(self) -> list[ZoneShape]:
+        """The zone's outlines, falling back to the bounding box for old records."""
+        if self.shapes:
+            return self.shapes
+        return [ZoneShape(kind=self.shape, x=self.x, y=self.y, w=self.w, h=self.h)]
+
+    def normalize(self) -> "Region":
+        """Derive the bounding box and ``shape`` from the outlines."""
+        usable = [item for item in self.shapes if item.w > 0.2 and item.h > 0.2]
+        if not usable:
+            self.shapes = []
+            return self
+        self.shapes = usable
+        left = min(item.x for item in usable)
+        top = min(item.y for item in usable)
+        right = max(item.x + item.w for item in usable)
+        bottom = max(item.y + item.h for item in usable)
+        self.x, self.y = round(left, 3), round(top, 3)
+        self.w, self.h = round(right - left, 3), round(bottom - top, 3)
+        kinds = {item.kind for item in usable}
+        self.shape = "mixed" if len(usable) > 1 else kinds.pop()
+        return self
 
     def to_dict(self) -> dict:
-        return {
+        data = {
             "shape": self.shape,
             "x": self.x,
             "y": self.y,
@@ -127,6 +178,25 @@ class Region:
             "angle": self.angle,
             "thickness_mm": self.thickness_mm,
         }
+        if self.shapes:
+            data["shapes"] = [item.to_dict() for item in self.shapes]
+        return data
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Region":
+        shapes = [ZoneShape.from_dict(item) for item in (data.get("shapes") or []) if isinstance(item, dict)]
+        region = cls(
+            shape=str(data.get("shape") or "rect"),
+            x=float(data.get("x") or 0.0),
+            y=float(data.get("y") or 0.0),
+            w=max(0.2, float(data.get("w") or 0.2)),
+            h=max(0.2, float(data.get("h") or 0.2)),
+            label=str(data.get("label") or ""),
+            angle=float(data.get("angle") or 0.0),
+            thickness_mm=float(data.get("thickness_mm") or 0.8),
+            shapes=shapes,
+        )
+        return region.normalize() if shapes else region
 
 
 @dataclass

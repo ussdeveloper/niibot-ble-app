@@ -184,6 +184,18 @@ development is `T40*15/2R-460WHITE`: two 40 × 15 mm labels on a 40 × 30 mm tem
 Without a known format, pick a preset in **Settings → Label** or enter the size manually;
 the size is remembered per roll (`profiles`).
 
+### Item zones (roll calibration)
+
+The calibrator (`Correct calibration` on the label bar) is where a roll's printable area is
+drawn. One **item zone** is one printable item on the label: it may be a single rectangle or
+circle, or several outlines that belong to the same item (a circle plus a rectangular tab) —
+the editor and the check print merge them into one area. Rows × columns lay out a grid of
+zones in one go, and `Print zone borders` sends only those outlines to the printer so the
+placement can be checked on the physical label.
+
+Zones are stored per roll (`regions` with their `shapes`) and drive the design stage overlay,
+`Mirror cells` (design in the first zone, the rest is filled automatically) and sheet printing.
+
 ---
 
 ## Windows print queue (IPP)

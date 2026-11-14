@@ -4,6 +4,30 @@ All notable changes to **Niibot Studio** are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project uses [Semantic Versioning](https://semver.org/).
 
+## [0.13.0] — 2026-11-14
+
+### Added
+- **Item zones instead of cells**: the calibrator was rebuilt around the question it answers —
+  where can *one item* be printed. A zone may combine several outlines (rectangle, circle,
+  ellipse, square) that belong to the same item; they are merged into a single area and treated
+  as one item everywhere (design stage overlay, `Mirror cells`, sheet printing).
+- **Right-click menu on a zone**: add another outline to the same item, edit the outlines,
+  duplicate the item, copy it onto every other item, delete it.
+- **Per-outline editing**: the outline chips in the inspector switch the handles to one outline
+  of the item (Alt+click on the label does the same), so a circle can grow a rectangular lobe.
+- **Print check**: `Preview` and `Print zone borders` render just the zone borders (and
+  optionally the label border) at printer resolution — `/api/roll-format/outline` and
+  `/api/roll-format/print`.
+- Canvas editor: wheel zoom about the cursor, middle-drag pan, marquee selection, arrow-key
+  nudging, square tool, 5 mm guide grid.
+
+### Changed
+- The calibrator is a two-column studio (820 px tall) with a scrolling control column and a
+  canvas that fills the rest; rows/columns/spacings still rebuild the grid immediately.
+- **Lines are gone from the calibrator** — items have width and height, so rectangles,
+  squares, circles and ellipses are the only outlines. Legacy `line` regions are dropped.
+- A new roll starts with one zone covering the whole label (0.5 mm margin).
+
 ## [0.12.10] — 2026-11-13
 
 ### Fixed

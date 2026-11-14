@@ -545,23 +545,22 @@ function renderStageMeta() {
   }
 }
 
-/* A roll the printer/catalogue cannot describe: size it, draw the printable cells once,
-   remember everything per roll code. */
+/* A roll the printer/catalogue cannot describe: size it, then outline where each item
+   on the label can be printed. One *item zone* is one printable item and may consist of
+   several outlines (rectangle, circle, ellipse) that merge into a single area. */
 function openRollSizeDialog(options = {}) {
   const paper = state.printer?.paper || {};
   const rollName = paper.sku || paper.catalog?.name || paper.barcode || 'this roll';
   const profile = state.printer?.profile || null;
   /* A friendly name for this roll (the barcode is a poor label everywhere in the UI). */
   const codeOnly = (value) => !value || /^\d+$/.test(String(value).trim());
-  let rollLabel = !codeOnly(profile?.name) ? String(profile.name)
-    : !codeOnly(paper.catalog?.name) ? String(paper.catalog.name)
-      : '';
+  const rollLabel = !codeOnly(profile?.name) ? String(profile.name)
+    : !codeOnly(paper.catalog?.name) ? String(paper.catalog.name) : '';
   const presets = (state.options?.paper_presets || []).map((preset) => ({
     label: preset.name || `${round2(preset.width_mm)} × ${round2(preset.height_mm)} mm`,
     width: preset.width_mm,
     height: preset.height_mm,
     rows: preset.rows || 1,
-    type: preset.label_type,
   }));
 
   let width = Number(profile?.width_mm) || Number(state.spec?.width_mm) || 40;
@@ -571,9 +570,56 @@ function openRollSizeDialog(options = {}) {
   let cols = Math.max(1, Number(profile?.cols || paper.catalog?.cols) || 1);
   let rowSpace = 0;
   let colSpace = 0;
-  let cells = (profile?.regions || []).map((cell) => ({ ...cell }));
-  let selected = cells.length ? 0 : -1;
-  let selection = new Set(selected >= 0 ? [selected] : []);
+
+  const cleanShape = (shape) => ({
+    kind: shape.kind === 'circle' ? 'circle' : 'rect',
+    x: Number(shape.x) || 0,
+    y: Number(shape.y) || 0,
+    w: Math.max(0.4, Number(shape.w) || 0.4),
+    h: Math.max(0.4, Number(shape.h) || 0.4),
+  });
+
+  /* Stored regions carry their outlines; older ones only have the single box. */
+  const zoneFromRegion = (region, index) => {
+    const list = Array.isArray(region.shapes) && region.shapes.length
+      ? region.shapes.map(cleanShape)
+      : region.shape === 'line'
+        ? []
+        : [cleanShape({
+          kind: region.shape === 'circle' ? 'circle' : 'rect',
+          x: region.x, y: region.y, w: region.w, h: region.h,
+        })];
+    return {
+      label: region.label || `Item ${index + 1}`,
+      thickness: Number(region.thickness_mm) || 0.3,
+      shapes: list.filter((shape) => shape.w > 0.4 && shape.h > 0.4),
+    };
+  };
+
+  let zones = (profile?.regions || []).map(zoneFromRegion).filter((zone) => zone.shapes.length);
+  let autoZone = !(profile?.regions || []).length;
+
+  const defaultZone = () => {
+    const margin = Math.min(0.5, Math.min(width, height) / 8);
+    return {
+      label: 'Item 1',
+      thickness: 0.3,
+      shapes: [{
+        kind: 'rect',
+        x: round2(margin),
+        y: round2(margin),
+        w: round2(Math.max(1, width - margin * 2)),
+        h: round2(Math.max(1, height - margin * 2)),
+      }],
+    };
+  };
+  if (!zones.length) zones = [defaultZone()];
+
+  let selection = new Set([0]);
+  let activeShape = null;
+  let tool = 'select';
+  let zoom = 1;
+  const view = { scale: 4, ox: 0, oy: 0 };
 
   const body = document.createElement('div');
   body.className = 'calibrator';
@@ -581,23 +627,10 @@ function openRollSizeDialog(options = {}) {
     <div class="cal-col cal-col-left">
       <div class="hint">The B1 cannot report the label size over Bluetooth and
         <code>${escapeHtml(rollName)}</code> is not in the catalogue on this machine.
-        Set the size, lay out the cells, then fine-tune them — everything is remembered for this roll code.</div>
+        Set the size, outline where the roll can print, and everything is remembered for this code.</div>
 
       <div class="cal-section">
-        <div class="cal-section-head">Grid layout</div>
-        <div class="grid-2">
-          ${field('Rows', numberInput('cal-rows', rows, 1, 1, 12))}
-          ${field('Columns', numberInput('cal-cols', cols, 1, 1, 12))}
-        </div>
-        <div class="grid-2">
-          ${field('Row spacing (mm)', numberInput('cal-rowspace', rowSpace, 0.5, 0, 50))}
-          ${field('Column spacing (mm)', numberInput('cal-colspace', colSpace, 0.5, 0, 50))}
-        </div>
-        <button type="button" class="btn wide" data-cal="grid"><i data-lucide="grid-2x2"></i> Spread the grid over the label</button>
-      </div>
-
-      <div class="cal-section">
-        <div class="cal-section-head">Roll size</div>
+        <div class="cal-section-head">Roll</div>
         <div class="field">
           <label for="cal-name">Roll name</label>
           <input id="cal-name" data-key="cal-name" value="${escapeHtml(rollLabel)}"
@@ -617,18 +650,43 @@ function openRollSizeDialog(options = {}) {
       </div>
 
       <div class="cal-section">
+        <div class="cal-section-head">Item zones</div>
+        <div class="grid-2">
+          ${field('Rows', numberInput('cal-rows', rows, 1, 1, 12))}
+          ${field('Columns', numberInput('cal-cols', cols, 1, 1, 12))}
+        </div>
+        <div class="grid-2">
+          ${field('Row spacing (mm)', numberInput('cal-rowspace', rowSpace, 0.5, 0, 50))}
+          ${field('Column spacing (mm)', numberInput('cal-colspace', colSpace, 0.5, 0, 50))}
+        </div>
+        <div class="cal-toolbar">
+          <button type="button" class="btn" data-cal="grid"><i data-lucide="grid-2x2"></i> Grid of zones</button>
+          <button type="button" class="btn" data-cal="add"><i data-lucide="plus"></i> Add item</button>
+          <button type="button" class="btn" data-cal="single"><i data-lucide="square"></i> One item</button>
+        </div>
+        <div class="hint">Rows and columns rebuild the zones evenly across the whole label.</div>
+      </div>
+
+      <div class="cal-section">
         <div class="cal-section-head">Draw</div>
         <div class="cal-tools" role="group" aria-label="Drawing tool">
           <button type="button" class="cal-tool on" data-tool="select"><i data-lucide="mouse-pointer-2"></i> Select</button>
           <button type="button" class="cal-tool" data-tool="rect"><i data-lucide="square"></i> Rectangle</button>
+          <button type="button" class="cal-tool" data-tool="square"><i data-lucide="box"></i> Square</button>
           <button type="button" class="cal-tool" data-tool="circle"><i data-lucide="circle"></i> Circle</button>
-          <button type="button" class="cal-tool" data-tool="line"><i data-lucide="minus"></i> Line</button>
         </div>
         <div class="cal-toolbar">
           <button type="button" class="btn" data-cal="delete"><i data-lucide="trash-2"></i> Delete</button>
           <button type="button" class="btn" data-cal="undo" title="Undo (Ctrl+Z)"><i data-lucide="undo-2"></i></button>
           <button type="button" class="btn" data-cal="redo" title="Redo (Ctrl+Y)"><i data-lucide="redo-2"></i></button>
         </div>
+        <div class="hint">Drag on the label to add a zone. Right-click a zone to add a second outline to the
+          same item, duplicate it, or copy it onto every zone.</div>
+      </div>
+
+      <div class="cal-section">
+        <div class="cal-section-head">Selected item</div>
+        <div class="cal-editor" id="cal-editor"></div>
       </div>
 
       <div class="cal-section">
@@ -643,26 +701,34 @@ function openRollSizeDialog(options = {}) {
           <button type="button" class="cal-a wide" data-align="dist-h" title="Equal horizontal spacing">Distribute H</button>
           <button type="button" class="cal-a wide" data-align="dist-v" title="Equal vertical spacing">Distribute V</button>
         </div>
-        <div class="hint">Shift+click cells to select several.</div>
+        <div class="hint">Shift+click zones to select several.</div>
       </div>
 
-      <div class="cal-cellchips" id="cal-cellchips"></div>
+      <div class="cal-section">
+        <div class="cal-section-head">Print check</div>
+        <div class="hint">Prints the borders of every zone on the roll — nothing else. Use it to see whether the
+          outlines land where the label really is.</div>
+        <label class="cal-check"><input type="checkbox" data-zone="border" checked> Draw the label border as well</label>
+        <div class="cal-toolbar">
+          <button type="button" class="btn" data-cal="outline-preview"><i data-lucide="eye"></i> Preview</button>
+          <button type="button" class="btn primary" data-cal="outline-print"><i data-lucide="printer"></i> Print zone borders</button>
+        </div>
+        <div class="cal-thumb" id="cal-thumb"></div>
+      </div>
     </div>
 
     <div class="cal-col cal-col-right">
-      <div class="cal-stage-wrap">
-        <div class="cal-viewport" id="cal-viewport">
-          <div class="cal-stage" id="cal-stage"><div class="cal-cells" id="cal-cells"></div></div>
-        </div>
-        <div class="cal-zoombar">
-          <button type="button" class="btn" data-zoom="out">−</button>
-          <span class="cal-zoom-label" id="cal-zoom-label">100%</span>
-          <button type="button" class="btn" data-zoom="in">+</button>
-          <button type="button" class="btn" data-zoom="fit">Fit</button>
-          <span class="hint">wheel = zoom · drag = pan / draw · Del = delete</span>
-        </div>
+      <div class="cal-canvas-wrap" id="cal-canvas-wrap">
+        <canvas id="cal-canvas"></canvas>
       </div>
-      <div class="cal-editor" id="cal-editor"></div>
+      <div class="cal-zoombar">
+        <button type="button" class="btn" data-zoom="out">−</button>
+        <span class="cal-zoom-label" id="cal-zoom-label">100%</span>
+        <button type="button" class="btn" data-zoom="in">+</button>
+        <button type="button" class="btn" data-zoom="fit">Fit</button>
+        <span class="hint">wheel = zoom · middle-drag = pan · click = select</span>
+      </div>
+      <div class="cal-zonechips" id="cal-zonechips"></div>
       <div class="cal-summary" id="cal-summary"></div>
     </div>
   `;
@@ -678,597 +744,673 @@ function openRollSizeDialog(options = {}) {
     id: 'roll-size',
     title: 'Calibrate this roll',
     icon: 'ruler',
-    width: 760,
-    height: 840,
+    width: 900,
+    height: 820,
     body,
     footer,
   });
-  fitModalToContent(modal, { min: 480, max: 940 });
 
-  const stage = $('#cal-stage', body);
-  const viewport = $('#cal-viewport', body);
-  const cellsBox = $('#cal-cells', body);
+  const wrap = $('#cal-canvas-wrap', body);
+  const canvas = $('#cal-canvas', body);
+  const ctx = canvas.getContext('2d');
   const editor = $('#cal-editor', body);
   const summary = $('#cal-summary', body);
+  const chipsBox = $('#cal-zonechips', body);
   const zoomLabel = $('#cal-zoom-label', body);
-  const chipsBox = $('#cal-cellchips', body);
-  let tool = 'select';
-  let zoom = 1;
-  let panX = 0;
-  let panY = 0;
-  /* True while the cells are just the rows × columns grid, so the fields can keep rebuilding it. */
-  let gridMode = !cells.length;
+  const thumb = $('#cal-thumb', body);
+  const silCanvas = document.createElement('canvas');
+  const silCtx = silCanvas.getContext('2d');
+  const eroCanvas = document.createElement('canvas');
+  const eroCtx = eroCanvas.getContext('2d');
+  const bandCanvas = document.createElement('canvas');
+  const bandCtx = bandCanvas.getContext('2d');
 
-  const num = (name) => Math.max(0, Number($(`[data-key="cal-${name}"]`, body)?.value) || 0);
-  let lastFit = -1;
+  const COLOUR = { teal: '#0a8f92', violet: '#7c4dd6', navy: '#001a4d', warn: '#d1663a' };
+  let dpr = 1;
+  let cssW = 480;
+  let cssH = 420;
 
-  const clamp = (value, low, high) => Math.min(high, Math.max(low, value));
-  const snap = (value) => Math.round(value * 2) / 2;
+  /* ------------------------------------------------------------- geometry */
+  const zoneBounds = (zone) => {
+    const left = Math.min(...zone.shapes.map((shape) => shape.x));
+    const top = Math.min(...zone.shapes.map((shape) => shape.y));
+    const right = Math.max(...zone.shapes.map((shape) => shape.x + shape.w));
+    const bottom = Math.max(...zone.shapes.map((shape) => shape.y + shape.h));
+    return { x: left, y: top, w: right - left, h: bottom - top };
+  };
+  const translateZone = (zone, dx, dy) => zone.shapes.forEach((shape) => {
+    shape.x += dx;
+    shape.y += dy;
+  });
+  const scaleZone = (zone, from, to) => {
+    const sx = from.w > 0.01 ? to.w / from.w : 1;
+    const sy = from.h > 0.01 ? to.h / from.h : 1;
+    zone.shapes.forEach((shape) => {
+      shape.x = to.x + (shape.x - from.x) * sx;
+      shape.y = to.y + (shape.y - from.y) * sy;
+      shape.w = Math.max(0.4, shape.w * sx);
+      shape.h = Math.max(0.4, shape.h * sy);
+    });
+  };
+  const pointInShape = (shape, x, y) => {
+    if (x < shape.x || x > shape.x + shape.w || y < shape.y || y > shape.y + shape.h) return false;
+    if (shape.kind !== 'circle') return true;
+    const rx = shape.w / 2;
+    const ry = shape.h / 2;
+    const dx = (x - (shape.x + rx)) / Math.max(1e-6, rx);
+    const dy = (y - (shape.y + ry)) / Math.max(1e-6, ry);
+    return dx * dx + dy * dy <= 1;
+  };
+  const hitZone = (x, y) => {
+    for (let index = zones.length - 1; index >= 0; index -= 1) {
+      if (zones[index].shapes.some((shape) => pointInShape(shape, x, y))) return index;
+    }
+    // The gaps between an item's outlines still belong to that item.
+    for (let index = zones.length - 1; index >= 0; index -= 1) {
+      const box = zoneBounds(zones[index]);
+      if (x >= box.x - 0.5 && x <= box.x + box.w + 0.5 && y >= box.y - 0.5 && y <= box.y + box.h + 0.5) {
+        return index;
+      }
+    }
+    return -1;
+  };
+  const hitShape = (zone, x, y) => {
+    for (let index = zone.shapes.length - 1; index >= 0; index -= 1) {
+      if (pointInShape(zone.shapes[index], x, y)) return index;
+    }
+    return -1;
+  };
+
+  const cssX = (mm) => view.ox + mm * view.scale;
+  const cssY = (mm) => view.oy + mm * view.scale;
+  const mmX = (px) => (px - view.ox) / view.scale;
+  const mmY = (px) => (px - view.oy) / view.scale;
+
+  const snapMm = (value, free) => {
+    const step = free ? 0.1 : 0.5;
+    return Math.round(value / step) * step;
+  };
 
   const readSize = () => {
-    width = Math.max(5, num('width'));
-    height = Math.max(5, num('height'));
-    rows = Math.max(1, Math.min(12, Math.round(num('rows')) || 1));
-    cols = Math.max(1, Math.min(12, Math.round(num('cols')) || 1));
-    gap = Math.max(0, num('gap'));
-    rowSpace = Math.max(0, num('rowspace'));
-    colSpace = Math.max(0, num('colspace'));
+    const read = (name, fallback) => Number($(`[data-key="cal-${name}"]`, body)?.value) || fallback;
+    width = Math.max(5, read('width', width));
+    height = Math.max(5, read('height', height));
+    rows = Math.max(1, Math.min(12, Math.round(read('rows', rows))));
+    cols = Math.max(1, Math.min(12, Math.round(read('cols', cols))));
+    gap = Math.max(0, Number($('[data-key="cal-gap"]', body)?.value) || 0);
+    rowSpace = Math.max(0, Number($('[data-key="cal-rowspace"]', body)?.value) || 0);
+    colSpace = Math.max(0, Number($('[data-key="cal-colspace"]', body)?.value) || 0);
   };
 
-  const applyView = () => {
-    stage.style.transform = `translate(${Math.round(panX)}px, ${Math.round(panY)}px) scale(${zoom})`;
-    // Keep the handles a constant size on screen: they live inside the scaled stage.
-    stage.style.setProperty('--inv-zoom', String(1 / zoom));
-    if (zoomLabel) zoomLabel.textContent = `${Math.round(zoom * 100)}%`;
-  };
-
-  const selectedIndices = () => [...selection].filter((index) => cells[index]).sort((a, b) => a - b);
-  const selectedCells = () => selectedIndices().map((index) => cells[index]);
-
-  const selectOnly = (index) => {
-    selection = new Set(index >= 0 && cells[index] ? [index] : []);
-    selected = index;
-    draw();
-  };
-
-  const toggleSelection = (index) => {
-    if (index < 0 || !cells[index]) return;
-    if (selection.has(index)) {
-      selection.delete(index);
-      if (selected === index) selected = selectedIndices()[0] ?? -1;
-    } else {
-      selection.add(index);
-      selected = index;
-    }
-    draw();
-  };
-
-  /* Align / distribute the selected cells inside their common bounding box. */
-  const alignSelection = (mode) => {
-    const indices = selectedIndices();
-    if (indices.length < 2) return;
-    const list = indices.map((index) => cells[index]);
-    const left = Math.min(...list.map((cell) => cell.x));
-    const right = Math.max(...list.map((cell) => cell.x + cell.w));
-    const top = Math.min(...list.map((cell) => cell.y));
-    const bottom = Math.max(...list.map((cell) => cell.y + cell.h));
-    const centerX = (left + right) / 2;
-    const centerY = (top + bottom) / 2;
-    const place = (cell, x, y) => {
-      cell.x = snap(clamp(x, 0, Math.max(0, width - cell.w)));
-      cell.y = snap(clamp(y, 0, Math.max(0, height - cell.h)));
-    };
-    if (mode === 'left') list.forEach((cell) => place(cell, left, cell.y));
-    if (mode === 'right') list.forEach((cell) => place(cell, right - cell.w, cell.y));
-    if (mode === 'hcenter') list.forEach((cell) => place(cell, centerX - cell.w / 2, cell.y));
-    if (mode === 'top') list.forEach((cell) => place(cell, cell.x, top));
-    if (mode === 'bottom') list.forEach((cell) => place(cell, cell.x, bottom - cell.h));
-    if (mode === 'vmiddle') list.forEach((cell) => place(cell, cell.x, centerY - cell.h / 2));
-    if (mode === 'dist-h' || mode === 'dist-v') {
-      const horizontal = mode === 'dist-h';
-      const sorted = [...list].sort((a, b) => (horizontal ? a.x - b.x : a.y - b.y));
-      const size = sorted.reduce((sum, cell) => sum + (horizontal ? cell.w : cell.h), 0);
-      const span = horizontal ? right - left : bottom - top;
-      const gap = (span - size) / Math.max(1, sorted.length - 1);
-      let cursor = horizontal ? left : top;
-      sorted.forEach((cell) => {
-        if (horizontal) {
-          place(cell, cursor, cell.y);
-          cursor += cell.w + gap;
-        } else {
-          place(cell, cell.x, cursor);
-          cursor += cell.h + gap;
-        }
-      });
-    }
-    gridMode = false;
-    commit();
-  };
-
-  /* Rows/columns that the drawn cells actually form (distinct start rows and columns). */
-  const derivedGrid = () => {
-    if (!cells.length) return { rows, cols };
-    const rowsSeen = new Set(cells.map((cell) => Math.round(Number(cell.y) || 0)));
-    const colsSeen = new Set(cells.map((cell) => Math.round(Number(cell.x) || 0)));
-    return { rows: Math.max(1, rowsSeen.size), cols: Math.max(1, colsSeen.size) };
-  };
-
-  /* Undo history lives inside the dialog: every committed change is one step. */
-  let history = [JSON.stringify(cells)];
+  /* -------------------------------------------------------------- history */
+  let history = [JSON.stringify(zones)];
   let historyIndex = 0;
-
   const commit = () => {
-    const snapshot = JSON.stringify(cells);
+    const snapshot = JSON.stringify(zones);
     if (history[historyIndex] !== snapshot) {
       history = history.slice(0, historyIndex + 1);
       history.push(snapshot);
-      if (history.length > 60) history.shift();
+      if (history.length > 80) history.shift();
       historyIndex = history.length - 1;
     }
     draw();
   };
-
+  const clampSelection = () => {
+    const valid = [...selection].filter((index) => zones[index]);
+    if (!valid.length && zones.length) valid.push(0);
+    selection = new Set(valid);
+    const first = valid[0];
+    if (activeShape !== null && (!zones[first] || !zones[first].shapes[activeShape])) activeShape = null;
+  };
   const stepHistory = (delta) => {
     const next = historyIndex + delta;
     if (next < 0 || next >= history.length) return;
     historyIndex = next;
-    cells = JSON.parse(history[historyIndex]);
-    selected = cells.length ? Math.min(Math.max(selected, 0), cells.length - 1) : -1;
-    selection = new Set(selected >= 0 ? [selected] : []);
+    zones = JSON.parse(history[historyIndex]);
+    clampSelection();
+    renderInspector();
     draw();
   };
 
-  const deleteCell = (index) => {
-    const targets = index === undefined || index === null
-      ? selectedIndices()
-      : [index];
-    const valid = targets.filter((item) => item >= 0 && item < cells.length).sort((a, b) => b - a);
-    if (!valid.length) return;
-    valid.forEach((item) => cells.splice(item, 1));
-    gridMode = false;
-    const next = Math.max(-1, Math.min(valid[valid.length - 1], cells.length - 1));
-    selection = new Set(next >= 0 ? [next] : []);
-    selected = next;
-    commit();
+  const selectedIndices = () => [...selection].filter((index) => zones[index]).sort((a, b) => a - b);
+
+  /* ------------------------------------------------------------- toolbar */
+  const setTool = (next) => {
+    tool = next;
+    $$('.cal-tool', body).forEach((button) => button.classList.toggle('on', button.dataset.tool === tool));
+    canvas.style.cursor = tool === 'select' ? 'default' : 'crosshair';
   };
 
   const applyGrid = () => {
     readSize();
-    cells = [];
-    // Spread every row and column evenly across the whole label, honouring the spacings.
-    const cellW = Math.max(0.5, (width - (cols - 1) * colSpace) / cols);
-    const cellH = Math.max(0.5, (height - (rows - 1) * rowSpace) / rows);
+    const zoneW = Math.max(1, (width - (cols - 1) * colSpace) / cols);
+    const zoneH = Math.max(1, (height - (rows - 1) * rowSpace) / rows);
+    zones = [];
     for (let row = 0; row < rows; row += 1) {
       for (let col = 0; col < cols; col += 1) {
-        cells.push({
-          shape: 'rect',
-          x: round2(col * (cellW + colSpace)),
-          y: round2(row * (cellH + rowSpace)),
-          w: round2(cellW),
-          h: round2(cellH),
-          angle: 0,
-          thickness_mm: 0.8,
-          label: rows * cols > 1 ? `R${row + 1}C${col + 1}` : '',
+        zones.push({
+          label: rows * cols > 1 ? `R${row + 1}C${col + 1}` : 'Item 1',
+          thickness: 0.3,
+          shapes: [{
+            kind: 'rect',
+            x: round2(col * (zoneW + colSpace)),
+            y: round2(row * (zoneH + rowSpace)),
+            w: round2(zoneW),
+            h: round2(zoneH),
+          }],
         });
       }
     }
-    gridMode = true;
-    selected = cells.length ? 0 : -1;
-    selection = new Set(selected >= 0 ? [selected] : []);
+    autoZone = false;
+    selection = new Set(zones.length ? [0] : []);
+    activeShape = null;
+    renderInspector();
+    commit();
+    toast(`${zones.length} item zone${zones.length === 1 ? '' : 's'} laid out`, 'ok');
+  };
+
+  const singleZone = () => {
+    readSize();
+    zones = [defaultZone()];
+    autoZone = true;
+    selection = new Set([0]);
+    activeShape = null;
+    renderInspector();
     commit();
   };
 
-  const centreView = () => {
-    const view = viewport.getBoundingClientRect();
-    const stageW = parseFloat(stage.style.width) || 280;
-    const stageH = parseFloat(stage.style.height) || 190;
-    panX = Math.max(0, (view.width - stageW * zoom) / 2);
-    panY = Math.max(0, (view.height - stageH * zoom) / 2);
-    applyView();
+  const addZone = () => {
+    readSize();
+    const box = { x: round2(width * 0.1), y: round2(height * 0.1), w: round2(width * 0.8), h: round2(height * 0.8) };
+    zones.push({ label: `Item ${zones.length + 1}`, thickness: 0.3, shapes: [{ kind: 'rect', ...box }] });
+    autoZone = false;
+    selection = new Set([zones.length - 1]);
+    activeShape = null;
+    renderInspector();
+    commit();
   };
 
-  const handleMarkup = (cell) => {
-    if (cell.shape === 'line') {
-      return '<i class="cal-handle line-end" data-handle="end"></i>'
-        + '<i class="cal-handle line-start" data-handle="start"></i>'
-        + '<i class="cal-handle thickness" data-handle="thickness"></i>';
+  const addShapeToZone = (index, kind) => {
+    const zone = zones[index];
+    if (!zone) return;
+    const box = zoneBounds(zone);
+    // The same area as the item — the new outline starts exactly on top of the existing one,
+    // then its handles shape the second lobe of the item.
+    zone.shapes.push({ kind, x: box.x, y: box.y, w: box.w, h: box.h });
+    selection = new Set([index]);
+    activeShape = zone.shapes.length - 1;
+    renderInspector();
+    commit();
+    toast(kind === 'circle'
+      ? 'Circle added — it outlines the same item; drag its handles to shape the second area'
+      : 'Rectangle added — it outlines the same item; drag its handles to shape the second area');
+  };
+
+  const removeShape = (index, order) => {
+    const zone = zones[index];
+    if (!zone) return;
+    zone.shapes.splice(order, 1);
+    if (!zone.shapes.length) zones.splice(index, 1);
+    activeShape = null;
+    clampSelection();
+    renderInspector();
+    commit();
+  };
+
+  const deleteSelection = () => {
+    const targets = selectedIndices().sort((a, b) => b - a);
+    if (!targets.length) return;
+    targets.forEach((index) => zones.splice(index, 1));
+    activeShape = null;
+    clampSelection();
+    renderInspector();
+    commit();
+  };
+
+  const duplicateZone = (index) => {
+    const zone = zones[index];
+    if (!zone) return;
+    const box = zoneBounds(zone);
+    const copy = {
+      label: `${zone.label} copy`,
+      thickness: zone.thickness,
+      shapes: zone.shapes.map((shape) => ({
+        ...shape,
+        x: round2(Math.min(width - shape.w, shape.x + 1)),
+        y: round2(Math.min(height - shape.h, shape.y + 1)),
+      })),
+    };
+    if (box.w <= 0) return;
+    zones.push(copy);
+    selection = new Set([zones.length - 1]);
+    activeShape = null;
+    renderInspector();
+    commit();
+  };
+
+  /* Copy this item's outlines (scaled) onto every other zone. */
+  const mirrorZone = (index) => {
+    const source = zones[index];
+    if (!source) return;
+    const from = zoneBounds(source);
+    zones.forEach((zone, other) => {
+      if (other === index) return;
+      const to = zoneBounds(zone);
+      zone.shapes = source.shapes.map((shape) => ({
+        kind: shape.kind,
+        x: to.x + ((shape.x - from.x) / Math.max(0.01, from.w)) * to.w,
+        y: to.y + ((shape.y - from.y) / Math.max(0.01, from.h)) * to.h,
+        w: Math.max(0.4, (shape.w / Math.max(0.01, from.w)) * to.w),
+        h: Math.max(0.4, (shape.h / Math.max(0.01, from.h)) * to.h),
+      }));
+    });
+    commit();
+    toast(`Item ${index + 1} copied onto ${zones.length - 1} other zone${zones.length === 2 ? '' : 's'}`, 'ok');
+  };
+
+  const alignSelection = (mode) => {
+    const indices = selectedIndices();
+    if (indices.length < 2) return;
+    const boxes = indices.map((index) => zoneBounds(zones[index]));
+    const left = Math.min(...boxes.map((box) => box.x));
+    const right = Math.max(...boxes.map((box) => box.x + box.w));
+    const top = Math.min(...boxes.map((box) => box.y));
+    const bottom = Math.max(...boxes.map((box) => box.y + box.h));
+    const centreX = (left + right) / 2;
+    const centreY = (top + bottom) / 2;
+    const place = (zone, box, x, y) => {
+      translateZone(zone, x - box.x, y - box.y);
+    };
+    indices.forEach((index, order) => {
+      const zone = zones[index];
+      const box = boxes[order];
+      if (mode === 'left') place(zone, box, left, box.y);
+      if (mode === 'right') place(zone, box, right - box.w, box.y);
+      if (mode === 'hcenter') place(zone, box, centreX - box.w / 2, box.y);
+      if (mode === 'top') place(zone, box, box.x, top);
+      if (mode === 'bottom') place(zone, box, box.x, bottom - box.h);
+      if (mode === 'vmiddle') place(zone, box, box.x, centreY - box.h / 2);
+    });
+    if (mode === 'dist-h' || mode === 'dist-v') {
+      const horizontal = mode === 'dist-h';
+      const sorted = indices.map((index, order) => ({ index, box: boxes[order] }))
+        .sort((a, b) => (horizontal ? a.box.x - b.box.x : a.box.y - b.box.y));
+      const span = horizontal ? right - left : bottom - top;
+      const used = sorted.reduce((sum, item) => sum + (horizontal ? item.box.w : item.box.h), 0);
+      const space = (span - used) / Math.max(1, sorted.length - 1);
+      let cursor = horizontal ? left : top;
+      sorted.forEach(({ index, box }) => {
+        if (horizontal) place(zones[index], box, cursor, box.y);
+        else place(zones[index], box, box.x, cursor);
+        cursor += (horizontal ? box.w : box.h) + space;
+      });
     }
-    return ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']
-      .map((spot) => `<i class="cal-handle ${spot}" data-handle="${spot}"></i>`)
-      .join('');
+    commit();
+    renderInspector();
+  };
+
+  /* ------------------------------------------------------------- drawing */
+  const pathShapes = (context, shapes) => {
+    context.beginPath();
+    shapes.forEach((shape) => {
+      const x = cssX(shape.x);
+      const y = cssY(shape.y);
+      const w = Math.max(1, shape.w * view.scale);
+      const h = Math.max(1, shape.h * view.scale);
+      if (shape.kind === 'circle') context.ellipse(x + w / 2, y + h / 2, w / 2, h / 2, 0, 0, Math.PI * 2);
+      else context.rect(x, y, w, h);
+    });
+  };
+
+  const identity = (context) => context.setTransform(1, 0, 0, 1, 0, 0);
+  const cssTransform = (context) => context.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  /* Outline of the *merged* area: silhouette minus a version eroded by half the border,
+     so two overlapping outlines read as one item instead of two shapes. */
+  const zoneRing = (shapes, colour, thickness) => {
+    identity(silCtx);
+    silCtx.clearRect(0, 0, silCanvas.width, silCanvas.height);
+    cssTransform(silCtx);
+    silCtx.fillStyle = colour;
+    pathShapes(silCtx, shapes);
+    silCtx.fill();
+
+    identity(eroCtx);
+    eroCtx.clearRect(0, 0, eroCanvas.width, eroCanvas.height);
+    eroCtx.drawImage(silCanvas, 0, 0);
+    eroCtx.globalCompositeOperation = 'destination-in';
+    const radius = Math.max(1, (thickness * view.scale * dpr) / 2);
+    for (let step = 0; step < 16; step += 1) {
+      const angle = (step / 16) * Math.PI * 2;
+      eroCtx.drawImage(silCanvas, Math.cos(angle) * radius, Math.sin(angle) * radius);
+    }
+    eroCtx.globalCompositeOperation = 'source-over';
+
+    identity(bandCtx);
+    bandCtx.clearRect(0, 0, bandCanvas.width, bandCanvas.height);
+    cssTransform(bandCtx);
+    bandCtx.fillStyle = colour;
+    pathShapes(bandCtx, shapes);
+    bandCtx.fill();
+    identity(bandCtx);
+    bandCtx.globalCompositeOperation = 'destination-out';
+    bandCtx.drawImage(eroCanvas, 0, 0);
+    bandCtx.globalCompositeOperation = 'source-over';
+  };
+
+  const HANDLES = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
+  const handlePoint = (box, spot) => ({
+    x: cssX(spot.includes('w') ? box.x : spot.includes('e') ? box.x + box.w : box.x + box.w / 2),
+    y: cssY(spot.includes('n') ? box.y : spot.includes('s') ? box.y + box.h : box.y + box.h / 2),
+  });
+
+  const paintHandles = (box) => {
+    ctx.save();
+    HANDLES.forEach((spot) => {
+      const point = handlePoint(box, spot);
+      ctx.fillStyle = '#fff';
+      ctx.strokeStyle = COLOUR.violet;
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.rect(point.x - 4, point.y - 4, 8, 8);
+      ctx.fill();
+      ctx.stroke();
+    });
+    ctx.restore();
   };
 
   const draw = () => {
-    // Size the preview from the label proportions — a max-height alone would squash it.
-    const maxW = 300;
-    const maxH = 200;
-    const ratio = width / Math.max(0.1, height);
-    let stageW = maxW;
-    let stageH = Math.round(maxW / ratio);
-    if (stageH > maxH) {
-      stageH = maxH;
-      stageW = Math.round(maxH * ratio);
-    }
-    stage.style.width = `${Math.max(80, stageW)}px`;
-    stage.style.height = `${Math.max(40, stageH)}px`;
-    applyView();
-    const pxPerMm = (parseFloat(stage.style.width) || 300) / Math.max(1e-6, width);
-    cellsBox.innerHTML = cells.map((cell, index) => {
-      const on = selection.has(index);
-      const tone = on ? ' selected' : '';
-      const shape = cell.shape === 'circle' ? ' circle' : cell.shape === 'line' ? ' line' : '';
-      const angle = Number(cell.angle || 0);
-      const rotate = cell.shape === 'line' && angle
-        ? `;transform:rotate(${angle}deg);transform-origin:0 50%`
-        : '';
-      const weight = cell.shape === 'line'
-        ? ''
-        : `;border-width:${Math.max(1, Number(cell.thickness_mm || 0.8) * pxPerMm)}px`;
-      const handles = on && selection.size === 1 ? handleMarkup(cell) : '';
-      return `<div class="cal-cell${tone}${shape}" data-cell="${index}"
-        style="left:${(cell.x / width) * 100}%;top:${(cell.y / height) * 100}%;
-               width:${(cell.w / width) * 100}%;height:${(cell.h / height) * 100}%${rotate}${weight}">
-        <span>${index + 1}</span>${handles}</div>`;
-    }).join('');
+    cssTransform(ctx);
+    ctx.clearRect(0, 0, cssW, cssH);
+    ctx.fillStyle = '#eef3f8';
+    ctx.fillRect(0, 0, cssW, cssH);
 
-    if (selection.size > 1) {
-      editor.innerHTML = `
-        <div class="cal-editor-head">${selection.size} cells selected</div>
-        <div class="hint">Align them with the buttons on the left, or drag any selected cell to move
-          the whole group. Shift+click adds or removes a cell from the selection.</div>`;
-    } else if (selected >= 0 && cells[selected]) {
-      const cell = cells[selected];
-      const isLine = cell.shape === 'line';
-      const shapeName = cell.shape === 'circle' ? 'circle' : isLine ? 'line' : 'rectangle';
-      const thickness = Number(cell.thickness_mm ?? 0.8);
-      editor.innerHTML = `
-        <div class="cal-editor-head">Cell ${selected + 1} · ${shapeName}</div>
-        <div class="cal-shapes" role="group" aria-label="Cell shape">
-          <button type="button" class="cal-shape${cell.shape === 'rect' ? ' on' : ''}" data-shape="rect">Rectangle</button>
-          <button type="button" class="cal-shape${cell.shape === 'circle' ? ' on' : ''}" data-shape="circle">Circle</button>
-          <button type="button" class="cal-shape${cell.shape === 'line' ? ' on' : ''}" data-shape="line">Line</button>
-        </div>
-        <div class="grid-4">
-          ${field('X (mm)', numberInput('cal-x', round2(cell.x), 0.5, 0, Math.max(0, width - 0.5)))}
-          ${field('Y (mm)', numberInput('cal-y', round2(cell.y), 0.5, 0, Math.max(0, height - 0.5)))}
-          ${field(isLine ? 'Length (mm)' : 'Width (mm)', numberInput('cal-w', round2(cell.w), 0.5, 0.5, width))}
-          ${isLine
-            ? field('Angle (°)', numberInput('cal-angle', round2(cell.angle || 0), 1, -180, 180))
-            : field('Height (mm)', numberInput('cal-h', round2(cell.h), 0.5, 0.5, height))}
-        </div>
-        <div class="grid-2">
-          ${field(isLine ? 'Thickness (mm)' : 'Outline (mm)', numberInput('cal-thickness', thickness, 0.1, 0.2, 10))}
-          ${isLine ? '' : `<div class="hint" style="align-self:end">Outline only changes the guide weight.</div>`}
-        </div>`;
-    } else {
-      editor.innerHTML = '<div class="hint">No cells yet — press <strong>Grid from rows × columns</strong> for a regular roll, '
-        + 'or pick <strong>Draw rectangle / circle / line</strong> and drag on the label.</div>';
+    // the label page
+    ctx.save();
+    ctx.shadowColor = 'rgba(0, 26, 77, 0.22)';
+    ctx.shadowBlur = 12;
+    ctx.shadowOffsetY = 3;
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(cssX(0), cssY(0), width * view.scale, height * view.scale);
+    ctx.restore();
+    ctx.strokeStyle = 'rgba(0, 26, 77, 0.28)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(cssX(0) + 0.5, cssY(0) + 0.5, width * view.scale - 1, height * view.scale - 1);
+
+    // faint 5 mm grid — helps placing outlines by eye
+    if (view.scale * 5 > 26) {
+      ctx.strokeStyle = 'rgba(0, 26, 77, 0.07)';
+      ctx.beginPath();
+      for (let x = 5; x < width; x += 5) {
+        ctx.moveTo(cssX(x), cssY(0));
+        ctx.lineTo(cssX(x), cssY(height));
+      }
+      for (let y = 5; y < height; y += 5) {
+        ctx.moveTo(cssX(0), cssY(y));
+        ctx.lineTo(cssX(width), cssY(y));
+      }
+      ctx.stroke();
     }
 
-    const perCell = cells.length
-      ? `${round2(cells[0].w)} × ${round2(cells[0].h)} mm each`
-      : 'whole label usable';
+    // printhead limit
+    const headLimit = printheadWidthMm();
+    if (headLimit && width > headLimit + 0.05) {
+      ctx.save();
+      ctx.setLineDash([5, 4]);
+      ctx.strokeStyle = COLOUR.warn;
+      ctx.beginPath();
+      ctx.moveTo(cssX(headLimit), cssY(0));
+      ctx.lineTo(cssX(headLimit), cssY(height));
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    zones.forEach((zone, index) => {
+      const selected = selection.has(index);
+      const colour = selected ? COLOUR.violet : COLOUR.teal;
+      zoneRing(zone.shapes, colour, Math.max(0.15, Number(zone.thickness) || 0.3));
+      identity(ctx);
+      ctx.globalAlpha = selected ? 0.16 : 0.09;
+      ctx.drawImage(silCanvas, 0, 0);
+      ctx.globalAlpha = 1;
+      ctx.drawImage(bandCanvas, 0, 0);
+      cssTransform(ctx);
+
+      const box = zoneBounds(zone);
+      ctx.fillStyle = colour;
+      ctx.font = '600 11px "Segoe UI", system-ui, sans-serif';
+      const label = String(index + 1);
+      const badgeX = cssX(box.x) + 3;
+      const badgeY = cssY(box.y) + 12;
+      if (view.scale * box.w > 14 && view.scale * box.h > 14) {
+        ctx.fillText(label, badgeX + 1, badgeY + 1);
+      }
+    });
+
+    if (marquee) {
+      ctx.save();
+      ctx.setLineDash([4, 3]);
+      ctx.strokeStyle = COLOUR.navy;
+      ctx.fillStyle = 'rgba(0, 26, 77, 0.06)';
+      const x = cssX(Math.min(marquee.x0, marquee.x1));
+      const y = cssY(Math.min(marquee.y0, marquee.y1));
+      const w = Math.abs(marquee.x1 - marquee.x0) * view.scale;
+      const h = Math.abs(marquee.y1 - marquee.y0) * view.scale;
+      ctx.fillRect(x, y, w, h);
+      ctx.strokeRect(x, y, w, h);
+      ctx.restore();
+    }
+
+    if (draft) {
+      const shape = { kind: draft.kind, x: Math.min(draft.x0, draft.x1), y: Math.min(draft.y0, draft.y1),
+        w: Math.abs(draft.x1 - draft.x0), h: Math.abs(draft.y1 - draft.y0) };
+      ctx.save();
+      ctx.setLineDash([5, 3]);
+      ctx.strokeStyle = COLOUR.navy;
+      ctx.fillStyle = 'rgba(0, 26, 77, 0.08)';
+      slotPath(ctx, shape);
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // handles for the single selected zone, or for the outline being shaped
+    const indices = selectedIndices();
+    if (indices.length === 1) {
+      const zone = zones[indices[0]];
+      if (activeShape !== null && zone.shapes[activeShape]) paintHandles(zone.shapes[activeShape]);
+      else paintHandles(zoneBounds(zone));
+      if (activeShape !== null && zone.shapes[activeShape]) {
+        ctx.save();
+        ctx.setLineDash([3, 3]);
+        ctx.strokeStyle = COLOUR.violet;
+        const box = zone.shapes[activeShape];
+        ctx.strokeRect(cssX(box.x) + 0.5, cssY(box.y) + 0.5, box.w * view.scale, box.h * view.scale);
+        ctx.restore();
+      }
+    }
+
+    renderChips();
+    renderSummary();
+  };
+
+  /* One shape as a canvas path (used for the draw preview). */
+  function slotPath(context, shape) {
+    const x = cssX(shape.x);
+    const y = cssY(shape.y);
+    const w = Math.max(1, shape.w * view.scale);
+    const h = Math.max(1, shape.h * view.scale);
+    context.beginPath();
+    if (shape.kind === 'circle') context.ellipse(x + w / 2, y + h / 2, w / 2, h / 2, 0, 0, Math.PI * 2);
+    else context.rect(x, y, w, h);
+  }
+
+  const renderSummary = () => {
     const headLimit = printheadWidthMm();
     const clipNote = headLimit && width > headLimit + 0.05
-      ? ` · prints up to ${round2(headLimit)} mm (printhead)`
-      : '';
-    const layout = derivedGrid();
-    const layoutNote = cells.length > 1
-      ? ` · ${layout.rows} row${layout.rows === 1 ? '' : 's'} × ${layout.cols} column${layout.cols === 1 ? '' : 's'}`
-      : '';
-    summary.textContent = `${cells.length || 1} ${cells.length === 1 ? 'cell' : 'cells'}${layoutNote} · ${perCell}${clipNote}`;
-
-    refreshIcons(body);
-    const selCount = $('#cal-selcount', body);
-    if (selCount) selCount.textContent = selection.size > 1 ? `${selection.size} selected` : '';
-    $$('.cal-a', body).forEach((button) => {
-      button.disabled = selection.size < 2;
-    });
-    if (chipsBox) {
-      chipsBox.innerHTML = cells.length
-        ? cells.map((cell, index) => `
-          <button type="button" class="cal-chip${selection.has(index) ? ' on' : ''}" data-chip="${index}">
-            <b>${index + 1}</b><span>${cell.shape === 'circle' ? 'circle' : cell.shape === 'line' ? 'line' : 'rect'}
-            ${round2(cell.w)}×${round2(cell.h)}</span>
-            <i class="cal-chip-x" data-chip-del="${index}" title="Delete this cell">✕</i>
-          </button>`).join('')
-        : '<span class="hint">No cells yet — press the grid button or draw on the label.</span>';
-    }
-    if (lastFit !== `${cells.length}:${selected}:${cells[selected]?.shape || ''}:${selection.size}`) {
-      lastFit = `${cells.length}:${selected}:${cells[selected]?.shape || ''}:${selection.size}`;
-      fitModalToContent(modal, { min: 420, max: 940 });
-    }
+      ? ` · prints up to ${round2(headLimit)} mm (printhead)` : '';
+    const outlines = zones.reduce((sum, zone) => sum + zone.shapes.length, 0);
+    summary.textContent = `${zones.length} item zone${zones.length === 1 ? '' : 's'}`
+      + ` · ${outlines} outline${outlines === 1 ? '' : 's'}`
+      + ` · ${round2(width)} × ${round2(height)} mm${clipNote}`;
   };
 
-  const selectCell = (index) => selectOnly(index);
-
-  const setTool = (next) => {
-    tool = next;
-    $$('.cal-tool', body).forEach((button) => {
-      const on = button.dataset.tool === tool;
-      button.classList.toggle('on', on);
-      button.setAttribute('aria-pressed', on ? 'true' : 'false');
-    });
-    stage.classList.toggle('drawing', tool !== 'select');
-    stage.dataset.tool = tool;
+  const renderChips = () => {
+    if (!chipsBox) return;
+    chipsBox.innerHTML = zones.length
+      ? zones.map((zone, index) => {
+        const box = zoneBounds(zone);
+        const kind = zone.shapes.length > 1 ? `${zone.shapes.length} outlines`
+          : zone.shapes[0].kind === 'circle' ? 'circle' : 'rect';
+        return `<button type="button" class="cal-chip${selection.has(index) ? ' on' : ''}" data-chip="${index}">
+          <b>${index + 1}</b><span>${kind} ${round2(box.w)}×${round2(box.h)}</span>
+          <i class="cal-chip-x" data-chip-del="${index}" title="Delete this zone">✕</i></button>`;
+      }).join('')
+      : '<span class="hint">No zones yet — press Grid of zones, or drag on the label.</span>';
   };
 
-  $$('.cal-tool', body).forEach((button) => {
-    button.onclick = () => setTool(button.dataset.tool);
+  /* ----------------------------------------------------------- inspector */
+  const renderInspector = () => {
+    const indices = selectedIndices();
+    if (!indices.length) {
+      editor.innerHTML = '<div class="hint">Nothing selected — click an item zone, or draw a new one.</div>';
+      return;
+    }
+    if (indices.length > 1) {
+      editor.innerHTML = `<div class="cal-editor-head">${indices.length} item zones selected</div>
+        <div class="hint">Drag any of them to move the group, or align them with the buttons below.</div>`;
+      return;
+    }
+    const index = indices[0];
+    const zone = zones[index];
+    const box = zoneBounds(zone);
+    const shapes = zone.shapes;
+    editor.innerHTML = `
+      <div class="cal-editor-head">Item ${index + 1} of ${zones.length}</div>
+      <div class="field">
+        <label for="cal-zname">Zone name</label>
+        <input id="cal-zname" data-zone="name" value="${escapeHtml(zone.label || '')}" placeholder="Item ${index + 1}">
+      </div>
+      <div class="grid-4">
+        ${field('X (mm)', numberInput('cal-x', round2(box.x), 0.5, 0, 400))}
+        ${field('Y (mm)', numberInput('cal-y', round2(box.y), 0.5, 0, 400))}
+        ${field('W (mm)', numberInput('cal-w', round2(box.w), 0.5, 0.5, 400))}
+        ${field('H (mm)', numberInput('cal-h', round2(box.h), 0.5, 0.5, 400))}
+      </div>
+      <div class="cal-outlines">
+        ${shapes.map((shape, order) => `
+          <button type="button" class="cal-outline${activeShape === order ? ' on' : ''}" data-outline="${order}"
+            title="Edit outline ${order + 1} on its own">
+            <em>${shape.kind === 'circle' ? '◯' : '▭'}</em><b>${order + 1}</b>
+            <span>${round2(shape.w)}×${round2(shape.h)}</span>
+            ${shapes.length > 1 ? `<i class="cal-outline-x" data-outline-del="${order}" title="Remove this outline">✕</i>` : ''}
+          </button>`).join('')}
+      </div>
+      <div class="cal-shapes" role="group" aria-label="Add an outline to this item">
+        <button type="button" class="cal-shape" data-add="rect">+ Rectangle</button>
+        <button type="button" class="cal-shape" data-add="circle">+ Circle</button>
+      </div>
+      <div class="grid-2">
+        ${field('Border (mm)', numberInput('cal-thickness', round2(zone.thickness ?? 0.3), 0.05, 0.1, 1.5))}
+        <div class="hint" style="align-self:end">Border weight of the guide and the check print.</div>
+      </div>`;
+    refreshIcons(editor);
+  };
+
+  /* ---------------------------------------------------------- interaction */
+  let dragState = null;
+  let draft = null;
+  let marquee = null;
+  let menu = null;
+
+  const cssPoint = (event) => {
+    const rect = canvas.getBoundingClientRect();
+    return { x: event.clientX - rect.left, y: event.clientY - rect.top };
+  };
+  const mmPoint = (event) => {
+    const point = cssPoint(event);
+    return { x: mmX(point.x), y: mmY(point.y) };
+  };
+  const handleAt = (point, box) => HANDLES.find((spot) => {
+    const target = handlePoint(box, spot);
+    return Math.abs(target.x - point.x) <= 7 && Math.abs(target.y - point.y) <= 7;
   });
 
-  /* Drag on empty label space to draw the active shape; a plain click places it at its default size.
-     With the Select tool the same drag pans the zoomed view. */
-  stage.addEventListener('pointerdown', (event) => {
-    if (event.target.closest('.cal-handle') || event.target.closest('.cal-cell')) return;
-    const box = stage.getBoundingClientRect();
-    const toMm = (clientX, clientY) => ({
-      x: Math.min(width, Math.max(0, ((clientX - box.left) / box.width) * width)),
-      y: Math.min(height, Math.max(0, ((clientY - box.top) / box.height) * height)),
+  const closeMenu = () => {
+    if (menu) menu.remove();
+    menu = null;
+  };
+
+  const openZoneMenu = (index, event) => {
+    closeMenu();
+    const zone = zones[index];
+    if (!zone) return;
+    menu = document.createElement('div');
+    menu.className = 'cal-menu';
+    menu.innerHTML = `
+      <button type="button" data-menu="rect"><i data-lucide="square"></i> Add rectangle to this item</button>
+      <button type="button" data-menu="circle"><i data-lucide="circle"></i> Add circle to this item</button>
+      <div class="cal-menu-sep"></div>
+      <button type="button" data-menu="shapes"><i data-lucide="spline"></i> Edit the outlines (${zone.shapes.length})</button>
+      <button type="button" data-menu="duplicate"><i data-lucide="copy"></i> Duplicate this item</button>
+      <button type="button" data-menu="mirror"><i data-lucide="copy-check"></i> Copy onto every other item</button>
+      <div class="cal-menu-sep"></div>
+      <button type="button" data-menu="delete" class="danger"><i data-lucide="trash-2"></i> Delete this item</button>`;
+    document.body.appendChild(menu);
+    const rect = menu.getBoundingClientRect();
+    menu.style.left = `${Math.min(window.innerWidth - rect.width - 8, event.clientX)}px`;
+    menu.style.top = `${Math.min(window.innerHeight - rect.height - 8, event.clientY)}px`;
+    refreshIcons(menu);
+    menu.addEventListener('click', (menuEvent) => {
+      const action = menuEvent.target.closest('[data-menu]')?.dataset.menu;
+      if (!action) return;
+      closeMenu();
+      if (action === 'rect' || action === 'circle') addShapeToZone(index, action);
+      if (action === 'shapes') {
+        selection = new Set([index]);
+        activeShape = zone.shapes.length > 1 ? 1 : 0;
+        renderInspector();
+        draw();
+      }
+      if (action === 'duplicate') duplicateZone(index);
+      if (action === 'mirror') mirrorZone(index);
+      if (action === 'delete') {
+        selection = new Set([index]);
+        deleteSelection();
+      }
     });
+  };
 
-    if (tool === 'select') {
-      const startX = event.clientX;
-      const startY = event.clientY;
-      const originX = panX;
-      const originY = panY;
-      let moved = false;
-      const onMove = (moveEvent) => {
-        const dx = moveEvent.clientX - startX;
-        const dy = moveEvent.clientY - startY;
-        if (Math.abs(dx) > 2 || Math.abs(dy) > 2) moved = true;
-        panX = originX + dx;
-        panY = originY + dy;
-        applyView();
-      };
-      const onUp = () => {
-        window.removeEventListener('pointermove', onMove);
-        window.removeEventListener('pointerup', onUp);
-        if (!moved) selectCell(-1);
-      };
-      window.addEventListener('pointermove', onMove);
-      window.addEventListener('pointerup', onUp);
-      event.preventDefault();
+  const closeMenuOutside = (event) => {
+    if (!document.body.contains(canvas)) {
+      document.removeEventListener('pointerdown', closeMenuOutside, true);
       return;
     }
-
-    const start = toMm(event.clientX, event.clientY);
-    gridMode = false;
-    const draft = document.createElement('div');
-    draft.className = `cal-cell drafting${tool === 'circle' ? ' circle' : ''}${tool === 'line' ? ' line' : ''}`;
-    cellsBox.appendChild(draft);
-
-    const paint = (from, to) => {
-      const x = Math.min(from.x, to.x);
-      const y = Math.min(from.y, to.y);
-      const w = Math.abs(to.x - from.x);
-      const h = Math.abs(to.y - from.y);
-      draft.style.left = `${(x / width) * 100}%`;
-      draft.style.top = `${(y / height) * 100}%`;
-      draft.style.width = `${(w / width) * 100}%`;
-      draft.style.height = `${(h / height) * 100}%`;
-    };
-    paint(start, start);
-
-    const onMove = (moveEvent) => paint(start, toMm(moveEvent.clientX, moveEvent.clientY));
-    const onUp = (upEvent) => {
-      window.removeEventListener('pointermove', onMove);
-      window.removeEventListener('pointerup', onUp);
-      draft.remove();
-      const end = toMm(upEvent.clientX, upEvent.clientY);
-      let x = Math.min(start.x, end.x);
-      let y = Math.min(start.y, end.y);
-      let w = Math.abs(end.x - start.x);
-      let h = Math.abs(end.y - start.y);
-
-      if (w < 1.5 && h < 1.5) {
-        // A click, not a drag: drop the shape at its default size where the user clicked.
-        w = Math.max(2, width / cols);
-        h = Math.max(2, height / rows);
-        x = Math.min(x, Math.max(0, width - w));
-        y = Math.min(y, Math.max(0, height - h));
-      }
-      if (tool === 'circle') {
-        const side = Math.max(1, Math.min(w, h));
-        x += (w - side) / 2;
-        y += (h - side) / 2;
-        w = side;
-        h = side;
-      }
-      if (tool === 'line') {
-        const dx = end.x - start.x;
-        const dy = end.y - start.y;
-        const length = Math.hypot(dx, dy);
-        const angle = Math.round((Math.atan2(dy, dx) * 180) / Math.PI * 10) / 10;
-        cells.push({
-          shape: 'line',
-          x: round2(Math.min(Math.max(0, start.x), width)),
-          y: round2(Math.min(Math.max(0, start.y), height)),
-          w: round2(Math.max(1, Math.min(length, width))),
-          h: 0.8,
-          angle,
-          thickness_mm: 0.8,
-          label: '',
-        });
-        selected = cells.length - 1;
-        selection = new Set([selected]);
-        commit();
-        setTool(tool);
+    if (menu && !menu.contains(event.target)) closeMenu();
+  };
+  document.addEventListener('pointerdown', closeMenuOutside, true);
+  const onKeydown = (event) => {
+    if (!document.body.contains(canvas)) {
+      document.removeEventListener('keydown', onKeydown, true);
+      return;
+    }
+    if (event.key === 'Escape') {
+      if (menu) {
+        closeMenu();
+        event.stopPropagation();
         return;
       }
-      cells.push({
-        shape: tool,
-        x: round2(Math.min(Math.max(0, x), Math.max(0, width - w))),
-        y: round2(Math.min(Math.max(0, y), Math.max(0, height - h))),
-        w: round2(Math.min(w, width)),
-        h: round2(Math.min(h, height)),
-        angle: 0,
-        thickness_mm: 0.8,
-        label: '',
-      });
-      selected = cells.length - 1;
-      selection = new Set([selected]);
-      commit();
-      if (tool !== 'select') setTool(tool);
-    };
-    window.addEventListener('pointermove', onMove);
-    window.addEventListener('pointerup', onUp);
-    event.preventDefault();
-  });
-
-  cellsBox.addEventListener('pointerdown', (event) => {
-    const node = event.target.closest('.cal-cell');
-    if (!node) return;
-    const index = Number(node.dataset.cell);
-    const handle = event.target.dataset?.handle || null;
-
-    if (event.shiftKey) {
-      toggleSelection(index);
-      event.preventDefault();
-      return;
-    }
-    if (!selection.has(index) || selection.size === 1) selectOnly(index);
-    else selected = index; // keep the group, just make this one primary
-
-    const startCell = { ...cells[index] };
-    const groupStart = selectedIndices().map((item) => ({ index: item, x: cells[item].x, y: cells[item].y, w: cells[item].w, h: cells[item].h }));
-    const box = stage.getBoundingClientRect();
-    const startX = event.clientX;
-    const startY = event.clientY;
-    const perPxX = width / box.width;
-    const perPxY = height / box.height;
-    let moved = false;
-
-    const onMove = (moveEvent) => {
-      const dx = (moveEvent.clientX - startX) * perPxX;
-      const dy = (moveEvent.clientY - startY) * perPxY;
-      if (Math.abs(dx) > 0.2 || Math.abs(dy) > 0.2) moved = true;
-      const cell = cells[index];
-
-      if (handle) {
-        if (cell.shape === 'line') {
-          const rad = ((startCell.angle || 0) * Math.PI) / 180;
-          const cos = Math.cos(rad);
-          const sin = Math.sin(rad);
-          const along = dx * cos + dy * sin;
-          const across = -dx * sin + dy * cos;
-          if (handle === 'end') {
-            cell.w = snap(clamp(startCell.w + along, 1, width * 2));
-          } else if (handle === 'start') {
-            const length = snap(clamp(startCell.w - along, 1, width * 2));
-            cell.w = length;
-            cell.x = snap(startCell.x + (startCell.w - length) * cos);
-            cell.y = snap(startCell.y + (startCell.w - length) * sin);
-          } else {
-            cell.thickness_mm = snap(clamp(startCell.thickness_mm + 2 * across, 0.2, 10));
-            cell.h = cell.thickness_mm;
-          }
-        } else {
-          let left = startCell.x;
-          let top = startCell.y;
-          let right = startCell.x + startCell.w;
-          let bottom = startCell.y + startCell.h;
-          if (handle.includes('w')) left = clamp(startCell.x + dx, 0, right - 0.5);
-          if (handle.includes('n')) top = clamp(startCell.y + dy, 0, bottom - 0.5);
-          if (handle.includes('e')) right = clamp(right + dx, left + 0.5, width);
-          if (handle.includes('s')) bottom = clamp(bottom + dy, top + 0.5, height);
-          if (cell.shape === 'circle') {
-            const side = Math.max(right - left, bottom - top);
-            if (handle.includes('w')) left = Math.max(0, right - side); else right = Math.min(width, left + side);
-            if (handle.includes('n')) top = Math.max(0, bottom - side); else bottom = Math.min(height, top + side);
-          }
-          cell.x = snap(left);
-          cell.y = snap(top);
-          cell.w = snap(Math.max(0.5, right - left));
-          cell.h = snap(Math.max(0.5, bottom - top));
-          if (cell.shape === 'circle') cell.h = cell.w;
-        }
+      if (activeShape !== null) {
+        activeShape = null;
+        renderInspector();
         draw();
-        return;
+        event.stopPropagation();
       }
-
-      if (groupStart.length > 1) {
-        // Move the whole selection together, keeping it inside the label.
-        const minX = Math.min(...groupStart.map((item) => item.x));
-        const maxX = Math.max(...groupStart.map((item) => item.x + item.w));
-        const minY = Math.min(...groupStart.map((item) => item.y));
-        const maxY = Math.max(...groupStart.map((item) => item.y + item.h));
-        const shiftX = clamp(dx, -minX, Math.max(0, width - maxX));
-        const shiftY = clamp(dy, -minY, Math.max(0, height - maxY));
-        groupStart.forEach((item) => {
-          cells[item.index].x = snap(item.x + shiftX);
-          cells[item.index].y = snap(item.y + shiftY);
-        });
-        draw();
-        return;
-      }
-
-      cell.x = clamp(snap(startCell.x + dx), 0, Math.max(0, width - cell.w));
-      cell.y = clamp(snap(startCell.y + dy), 0, Math.max(0, height - cell.h));
-      const node2 = $(`.cal-cell[data-cell="${index}"]`, cellsBox);
-      if (node2) {
-        node2.style.left = `${(cell.x / width) * 100}%`;
-        node2.style.top = `${(cell.y / height) * 100}%`;
-      }
-      const xInput = $('[data-key="cal-x"]', body);
-      const yInput = $('[data-key="cal-y"]', body);
-      if (xInput) xInput.value = round2(cell.x);
-      if (yInput) yInput.value = round2(cell.y);
-    };
-    const onUp = () => {
-      window.removeEventListener('pointermove', onMove);
-      window.removeEventListener('pointerup', onUp);
-      if (moved) commit();
-    };
-    window.addEventListener('pointermove', onMove);
-    window.addEventListener('pointerup', onUp);
-    event.preventDefault();
-  });
-
-  /* Wheel = zoom around the cursor, buttons for the obvious steps. */
-  viewport.addEventListener('wheel', (event) => {
-    event.preventDefault();
-    const factor = event.deltaY < 0 ? 1.15 : 1 / 1.15;
-    const next = clamp(zoom * factor, 1, 8);
-    if (Math.abs(next - zoom) < 0.001) return;
-    const rect = stage.getBoundingClientRect();
-    const localX = event.clientX - rect.left;
-    const localY = event.clientY - rect.top;
-    const ratio = next / zoom;
-    panX -= localX * (ratio - 1);
-    panY -= localY * (ratio - 1);
-    zoom = next;
-    applyView();
-  }, { passive: false });
-
-  $$('[data-zoom]', body).forEach((button) => {
-    button.onclick = () => {
-      const action = button.dataset.zoom;
-      if (action === 'fit') {
-        zoom = 1;
-        centreView();
-        return;
-      }
-      const factor = action === 'in' ? 1.25 : 1 / 1.25;
-      zoom = clamp(zoom * factor, 1, 8);
-      centreView();
-    };
-  });
-
-  body.addEventListener('change', (event) => {
-    const key = event.target.dataset?.key;
-    if (!key) return;
-    if (key.startsWith('cal-')) commit();
-  });
-
-  const onCalKeydown = (event) => {
-    if (!document.body.contains(stage)) {
-      document.removeEventListener('keydown', onCalKeydown, true);
       return;
     }
-    const mod = event.ctrlKey || event.metaKey;
     const tag = (event.target.tagName || '').toLowerCase();
-    const typing = tag === 'input' || tag === 'textarea' || tag === 'select';
+    if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+    const mod = event.ctrlKey || event.metaKey;
     if (mod && event.key.toLowerCase() === 'z') {
       event.preventDefault();
       event.stopPropagation();
@@ -1281,150 +1423,484 @@ function openRollSizeDialog(options = {}) {
       stepHistory(1);
       return;
     }
-    if (typing) return;
-    if (event.key !== 'Delete' && event.key !== 'Backspace') return;
-    if (selected < 0) return;
-    event.preventDefault();
-    event.stopPropagation();
-    deleteCell(selected);
-  };
-  document.addEventListener('keydown', onCalKeydown, true);
-
-  const addCell = (shape) => {
-    if (shape === 'circle') {
-      // A circle is a region with equal width and height in millimetres.
-      const side = Math.max(2, Math.round(Math.min(width, height) * 0.45 * 2) / 2);
-      cells.push({
-        shape,
-        x: round2((width - side) / 2),
-        y: round2((height - side) / 2),
-        w: Math.min(side, width),
-        h: Math.min(side, height),
-        label: '',
-      });
-      selectCell(cells.length - 1);
+    if (event.key === 'Delete' || event.key === 'Backspace') {
+      if (!selectedIndices().length) return;
+      event.preventDefault();
+      event.stopPropagation();
+      deleteSelection();
       return;
     }
-    const cellW = Math.max(2, Math.round((width / cols) * 2) / 2);
-    const cellH = Math.max(2, Math.round((height / rows) * 2) / 2);
-    cells.push({ shape, x: 0, y: 0, w: Math.min(cellW, width), h: Math.min(cellH, height), label: '' });
-    selectCell(cells.length - 1);
-  };
-
-  $$('[data-cal]', body).forEach((button) => {
-    button.onclick = () => {
-      const action = button.dataset.cal;
-      if (action === 'grid') {
-        applyGrid();
-      } else if (action === 'delete') {
-        deleteCell();
-      } else if (action === 'undo') {
-        stepHistory(-1);
-      } else if (action === 'redo') {
-        stepHistory(1);
-      }
-    };
-  });
-
-  /* Turn the selected cell(s) into another shape without redrawing them. */
-  const setCellShape = (shape) => {
+    const step = event.shiftKey ? 1 : 0.5;
+    const moves = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] };
+    const move = moves[event.key];
+    if (!move) return;
     const indices = selectedIndices();
     if (!indices.length) return;
-    indices.forEach((index) => {
-      const cell = cells[index];
-      if (!cell || cell.shape === shape) return;
-      const centerX = cell.x + cell.w / 2;
-      const centerY = cell.y + cell.h / 2;
-      cell.shape = shape;
-      if (shape === 'circle') {
-        const side = Math.min(Math.max(1, Math.min(cell.w, cell.h)), width, height);
-        cell.w = snap(side);
-        cell.h = snap(side);
-        cell.x = snap(clamp(centerX - cell.w / 2, 0, Math.max(0, width - cell.w)));
-        cell.y = snap(clamp(centerY - cell.h / 2, 0, Math.max(0, height - cell.h)));
-        cell.angle = 0;
-      } else if (shape === 'line') {
-        const thickness = Math.max(0.2, Number(cell.thickness_mm) || 0.8);
-        cell.w = snap(Math.max(1, cell.w));
-        cell.h = snap(thickness);
-        cell.y = snap(clamp(centerY - cell.h / 2, 0, Math.max(0, height - cell.h)));
-        cell.angle = Number(cell.angle) || 0;
-      } else {
-        if (cell.h < 1) cell.h = snap(Math.max(2, height / Math.max(1, rows)));
-        cell.angle = 0;
-      }
-    });
-    gridMode = false;
+    event.preventDefault();
+    event.stopPropagation();
+    indices.forEach((index) => translateZone(zones[index], move[0], move[1]));
     commit();
+    renderInspector();
   };
+  document.addEventListener('keydown', onKeydown, true);
 
-  editor.addEventListener('click', (event) => {
-    const button = event.target.closest('[data-shape]');
-    if (button) setCellShape(button.dataset.shape);
+  canvas.addEventListener('contextmenu', (event) => {
+    const point = mmPoint(event);
+    const index = hitZone(point.x, point.y);
+    if (index < 0) return;
+    event.preventDefault();
+    selection = new Set([index]);
+    activeShape = null;
+    renderInspector();
+    draw();
+    openZoneMenu(index, event);
   });
 
+  canvas.addEventListener('wheel', (event) => {
+    event.preventDefault();
+    const point = cssPoint(event);
+    const beforeX = mmX(point.x);
+    const beforeY = mmY(point.y);
+    zoom = Math.min(8, Math.max(0.5, zoom * (event.deltaY < 0 ? 1.12 : 1 / 1.12)));
+    applyView();
+    view.ox = point.x - beforeX * view.scale;
+    view.oy = point.y - beforeY * view.scale;
+    draw();
+  }, { passive: false });
+
+  canvas.addEventListener('pointerdown', (event) => {
+    closeMenu();
+    const point = cssPoint(event);
+    const spot = mmPoint(event);
+    if (event.button === 1) {
+      dragState = { mode: 'pan', startX: point.x, startY: point.y, ox: view.ox, oy: view.oy };
+      canvas.setPointerCapture(event.pointerId);
+      event.preventDefault();
+      return;
+    }
+    if (event.button !== 0) return;
+
+    if (tool !== 'select') {
+      draft = {
+        kind: tool === 'circle' ? 'circle' : 'rect',
+        square: tool === 'square',
+        x0: snapMm(spot.x, event.altKey),
+        y0: snapMm(spot.y, event.altKey),
+        x1: snapMm(spot.x, event.altKey),
+        y1: snapMm(spot.y, event.altKey),
+      };
+      canvas.setPointerCapture(event.pointerId);
+      event.preventDefault();
+      return;
+    }
+
+    const indices = selectedIndices();
+    if (indices.length === 1) {
+      const zone = zones[indices[0]];
+      const box = activeShape !== null && zone.shapes[activeShape] ? zone.shapes[activeShape] : zoneBounds(zone);
+      const hit = handleAt(point, box);
+      if (hit) {
+        dragState = {
+          mode: 'resize',
+          spot: hit,
+          index: indices[0],
+          shape: activeShape,
+          origin: { ...box },
+        };
+        canvas.setPointerCapture(event.pointerId);
+        event.preventDefault();
+        return;
+      }
+    }
+
+    const index = hitZone(spot.x, spot.y);
+    if (index < 0) {
+      marquee = { x0: spot.x, y0: spot.y, x1: spot.x, y1: spot.y };
+      if (!event.shiftKey) {
+        selection = new Set();
+        activeShape = null;
+        renderInspector();
+        draw();
+      }
+      canvas.setPointerCapture(event.pointerId);
+      event.preventDefault();
+      return;
+    }
+
+    if (event.shiftKey) {
+      if (selection.has(index)) selection.delete(index);
+      else selection.add(index);
+      activeShape = null;
+      renderInspector();
+      draw();
+      return;
+    }
+
+    if (!selection.has(index)) {
+      selection = new Set([index]);
+      activeShape = null;
+      renderInspector();
+    }
+
+    // Alt+click picks the individual outline of a multi-outline item.
+    if (event.altKey && zones[index].shapes.length > 1) {
+      const order = hitShape(zones[index], spot.x, spot.y);
+      activeShape = order >= 0 ? order : 0;
+    }
+
+    dragState = {
+      mode: 'move',
+      index,
+      shape: activeShape,
+      startX: spot.x,
+      startY: spot.y,
+      origins: selectedIndices().map((target) => ({ index: target, shapes: zones[target].shapes.map((shape) => ({ ...shape })) })),
+    };
+    canvas.setPointerCapture(event.pointerId);
+    draw();
+    event.preventDefault();
+  });
+
+  canvas.addEventListener('pointermove', (event) => {
+    const spot = mmPoint(event);
+    if (!dragState && !draft && !marquee) {
+      // cursor feedback
+      const indices = selectedIndices();
+      if (indices.length === 1) {
+        const zone = zones[indices[0]];
+        const box = activeShape !== null && zone.shapes[activeShape] ? zone.shapes[activeShape] : zoneBounds(zone);
+        const overHandle = handleAt(cssPoint(event), box);
+        canvas.style.cursor = overHandle ? `${overHandle}-resize` : (hitZone(spot.x, spot.y) >= 0 ? 'move' : 'default');
+      } else {
+        canvas.style.cursor = hitZone(spot.x, spot.y) >= 0 ? 'move' : 'default';
+      }
+      return;
+    }
+
+    if (dragState?.mode === 'pan') {
+      const point = cssPoint(event);
+      view.ox = dragState.ox + (point.x - dragState.startX);
+      view.oy = dragState.oy + (point.y - dragState.startY);
+      draw();
+      return;
+    }
+
+    if (draft) {
+      draft.x1 = snapMm(spot.x, event.altKey);
+      draft.y1 = snapMm(spot.y, event.altKey);
+      if (draft.square) {
+        const size = Math.max(Math.abs(draft.x1 - draft.x0), Math.abs(draft.y1 - draft.y0));
+        draft.x1 = draft.x0 + Math.sign(draft.x1 - draft.x0 || 1) * size;
+        draft.y1 = draft.y0 + Math.sign(draft.y1 - draft.y0 || 1) * size;
+      }
+      draw();
+      return;
+    }
+
+    if (marquee) {
+      marquee.x1 = spot.x;
+      marquee.y1 = spot.y;
+      draw();
+      return;
+    }
+
+    if (dragState?.mode === 'move') {
+      const dx = snapMm(spot.x - dragState.startX, event.altKey);
+      const dy = snapMm(spot.y - dragState.startY, event.altKey);
+      if (dragState.shape !== null) {
+        // move the single outline inside its item
+        const current = zones[dragState.index].shapes[dragState.shape];
+        const origin = dragState.origins.find((item) => item.index === dragState.index)?.shapes[dragState.shape];
+        if (current && origin) {
+          current.x = origin.x + dx;
+          current.y = origin.y + dy;
+        }
+      } else {
+        dragState.origins.forEach((entry) => {
+          const zone = zones[entry.index];
+          entry.shapes.forEach((shape, order) => {
+            zone.shapes[order].x = shape.x + dx;
+            zone.shapes[order].y = shape.y + dy;
+          });
+        });
+      }
+      draw();
+      return;
+    }
+
+    if (dragState?.mode === 'resize') {
+      const zone = zones[dragState.index];
+      if (!zone) return;
+      const origin = dragState.origin;
+      const left = dragState.spot.includes('w') ? Math.min(spot.x, origin.x + origin.w - 1) : origin.x;
+      const right = dragState.spot.includes('e') ? Math.max(spot.x, origin.x + 1) : origin.x + origin.w;
+      const top = dragState.spot.includes('n') ? Math.min(spot.y, origin.y + origin.h - 1) : origin.y;
+      const bottom = dragState.spot.includes('s') ? Math.max(spot.y, origin.y + 1) : origin.y + origin.h;
+      const next = { x: left, y: top, w: right - left, h: bottom - top };
+      if (dragState.shape !== null) {
+        const shape = zone.shapes[dragState.shape];
+        if (shape) Object.assign(shape, next);
+      } else {
+        scaleZone(zone, origin, next);
+      }
+      draw();
+    }
+  });
+
+  const finishPointer = (event) => {
+    if (dragState?.mode === 'pan') {
+      dragState = null;
+      return;
+    }
+    if (draft) {
+      const shape = {
+        kind: draft.kind,
+        x: round2(Math.min(draft.x0, draft.x1)),
+        y: round2(Math.min(draft.y0, draft.y1)),
+        w: round2(Math.abs(draft.x1 - draft.x0)),
+        h: round2(Math.abs(draft.y1 - draft.y0)),
+      };
+      const fresh = shape.w < 1.5 || shape.h < 1.5;
+      if (fresh) {
+        // A plain click with a draw tool puts a reasonable zone in the middle.
+        const side = Math.min(width, height) * 0.4;
+        shape.w = round2(draft.kind === 'circle' ? side : Math.min(shape.w || width * 0.6, width));
+        shape.h = round2(draft.kind === 'circle' ? side : Math.min(shape.h || height * 0.5, height));
+        shape.x = round2(Math.max(0, Math.min(width - shape.w, (shape.x || width / 2) - shape.w / 2)));
+        shape.y = round2(Math.max(0, Math.min(height - shape.h, (shape.y || height / 2) - shape.h / 2)));
+      }
+      zones.push({ label: `Item ${zones.length + 1}`, thickness: 0.3, shapes: [shape] });
+      autoZone = false;
+      selection = new Set([zones.length - 1]);
+      activeShape = null;
+      draft = null;
+      renderInspector();
+      commit();
+      setTool('select');
+      return;
+    }
+    if (marquee) {
+      const left = Math.min(marquee.x0, marquee.x1);
+      const right = Math.max(marquee.x0, marquee.x1);
+      const top = Math.min(marquee.y0, marquee.y1);
+      const bottom = Math.max(marquee.y0, marquee.y1);
+      const picked = event?.shiftKey ? new Set(selection) : new Set();
+      zones.forEach((zone, index) => {
+        const box = zoneBounds(zone);
+        if (box.x < right && box.x + box.w > left && box.y < bottom && box.y + box.h > top) picked.add(index);
+      });
+      selection = picked;
+      marquee = null;
+      renderInspector();
+      draw();
+      return;
+    }
+    if (dragState) {
+      dragState = null;
+      renderInspector();
+      commit();
+    }
+  };
+  canvas.addEventListener('pointerup', finishPointer);
+  canvas.addEventListener('pointercancel', finishPointer);
+  canvas.addEventListener('dblclick', (event) => {
+    const spot = mmPoint(event);
+    const index = hitZone(spot.x, spot.y);
+    if (index < 0) return;
+    const zone = zones[index];
+    selection = new Set([index]);
+    if (zone.shapes.length > 1) {
+      const order = hitShape(zone, spot.x, spot.y);
+      activeShape = order >= 0 ? order : (activeShape === null ? 0 : null);
+    } else {
+      activeShape = activeShape === null ? 0 : null;
+    }
+    renderInspector();
+    draw();
+  });
+
+  /* ---------------------------------------------------------------- view */
+  const fitScale = () => Math.min(
+    (cssW - 34) / Math.max(1, width),
+    (cssH - 34) / Math.max(1, height),
+  );
+
+  function applyView() {
+    const base = fitScale();
+    view.scale = Math.max(0.6, base * zoom);
+    if (zoomLabel) zoomLabel.textContent = `${Math.round(zoom * 100)}%`;
+  }
+
+  const centreView = () => {
+    applyView();
+    view.ox = (cssW - width * view.scale) / 2;
+    view.oy = (cssH - height * view.scale) / 2;
+    draw();
+  };
+
+  const resizeCanvas = () => {
+    const rect = wrap.getBoundingClientRect();
+    dpr = Math.min(3, window.devicePixelRatio || 1);
+    cssW = Math.max(260, Math.round(rect.width));
+    cssH = Math.max(240, Math.round(rect.height));
+    canvas.style.width = `${cssW}px`;
+    canvas.style.height = `${cssH}px`;
+    [canvas, silCanvas, eroCanvas, bandCanvas].forEach((item) => {
+      item.width = Math.round(cssW * dpr);
+      item.height = Math.round(cssH * dpr);
+    });
+    centreView();
+  };
+
+  if (typeof ResizeObserver === 'function') {
+    const observer = new ResizeObserver(() => {
+      if (!document.body.contains(canvas)) {
+        observer.disconnect();
+        return;
+      }
+      const rect = wrap.getBoundingClientRect();
+      if (Math.abs(rect.width - cssW) > 2 || Math.abs(rect.height - cssH) > 2) resizeCanvas();
+    });
+    observer.observe(wrap);
+  }
+
+  /* -------------------------------------------------------------- events */
+  $$('[data-tool]', body).forEach((button) => {
+    button.onclick = () => setTool(button.dataset.tool);
+  });
+  $$('[data-zoom]', body).forEach((button) => {
+    button.onclick = () => {
+      const action = button.dataset.zoom;
+      if (action === 'fit') {
+        zoom = 1;
+        centreView();
+        return;
+      }
+      const point = { x: cssW / 2, y: cssH / 2 };
+      const beforeX = mmX(point.x);
+      const beforeY = mmY(point.y);
+      zoom = Math.min(8, Math.max(0.5, zoom * (action === 'in' ? 1.25 : 1 / 1.25)));
+      applyView();
+      view.ox = point.x - beforeX * view.scale;
+      view.oy = point.y - beforeY * view.scale;
+      draw();
+    };
+  });
+  $$('[data-cal]', body).forEach((button) => {
+    button.onclick = async () => {
+      const action = button.dataset.cal;
+      if (action === 'grid') applyGrid();
+      else if (action === 'add') addZone();
+      else if (action === 'single') singleZone();
+      else if (action === 'delete') deleteSelection();
+      else if (action === 'undo') stepHistory(-1);
+      else if (action === 'redo') stepHistory(1);
+      else if (action === 'outline-preview') await showOutlinePreview();
+      else if (action === 'outline-print') await printOutline();
+    };
+  });
   $$('[data-align]', body).forEach((button) => {
     button.onclick = () => alignSelection(button.dataset.align);
+  });
+
+  editor.addEventListener('click', (event) => {
+    const add = event.target.closest('[data-add]');
+    if (add) {
+      addShapeToZone(selectedIndices()[0], add.dataset.add);
+      return;
+    }
+    const remove = event.target.closest('[data-outline-del]');
+    if (remove) {
+      removeShape(selectedIndices()[0], Number(remove.dataset.outlineDel));
+      return;
+    }
+    const outline = event.target.closest('[data-outline]');
+    if (outline) {
+      const order = Number(outline.dataset.outline);
+      activeShape = activeShape === order ? null : order;
+      renderInspector();
+      draw();
+    }
+  });
+
+  editor.addEventListener('change', (event) => {
+    const key = event.target.dataset?.key;
+    const name = event.target.dataset?.zone;
+    const index = selectedIndices()[0];
+    const zone = zones[index];
+    if (name === 'name' && zone) {
+      zone.label = event.target.value.trim();
+      renderChips();
+      return;
+    }
+    if (!key || !zone) return;
+    const box = zoneBounds(zone);
+    if (key === 'cal-w' || key === 'cal-h') {
+      const value = Math.max(0.5, Number(event.target.value) || 0.5);
+      const next = { ...box };
+      if (key === 'cal-w') next.w = value;
+      else next.h = value;
+      scaleZone(zone, box, next);
+      commit();
+      renderInspector();
+    }
+    if (key === 'cal-thickness') {
+      zone.thickness = Math.max(0.1, Math.min(1.5, Number(event.target.value) || 0.3));
+      draw();
+    }
+  });
+
+  editor.addEventListener('input', (event) => {
+    const key = event.target.dataset?.key;
+    if (key !== 'cal-x' && key !== 'cal-y') return;
+    const zone = zones[selectedIndices()[0]];
+    if (!zone) return;
+    const box = zoneBounds(zone);
+    if (key === 'cal-x') translateZone(zone, Math.max(-box.x, Number(event.target.value) - box.x), 0);
+    if (key === 'cal-y') translateZone(zone, 0, Math.max(-box.y, Number(event.target.value) - box.y));
+    commit();
   });
 
   if (chipsBox) {
     chipsBox.addEventListener('click', (event) => {
       const remove = event.target.closest('[data-chip-del]');
       if (remove) {
-        deleteCell(Number(remove.dataset.chipDel));
+        selection = new Set([Number(remove.dataset.chipDel)]);
+        deleteSelection();
         return;
       }
       const chip = event.target.closest('[data-chip]');
       if (!chip) return;
       const index = Number(chip.dataset.chip);
-      if (event.shiftKey) toggleSelection(index);
-      else selectOnly(index);
+      if (event.shiftKey) {
+        if (selection.has(index)) selection.delete(index);
+        else selection.add(index);
+      } else {
+        selection = new Set([index]);
+      }
+      activeShape = null;
+      renderInspector();
+      draw();
     });
   }
 
   body.addEventListener('input', (event) => {
     const key = event.target.dataset?.key;
-    if (!key) return;
-    if (['cal-width', 'cal-height', 'cal-rows', 'cal-cols', 'cal-gap', 'cal-rowspace', 'cal-colspace'].includes(key)) {
+    if (!key || !key.startsWith('cal-')) return;
+    if (['cal-rows', 'cal-cols', 'cal-rowspace', 'cal-colspace'].includes(key)) {
+      applyGrid();
+      return;
+    }
+    if (key === 'cal-width' || key === 'cal-height') {
       readSize();
-      const gridKeys = ['cal-rows', 'cal-cols', 'cal-rowspace', 'cal-colspace'];
-      if (gridKeys.includes(key)) {
-        // Rows/columns/spacings always describe the grid, so rebuild it right away.
-        applyGrid();
-        return;
+      if (autoZone) {
+        zones = [defaultZone()];
+        selection = new Set([0]);
+        activeShape = null;
+        renderInspector();
       }
-      if (gridMode && cells.length) {
-        applyGrid();
-        return;
-      }
-      draw();
-      return;
+      centreView();
     }
-    const cell = cells[selected];
-    if (!cell) return;
-    gridMode = false;
-    if (key === 'cal-x') cell.x = Math.min(Math.max(0, Number(event.target.value) || 0), Math.max(0, width - cell.w));
-    if (key === 'cal-y') cell.y = Math.min(Math.max(0, Number(event.target.value) || 0), Math.max(0, height - cell.h));
-    if (key === 'cal-w') {
-      cell.w = Math.min(Math.max(0.5, Number(event.target.value) || 0.5), width - cell.x);
-      if (cell.shape === 'circle') cell.h = Math.min(cell.w, height - cell.y);
-    }
-    if (key === 'cal-h') {
-      cell.h = Math.min(Math.max(0.5, Number(event.target.value) || 0.5), height - cell.y);
-      if (cell.shape === 'circle') cell.w = Math.min(cell.h, width - cell.x);
-    }
-    if (key === 'cal-angle') {
-      cell.angle = Math.max(-180, Math.min(180, Number(event.target.value) || 0));
-      draw();
-      return;
-    }
-    if (key === 'cal-thickness') {
-      cell.thickness_mm = Math.max(0.2, Math.min(10, Number(event.target.value) || 0.8));
-      if (cell.shape === 'line') cell.h = cell.thickness_mm;
-      draw();
-      return;
-    }
-    draw();
   });
 
   const presetSelect = $('#cal-preset', body);
@@ -1436,21 +1912,84 @@ function openRollSizeDialog(options = {}) {
       $('[data-key="cal-height"]', body).value = preset.height;
       $('[data-key="cal-rows"]', body).value = preset.rows || 1;
       readSize();
-      cells = [];
-      selected = -1;
-      draw();
+      if (preset.rows > 1) {
+        applyGrid();
+      } else {
+        singleZone();
+      }
     };
   }
 
-  draw();
-  centreView();
+  /* ------------------------------------------------------- print outline */
+  const outlinePayload = () => {
+    readSize();
+    return {
+      width_mm: width,
+      height_mm: height,
+      label_border: !!$('[data-zone="border"]', body)?.checked,
+      stroke_mm: 0.3,
+      regions: zones.map((zone, index) => {
+        const box = zoneBounds(zone);
+        const shapes = zone.shapes.map((shape) => ({
+          kind: shape.kind,
+          x: round2(shape.x),
+          y: round2(shape.y),
+          w: round2(shape.w),
+          h: round2(shape.h),
+        }));
+        return {
+          shape: shapes.length === 1 ? shapes[0].kind : 'mixed',
+          x: round2(box.x),
+          y: round2(box.y),
+          w: round2(box.w),
+          h: round2(box.h),
+          label: zone.label || `Item ${index + 1}`,
+          angle: 0,
+          thickness_mm: Number(zone.thickness) || 0.3,
+          shapes,
+        };
+      }),
+    };
+  };
 
+  async function showOutlinePreview() {
+    try {
+      const result = await api('/api/roll-format/outline', 'POST', outlinePayload());
+      thumb.innerHTML = `<img src="data:image/png;base64,${result.png}" alt="Zone borders">
+        <span class="hint">${result.width_px} × ${result.height_px} px at ${result.dpi} dpi</span>`;
+    } catch (error) {
+      toast(error.message, 'error');
+    }
+  }
+
+  async function printOutline() {
+    if (!state.connected) {
+      toast('Connect the printer first', 'error');
+      return;
+    }
+    const button = $('[data-cal="outline-print"]', body);
+    if (button) button.disabled = true;
+    try {
+      await api('/api/roll-format/print', 'POST', outlinePayload());
+      renderJobStatus({ state: 'running', progress: 0, message: 'Zone outline accepted…' });
+      pollJob();
+      toast('Printing the zone borders — check where they land on the label', 'ok');
+    } catch (error) {
+      toast(error.message, 'error');
+    } finally {
+      if (button) button.disabled = false;
+    }
+  }
+
+  /* ---------------------------------------------------------------- save */
   $('[data-cal-cancel]', footer).onclick = () => closeModal('roll-size');
   $('[data-cal-save]', footer).onclick = async () => {
     readSize();
-    const layout = derivedGrid();
     const typedName = ($('[data-key="cal-name"]', body)?.value || '').trim();
     const savedName = typedName || (codeOnly(rollName) ? rollName : String(rollName));
+    const payloadRegions = outlinePayload().regions;
+    const layoutRows = Math.max(1, new Set(zones.map((zone) => Math.round(zoneBounds(zone).y))).size);
+    const layoutCols = Math.max(1, new Set(zones.map((zone) => Math.round(zoneBounds(zone).x))).size);
     closeModal('roll-size');
     try {
       const payload = await api('/api/roll-format', 'POST', {
@@ -1458,21 +1997,12 @@ function openRollSizeDialog(options = {}) {
         name: savedName,
         width_mm: width,
         height_mm: height,
-        rows: layout.rows,
-        cols: layout.cols,
+        rows: layoutRows,
+        cols: layoutCols,
         gap_mm: gap,
         label_type: paper.label_type ?? state.spec.label_type,
         capacity: paper.capacity ?? null,
-        regions: cells.map((cell, index) => ({
-          shape: cell.shape,
-          x: cell.x,
-          y: cell.y,
-          w: cell.w,
-          h: cell.h,
-          angle: Number(cell.angle) || 0,
-          thickness_mm: Number(cell.thickness_mm) || 0.8,
-          label: cell.label || `Cell ${index + 1}`,
-        })),
+        regions: payloadRegions,
       });
       applyState(payload);
       applySize(width, height, { gap_mm: gap, label_type: paper.label_type ?? state.spec.label_type });
@@ -1480,7 +2010,7 @@ function openRollSizeDialog(options = {}) {
         const catalog = await api('/api/catalog');
         state.catalog = catalog.catalog || [];
       } catch (_) { /* the list refreshes with the settings tab */ }
-      toast(`Roll ${savedName}: ${round2(width)} × ${round2(height)} mm, ${cells.length || 1} cell${cells.length === 1 ? '' : 's'} remembered`, 'ok');
+      toast(`Roll ${savedName}: ${round2(width)} × ${round2(height)} mm, ${zones.length} item zone${zones.length === 1 ? '' : 's'} remembered`, 'ok');
       renderPaperRegions();
       schedulePreview();
       if (isModalOpen('settings')) renderSettingsTab();
@@ -1488,6 +2018,14 @@ function openRollSizeDialog(options = {}) {
       toast(error.message, 'error');
     }
   };
+
+  renderInspector();
+  setTool('select');
+  /* The canvas needs a laid-out wrap; the modal is in the DOM by now, so measure on the next frame. */
+  requestAnimationFrame(() => {
+    resizeCanvas();
+    refreshIcons(body);
+  });
 }
 
 function toggleMirror() {
@@ -1534,7 +2072,7 @@ function renderPaperRegions() {
     layer.appendChild(cut);
   }
 
-  // Cells drawn in the calibrator for this roll: show where content can go.
+  // Item zones drawn in the calibrator for this roll: show where content can go.
   const cells = state.printer?.profile?.regions || [];
   cells.forEach((cell, index) => {
     const isLine = cell.shape === 'line';
@@ -1547,6 +2085,8 @@ function renderPaperRegions() {
       ? Number(cell.h || 0.8)
       : Math.min(Number(cell.h || 0), spec.height_mm - cellY);
     if (cellW <= 0.2 || cellH <= 0.2) return;
+    const outlines = (Array.isArray(cell.shapes) ? cell.shapes : [])
+      .filter((shape) => Number(shape.w) > 0.2 && Number(shape.h) > 0.2);
     const shapeClass = cell.shape === 'circle' ? ' circle' : cell.shape === 'line' ? ' line' : '';
     const current = index === 0 && !!state.spec?.sheet?.cells_mirror;
     const box = document.createElement('div');
@@ -1559,8 +2099,22 @@ function renderPaperRegions() {
       box.style.transform = `rotate(${Number(cell.angle)}deg)`;
       box.style.transformOrigin = '0 50%';
     }
-    box.innerHTML = `<b>${index + 1}</b>`;
-    box.title = `${cell.label || `Cell ${index + 1}`} — ${round2(cell.w)} × ${round2(cell.h)} mm`;
+    if (outlines.length > 1) {
+      // One item, several outlines: the wrapper is the item, the children are its shape.
+      box.classList.add('multi');
+      outlines.forEach((shape) => {
+        const leaf = document.createElement('i');
+        leaf.className = `paper-outline${shape.kind === 'circle' ? ' circle' : ''}`;
+        leaf.style.left = `${((Number(shape.x) - cellX) / cellW) * 100}%`;
+        leaf.style.top = `${((Number(shape.y) - cellY) / cellH) * 100}%`;
+        leaf.style.width = `${(Number(shape.w) / cellW) * 100}%`;
+        leaf.style.height = `${(Number(shape.h) / cellH) * 100}%`;
+        box.appendChild(leaf);
+      });
+    }
+    box.insertAdjacentHTML('beforeend', `<b>${index + 1}</b>`);
+    box.title = `${cell.label || `Item ${index + 1}`} — ${round2(cell.w)} × ${round2(cell.h)} mm`
+      + (outlines.length > 1 ? ` (${outlines.length} outlines)` : '');
     layer.appendChild(box);
   });
 }

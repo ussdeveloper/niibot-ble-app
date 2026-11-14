@@ -1185,14 +1185,18 @@ button.btn.wide { width: 100%; }
 
 /* ---------------------------------------------------------- roll calibrator */
 .calibrator {
-  display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 16px;
-  align-items: start; min-width: 0;
+  display: grid; grid-template-columns: 318px minmax(0, 1fr); gap: 16px;
+  flex: 1 1 auto; width: 100%;
+  height: 100%; min-height: 0; min-width: 0;
 }
-@media (max-width: 820px) {
-  .calibrator { grid-template-columns: 1fr; }
+@media (max-width: 860px) {
+  .calibrator { grid-template-columns: 1fr; height: auto; }
 }
-.cal-col { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
-.cal-section { display: flex; flex-direction: column; gap: 7px; }
+.cal-col { display: flex; flex-direction: column; gap: 10px; min-width: 0; min-height: 0; }
+.cal-col-left { overflow-y: auto; padding-right: 4px; }
+.cal-col-right { min-height: 0; }
+.cal-section { display: flex; flex-direction: column; gap: 7px; flex: 0 0 auto; }
+.cal-section + .cal-section { border-top: 1px solid var(--line); padding-top: 10px; }
 .cal-section-head {
   font-size: 10px; text-transform: uppercase; letter-spacing: 0.14em;
   color: var(--ink-muted); font-weight: 700;
@@ -1209,8 +1213,8 @@ button.btn.wide { width: 100%; }
 .cal-tool svg { width: 13px; height: 13px; }
 .cal-tool:hover { border-color: var(--teal-deep); color: var(--ink); }
 .cal-tool.on { background: var(--teal-deep); border-color: var(--teal-deep); color: #fff; }
-#cal-stage.drawing { cursor: crosshair; }
 .cal-toolbar { display: flex; flex-wrap: wrap; gap: 6px; }
+.cal-toolbar .btn { padding: 5px 9px; font-size: 11px; }
 .cal-selcount { color: var(--violet-deep); letter-spacing: 0; text-transform: none; font-weight: 600; }
 .cal-align { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; }
 .cal-a {
@@ -1220,41 +1224,18 @@ button.btn.wide { width: 100%; }
 .cal-a.wide { grid-column: span 3; }
 .cal-a:hover:not(:disabled) { border-color: var(--violet-deep); color: var(--ink); }
 .cal-a:disabled { opacity: 0.42; cursor: default; }
-.cal-toolbar .btn { padding: 5px 9px; font-size: 11px; }
-.cal-stage-wrap { display: flex; flex-direction: column; gap: 6px; }
-.cal-viewport {
-  position: relative; overflow: hidden; height: 320px; border-radius: 10px;
-  background: rgba(0, 26, 77, 0.04); border: 1px solid var(--line);
-  touch-action: none;
+
+/* the drawing surface */
+.cal-canvas-wrap {
+  position: relative; flex: 1 1 auto; min-height: 300px; border-radius: 10px;
+  border: 1px solid var(--line); background: #eef3f8; overflow: hidden; touch-action: none;
 }
-.cal-stage {
-  position: absolute; top: 0; left: 0; transform-origin: 0 0; width: 300px; height: 190px;
-  background: #fff; border: 1px solid var(--line-strong); border-radius: 4px;
-  box-shadow: inset 0 0 0 1px rgba(0, 26, 77, 0.04);
-}
-.cal-zoombar { display: flex; align-items: center; gap: 6px; }
+.cal-canvas-wrap canvas { position: absolute; inset: 0; display: block; }
+.cal-zoombar { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
 .cal-zoombar .btn { padding: 3px 9px; font-size: 12px; line-height: 1.1; }
 .cal-zoombar .hint { margin-left: auto; font-size: 10.5px; color: var(--ink-muted); }
 .cal-zoom-label { min-width: 44px; text-align: center; font-size: 11px; color: var(--ink-muted); }
-.cal-cells { position: absolute; inset: 0; }
-.cal-cell {
-  position: absolute; border: 2px dashed var(--teal-deep); background: rgba(0, 194, 194, 0.14);
-  border-radius: 3px; cursor: grab; touch-action: none; display: flex; align-items: center; justify-content: center;
-  box-sizing: border-box; min-width: 3px; min-height: 4px;
-}
-.cal-cell::after { content: ''; position: absolute; inset: -5px; }
-.cal-cell.circle { border-radius: 50%; }
-.cal-cell span { font-size: 10px; font-weight: 700; color: var(--teal-deep); pointer-events: none; }
-.cal-cell.selected { border-style: solid; border-color: var(--violet-deep); background: rgba(139, 92, 246, 0.16); }
-.cal-cell.selected span { color: var(--violet-deep); }
-.cal-cell.line {
-  border-style: solid; border-color: var(--violet-deep);
-  background: repeating-linear-gradient(90deg, var(--violet-deep) 0 4px, transparent 4px 8px);
-  border-radius: 0; box-shadow: 0 0 0 1px rgba(139, 92, 246, 0.35);
-}
-.cal-cell.line span { display: none; }
-.cal-cell.drafting { border-style: solid; border-color: var(--navy); background: rgba(0, 26, 77, 0.12); pointer-events: none; }
-.cal-cellchips { display: flex; flex-wrap: wrap; gap: 5px; }
+.cal-zonechips { display: flex; flex-wrap: wrap; gap: 5px; max-height: 92px; overflow-y: auto; flex: 0 0 auto; }
 .cal-chip {
   display: inline-flex; align-items: center; gap: 6px; padding: 3px 7px;
   font-size: 10.5px; border: 1px solid var(--line); border-radius: 999px;
@@ -1267,32 +1248,54 @@ button.btn.wide { width: 100%; }
   color: var(--err); border: 1px solid transparent;
 }
 .cal-chip-x:hover { background: rgba(207, 75, 75, 0.12); border-color: rgba(207, 75, 75, 0.4); }
-.cal-handle {
-  position: absolute; width: 10px; height: 10px; margin: -5px 0 0 -5px;
-  background: #fff; border: 2px solid var(--violet-deep); border-radius: 2px; z-index: 2;
-  transform: scale(var(--inv-zoom, 1)); transform-origin: center;
-}
-.cal-handle.nw { left: 0; top: 0; cursor: nwse-resize; }
-.cal-handle.n { left: 50%; top: 0; cursor: ns-resize; }
-.cal-handle.ne { left: 100%; top: 0; cursor: nesw-resize; }
-.cal-handle.e { left: 100%; top: 50%; cursor: ew-resize; }
-.cal-handle.se { left: 100%; top: 100%; cursor: nwse-resize; }
-.cal-handle.s { left: 50%; top: 100%; cursor: ns-resize; }
-.cal-handle.sw { left: 0; top: 100%; cursor: nesw-resize; }
-.cal-handle.w { left: 0; top: 50%; cursor: ew-resize; }
-.cal-handle.line-start { left: 0; top: 50%; cursor: ew-resize; }
-.cal-handle.line-end { left: 100%; top: 50%; cursor: ew-resize; }
-.cal-handle.thickness { left: 50%; top: 100%; cursor: ns-resize; border-color: var(--teal-deep); border-radius: 50%; }
+.cal-summary { font-size: 11.5px; color: var(--ink-muted); flex: 0 0 auto; }
+
+/* selected item inspector */
 .cal-editor { display: flex; flex-direction: column; gap: 7px; }
+.cal-editor-head { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--ink-muted); }
+.cal-outlines { display: flex; flex-wrap: wrap; gap: 5px; }
+.cal-outline {
+  display: inline-flex; align-items: center; gap: 5px; padding: 3px 7px;
+  font-size: 10.5px; border: 1px solid var(--line); border-radius: 999px;
+  background: var(--glass-hi); color: var(--ink-muted); cursor: pointer;
+}
+.cal-outline em { font-style: normal; color: var(--teal-deep); font-size: 12px; line-height: 1; }
+.cal-outline b { font-size: 10px; }
+.cal-outline.on { border-color: var(--violet-deep); color: var(--ink); box-shadow: 0 0 0 1px rgba(139, 92, 246, 0.28); }
+.cal-outline.on em { color: var(--violet-deep); }
+.cal-outline-x {
+  font-style: normal; font-size: 10px; line-height: 1; padding: 1px 3px; border-radius: 50%;
+  color: var(--err); border: 1px solid transparent;
+}
+.cal-outline-x:hover { background: rgba(207, 75, 75, 0.12); border-color: rgba(207, 75, 75, 0.4); }
 .cal-shapes { display: flex; gap: 5px; }
 .cal-shape {
   flex: 1; padding: 5px 6px; font-size: 10.5px; font-weight: 600;
-  border: 1px solid var(--line); border-radius: 7px; background: var(--glass-hi); color: var(--ink-muted);
+  border: 1px dashed var(--line-strong); border-radius: 7px; background: var(--glass-hi); color: var(--ink-muted);
 }
-.cal-shape:hover { border-color: var(--violet-deep); color: var(--ink); }
-.cal-shape.on { background: var(--violet-deep); border-color: var(--violet-deep); color: #fff; }
-.cal-editor-head { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--ink-muted); }
-.cal-summary { font-size: 11.5px; color: var(--ink-muted); }
+.cal-shape:hover { border-color: var(--violet-deep); color: var(--ink); border-style: solid; }
+.cal-check { display: flex; align-items: center; gap: 7px; font-size: 11.5px; color: var(--ink-muted); }
+.cal-thumb { display: flex; flex-direction: column; gap: 4px; }
+.cal-thumb img {
+  width: 100%; height: auto; border: 1px solid var(--line); border-radius: 8px; background: #fff;
+}
+
+/* right-click menu for an item zone */
+.cal-menu {
+  position: fixed; z-index: 400; min-width: 220px; padding: 5px;
+  display: flex; flex-direction: column; gap: 1px;
+  background: #fff; border: 1px solid var(--line-strong); border-radius: 10px;
+  box-shadow: 0 12px 28px rgba(0, 26, 77, 0.18);
+}
+.cal-menu button {
+  display: flex; align-items: center; gap: 8px; padding: 6px 9px; width: 100%;
+  font-size: 11.5px; text-align: left; border: 0; border-radius: 7px; background: transparent; color: var(--ink);
+}
+.cal-menu button svg { width: 14px; height: 14px; color: var(--ink-muted); }
+.cal-menu button:hover { background: rgba(0, 194, 194, 0.12); }
+.cal-menu button.danger { color: var(--err); }
+.cal-menu button.danger svg { color: var(--err); }
+.cal-menu-sep { height: 1px; margin: 3px 4px; background: var(--line); }
 
 /* calibrated cells drawn over the design stage */
 .paper-cell {
@@ -1304,9 +1307,17 @@ button.btn.wide { width: 100%; }
 .paper-cell.editable { border-color: var(--violet-deep); border-style: solid; background: rgba(139, 92, 246, 0.1); }
 .paper-cell.editable b { color: var(--violet-deep); }
 .paper-cell b {
-  position: absolute; top: -1px; left: 2px; font-size: 9px; font-weight: 700;
+  position: absolute; top: -1px; left: 2px; font-size: 9px; font-weight: 700; z-index: 1;
   color: var(--teal-deep); background: rgba(255, 255, 255, 0.75); padding: 0 2px; border-radius: 2px;
 }
+/* an item made of several outlines: the wrapper is the item, the children its shapes */
+.paper-cell.multi { border-style: dashed; }
+.paper-outline {
+  position: absolute; border: 1px solid rgba(53, 176, 174, 0.55); border-radius: 2px;
+  background: rgba(0, 194, 194, 0.07);
+}
+.paper-outline.circle { border-radius: 50%; }
+.paper-cell.editable .paper-outline { border-color: rgba(124, 77, 214, 0.5); background: rgba(139, 92, 246, 0.06); }
 
 /* -------------------------------------------------------------------- toast */
 
