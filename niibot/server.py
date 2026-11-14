@@ -1253,7 +1253,8 @@ async def api_keepalive_drop() -> dict:
         raise HTTPException(status_code=409, detail="The printer is not connected.")
     worker = state.active_worker
     try:
-        await state.printer.disconnect()
+        async with state.lock:
+            await state.printer.disconnect()
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     if worker is not None:
@@ -1291,7 +1292,8 @@ async def api_activate(request: ActivateRequest) -> dict:
         raise HTTPException(status_code=409, detail="That printer is not connected.")
     _activate_connection(worker)
     try:
-        await worker.printer.refresh()
+        async with worker.lock:
+            await worker.printer.refresh()
     except Exception:  # pragma: no cover - status is best effort
         pass
     return _state_payload()
