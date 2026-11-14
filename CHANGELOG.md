@@ -4,6 +4,14 @@ All notable changes to **Niibot Studio** are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project uses [Semantic Versioning](https://semver.org/).
 
+## [0.13.7] — 2026-11-14
+
+### Removed
+- **Preview in the calibrator.** The canvas already shows the zones, so a second bitmap of the same
+  outlines was noise: the eye button in the title bar and the `Preview` button with its thumbnail are
+  gone. `Print zone borders` (title bar or the Print check section) stays — it puts the outline on
+  the paper, which is the thing worth checking.
+
 ## [0.13.6] — 2026-11-14
 
 ### Added

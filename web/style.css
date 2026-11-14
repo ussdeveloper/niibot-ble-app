@@ -1309,10 +1309,6 @@ button.btn.wide { width: 100%; }
   letter-spacing: 0; text-transform: none; color: var(--ink-muted); cursor: pointer;
 }
 .cal-check input { width: auto; flex: 0 0 auto; margin: 0; }
-.cal-thumb { display: flex; flex-direction: column; gap: 4px; }
-.cal-thumb img {
-  width: 100%; height: auto; border: 1px solid var(--line); border-radius: 8px; background: #fff;
-}
 
 /* right-click menu for an item zone */
 .cal-menu {

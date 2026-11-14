@@ -765,10 +765,8 @@ function openRollSizeDialog(options = {}) {
           outlines land where the label really is.</div>
         <label class="cal-check"><input type="checkbox" data-zone="border" checked> Draw the label border as well</label>
         <div class="cal-toolbar">
-          <button type="button" class="btn" data-cal="outline-preview"><i data-lucide="eye"></i> Preview</button>
           <button type="button" class="btn primary" data-cal="outline-print"><i data-lucide="printer"></i> Print zone borders</button>
         </div>
-        <div class="cal-thumb" id="cal-thumb"></div>
       </div>
     </div>
 
@@ -812,9 +810,8 @@ function openRollSizeDialog(options = {}) {
   const titleActions = document.createElement('div');
   titleActions.className = 'modal-actions';
   titleActions.innerHTML = `
-    <button type="button" class="modal-icon" data-title-action="preview" title="Preview the zone borders">
-      <i data-lucide="eye"></i></button>
-    <button type="button" class="modal-icon" data-title-action="print" title="Print the zone borders on this roll">
+    <button type="button" class="modal-icon" data-title-action="print"
+      title="Print the zone borders on this roll (calibration check)">
       <i data-lucide="printer"></i></button>`;
   titlebar.insertBefore(titleActions, titlebar.querySelector('.modal-close'));
   refreshIcons(titleActions);
@@ -842,7 +839,6 @@ function openRollSizeDialog(options = {}) {
   const summary = $('#cal-summary', body);
   const chipsBox = $('#cal-zonechips', body);
   const zoomLabel = $('#cal-zoom-label', body);
-  const thumb = $('#cal-thumb', body);
   const silCanvas = document.createElement('canvas');
   const silCtx = silCanvas.getContext('2d');
   const eroCanvas = document.createElement('canvas');
@@ -2072,7 +2068,6 @@ function openRollSizeDialog(options = {}) {
       else if (action === 'delete') deleteSelection();
       else if (action === 'undo') stepHistory(-1);
       else if (action === 'redo') stepHistory(1);
-      else if (action === 'outline-preview') await showOutlinePreview();
       else if (action === 'outline-print') await printOutline();
     };
   });
@@ -2231,16 +2226,6 @@ function openRollSizeDialog(options = {}) {
     };
   };
 
-  async function showOutlinePreview() {
-    try {
-      const result = await api('/api/roll-format/outline', 'POST', outlinePayload());
-      thumb.innerHTML = `<img src="data:image/png;base64,${result.png}" alt="Zone borders">
-        <span class="hint">${result.width_px} × ${result.height_px} px at ${result.dpi} dpi</span>`;
-    } catch (error) {
-      toast(error.message, 'error');
-    }
-  }
-
   async function printOutline() {
     if (!state.connected) {
       toast('Connect the printer first', 'error');
@@ -2261,9 +2246,7 @@ function openRollSizeDialog(options = {}) {
   }
 
   titleActions.addEventListener('click', (event) => {
-    const action = event.target.closest('[data-title-action]')?.dataset.titleAction;
-    if (action === 'preview') showOutlinePreview();
-    if (action === 'print') printOutline();
+    if (event.target.closest('[data-title-action="print"]')) printOutline();
   });
 
   /* -------------------------------------------------- saved calibrations */
