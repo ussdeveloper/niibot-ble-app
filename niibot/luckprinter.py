@@ -16,6 +16,8 @@ from __future__ import annotations
 WAKE = b"\x00" * 12
 #: Advance to the next label (also positions the gap sensor).
 FORM_FEED = b"\x1d\x0c"
+#: Same form feed, but this one answers ``OK`` — preferred when we want proof the printer acted.
+FORM_FEED_ACK = b"\x10\x0c"
 
 REQUESTS = {
     "model": b"\x10\xff\x20\xf0",

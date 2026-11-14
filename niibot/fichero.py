@@ -394,6 +394,33 @@ class FicheroPrinter:
             return
         await self.link.write(lp.feed_forward(dots))
 
+    async def form_feed(self, timeout: float = 8.0) -> bool:
+        """Advance to the next label — the printer's gap sensor decides where to stop.
+
+        This is how the gap calibration works on this family: with paper type *gap* the printer
+        walks the stock itself until the sensor sees the gap, so the app only has to ask for the
+        feed and check that the printer answered and still has paper. ``10 0C`` is used first
+        because it answers ``OK`` (proof the seek finished); ``1D 0C`` is the fallback.
+        """
+        answered = False
+        try:
+            reply = await self.link.request(lp.FORM_FEED_ACK, timeout=timeout)
+            answered = bool(reply)
+        except Exception:  # noqa: BLE001 - fall back to the silent variant
+            answered = False
+        if not answered:
+            await self.link.write(lp.FORM_FEED)
+            try:
+                answered = await self.link.wait_for_finish(timeout=timeout)
+            except Exception:  # noqa: BLE001 - a slow feed is not a failure
+                answered = False
+        await asyncio.sleep(0.4)
+        try:
+            await self.refresh()
+        except Exception:  # noqa: BLE001 - status is best effort
+            pass
+        return answered or self.paper.paper_inserted is not False
+
     # ----------------------------------------------------------- convenience
     async def get_battery(self) -> int | None:
         return lp.parse_battery(await self.link.request(lp.REQUESTS["battery"])).get("percent")

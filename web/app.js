@@ -5666,6 +5666,8 @@ function bindSettingsActions(content) {
       if (action === 'scan-printers') await loadPrinters(true);
       if (action === 'diagnose') await diagnoseDevice(event.target.closest('[data-address]').dataset.address);
       if (action === 'feed-now' || action === 'feed') await feedPaper(document.querySelector('#feed-mm')?.value);
+      if (action === 'calibrate-gap') await calibrateGap();
+      if (action === 'measuring-strip') await loadMeasuringStrip();
       if (action === 'use-format') {
         const index = Number(event.target.closest('[data-index]').dataset.index);
         const item = state.catalog[index];
@@ -5916,6 +5918,15 @@ function renderPaperTab() {
       <div class="row" style="margin-top:8px">
         <button class="btn" data-action="detect" ${state.connected ? '' : 'disabled'}><i data-lucide="scan-line"></i> Detect format</button>
         <button class="btn primary" data-action="apply-format" ${detected ? '' : 'disabled'}>Use detected</button>
+        <button class="btn" data-action="calibrate-gap" ${state.connected ? '' : 'disabled'}
+          title="Feed the paper and let the printer's gap sensor find the next label"><i data-lucide="move-vertical"></i> Calibrate gap</button>
+        <button class="btn" data-action="measuring-strip" ${state.connected ? '' : 'disabled'}
+          title="Print a millimetre scale on this roll to read the real label height"><i data-lucide="ruler"></i> Measuring strip</button>
+      </div>
+      <div class="hint" style="margin-top:4px">
+        The Fichero family reports no label size: its sensor finds the gap while feeding, so
+        <em>Calibrate gap</em> walks two labels and the printer aligns itself. If the printed height
+        still drifts, print the <em>Measuring strip</em> and enter the millimetres read at the fold.
       </div>
       <div class="grid-2" style="margin-top:10px">
         <div class="field"><label for="roll-width">Width (mm)</label><input type="number" id="roll-width" step="0.5" value="${round2(state.spec.width_mm)}"></div>
@@ -6328,6 +6339,38 @@ async function feedPaper(millimetres) {
   try {
     const result = await api('/api/printer/feed', 'POST', { mm });
     toast(`Fed ${result.fed_mm} mm`, 'ok');
+  } catch (error) {
+    toast(error.message, 'error');
+  }
+}
+
+/* Ask the printer to walk to the next gap: its owns sensor does the measuring, the app only
+   triggers the feed (2 labels, so the printer ends aligned to a label start). */
+async function calibrateGap() {
+  const spinner = toast('Calibrating gap — feeding two labels…', 'info', 0);
+  try {
+    const result = await api('/api/printer/gap-feed', 'POST', { mm: 2 });
+    if (result.state) applyState(result.state);
+    const failures = (result.steps || []).filter((step) => !step.gap_found).length;
+    spinner.remove();
+    toast(failures ? `Gap not confirmed on ${failures} label(s) — check the paper type` : 'Gap calibration done', failures ? 'error' : 'ok');
+    renderSettingsTab();
+  } catch (error) {
+    spinner.remove();
+    toast(error.message, 'error');
+  }
+}
+
+/* Load the millimetre scale into the designer: print it on the real roll and read where the
+   fold falls — that number is the label height the Fichero cannot report. */
+async function loadMeasuringStrip() {
+  try {
+    const spec = state.spec || {};
+    const query = `?width_mm=${encodeURIComponent(spec.width_mm || 0)}&height_mm=${encodeURIComponent(spec.height_mm || 0)}`;
+    const result = await api(`/api/calibration-strip${query}`);
+    if (!result?.spec) throw new Error('Could not build the strip');
+    setSpec(result.spec);
+    toast('Measuring strip loaded — print it and read the mm at the fold', 'ok');
   } catch (error) {
     toast(error.message, 'error');
   }

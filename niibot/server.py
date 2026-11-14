@@ -1270,6 +1270,19 @@ async def api_refresh() -> dict:
     return _state_payload()
 
 
+@app.get("/api/calibration-strip")
+async def api_calibration_strip(width_mm: float = 0.0, height_mm: float = 0.0) -> dict:
+    """A millimetre scale to print on the roll — read the label pitch off it."""
+    from .calibration import measuring_strip
+
+    label_w, label_h, _dpi, _head, _wpx, _hpx = _label_geometry()
+    spec = measuring_strip(
+        float(width_mm) or label_w,
+        float(height_mm) or label_h,
+    )
+    return {"spec": spec.model_dump(mode="json")}
+
+
 @app.post("/api/detect-size")
 async def api_detect_size() -> dict:
     """Read the label format measured by the printer and store it for this roll."""
@@ -1341,6 +1354,43 @@ async def api_printer_feed(request: FeedRequest) -> dict:
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(status_code=502, detail=str(exc)) from exc
     return {"fed_mm": millimetres}
+
+
+@app.post("/api/printer/gap-feed")
+async def api_printer_gap_feed(request: FeedRequest) -> dict:
+    """Walk to the next gap: the printer's sensor decides where the label ends.
+
+    This is the calibration the vendor app performs on this family. The Fichero has no command
+    that reports a label size, so the app sets the paper type to *gap* and asks the printer to
+    feed; the firmware advances until its sensor sees the gap. Doing it once per label shows
+    immediately whether the printer finds the gaps on this stock.
+    """
+    if not state.connected:
+        raise HTTPException(status_code=409, detail="The printer is not connected.")
+    form_feed = getattr(state.printer, "form_feed", None)
+    if form_feed is None:
+        raise HTTPException(
+            status_code=409,
+            detail="This printer reports the label size itself — use Detect format.",
+        )
+    labels = max(1, min(5, int(request.mm or 1)))
+    steps: list[dict] = []
+    async with state.lock:
+        try:
+            set_paper = getattr(state.printer, "set_paper_type", None)
+            if callable(set_paper):
+                await set_paper(1)  # the panel's Niimbot label type 1 = labels with a gap
+            for index in range(labels):
+                ok = await form_feed()
+                paper = state.printer.paper
+                steps.append({
+                    "label": index + 1,
+                    "paper_present": paper.paper_inserted,
+                    "gap_found": bool(ok),
+                })
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {"labels": labels, "steps": steps, "state": _state_payload()}
 
 
 @app.post("/api/calibrate")

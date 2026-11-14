@@ -4,6 +4,21 @@ All notable changes to **Niibot Studio** are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project uses [Semantic Versioning](https://semver.org/).
 
+## [0.14.11] — 2026-11-14
+
+### Added
+- **Gap calibration for the Fichero/Karsten family.** These printers cannot report a label size,
+  but they do have a gap sensor: with paper type *gap* every form feed walks the paper until the
+  sensor sees the gap. **Settings → Paper → Calibrate gap** (`POST /api/printer/gap-feed`) now
+  forces exactly that: it sets the paper type, sends two form feeds (`10 0C`, which answers `OK`,
+  falling back to `1D 0C`) and reports for each step whether the printer answered and still sees
+  paper. The B1 and friends refuse with a pointer to *Detect format*, because they report their
+  geometry themselves.
+- **Measuring strip** (`GET /api/calibration-strip`, `niibot/calibration.py`): a label with a
+  millimetre scale along the paper direction, numbers every 5 mm. Printing it on the real roll and
+  reading the value at the fold gives the label height the D11s cannot report; *Save size for this
+  roll* stores it per printer and roll.
+
 ## [0.14.10] — 2026-11-14
 
 ### Fixed

@@ -334,6 +334,28 @@ and both keep their own calibrations for the same roll code.
 
 ## Fichero / Karsten label printers (LuckPrinter family)
 
+### How the gap calibration works on this family
+
+The D11s has **no command that reports the label size** — `10 FF 70` returns the name, MACs,
+firmware, serial and battery, nothing about the stock. What it does have is a **gap sensor** in the
+paper path: once the paper type is set to *gap* (`10 FF 84 00`), every form feed makes the firmware
+walk the paper until the sensor sees the gap and stop there, aligned to the next label. That is the
+"calibration" the vendor app performs — it does not measure anything, it makes the printer seek.
+
+The app therefore does the same, on request:
+
+* **Settings → Paper → Calibrate gap** posts `/api/printer/gap-feed`, which sets the paper type to
+  gap and sends two form feeds (`10 0C`, which answers `OK`, with `1D 0C` as the fallback), waiting
+  for the acknowledgement after each. Each step reports whether paper was still present, so a roll
+  whose gaps the sensor cannot see shows up immediately.
+* The printer aligns itself, but it does not tell us the **label height**, and that height decides
+  how many rows the raster has. **Settings → Paper → Measuring strip** loads a millimetre scale
+  (`/api/calibration-strip`, `niibot/calibration.py`) into the designer: print it on the real roll,
+  read the millimetres where the fold/gap falls, and enter that as the height (it is stored per roll
+  with *Save size for this roll*).
+
+Niimbot printers need none of this — they answer `GetLabelSize`, so **Detect format** just asks.
+
 The cheap label printers sold as **Fichero** (Action) and the **Karsten** house brand are
 AiYin D11s units built on the LuckPrinter SDK — a completely different protocol from
 Niimbot's framed one. `niibot/luckprinter.py` holds the command bytes and
