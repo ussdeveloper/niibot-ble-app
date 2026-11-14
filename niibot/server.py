@@ -740,7 +740,9 @@ async def api_device_settings() -> dict:
     geometry = store.load_settings().get("device_geometry") or {}
     info = state.printer.info
     return {
-        "protocol": state.protocol,
+        # The setting, not the live driver: "auto" keeps the select on Automatic.
+        "protocol": str(store.load_settings().get("printer_protocol") or "auto"),
+        "active_protocol": state.protocol,
         "feed_mm": float(store.load_settings().get("feed_mm") or 0.0),
         "override": {
             "dpi": int(geometry.get("dpi") or 0),
