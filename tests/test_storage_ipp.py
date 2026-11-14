@@ -66,6 +66,67 @@ class StorageTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.store.save_ui_state({"huge": "x" * (self.store.UI_STATE_VALUE_LIMIT + 10)})
 
+    def test_libraries_are_separate_per_printer(self) -> None:
+        """A B1 and a Fichero must not share labels, templates or calibrations."""
+        spec = {"width_mm": 40, "height_mm": 30, "elements": []}
+        b1_label = self.store.save_label(None, {**spec, "name": "B1 label"}, "niimbot:B1")
+        self.store.save_label(None, {**spec, "name": "Fichero label"}, "luckprinter:FICHERO")
+        self.assertEqual([row["name"] for row in self.store.list_labels("niimbot:B1")], ["B1 label"])
+        self.assertEqual(
+            [row["name"] for row in self.store.list_labels("luckprinter:FICHERO")],
+            ["Fichero label"],
+        )
+        self.assertEqual(len(self.store.list_labels()), 2)
+        self.store.delete_label(b1_label)
+
+        self.store.save_template(None, "tpl-b1", spec, "niimbot:B1")
+        self.store.save_template(None, "tpl-fich", spec, "luckprinter:FICHERO")
+        self.assertEqual([row["name"] for row in self.store.list_templates("niimbot:B1")], ["tpl-b1"])
+
+        key_b1 = self.store.profile_key("6971501227736", None, "niimbot:B1")
+        key_fich = self.store.profile_key("6971501227736", None, "luckprinter:FICHERO")
+        self.assertNotEqual(key_b1, key_fich)
+        profile = self.models.PaperProfile(key=key_b1, name="40x30", width_mm=40, height_mm=30)
+        self.store.save_profile(profile, "niimbot:B1")
+        self.assertEqual(list(self.store.list_profiles("niimbot:B1")), [key_b1])
+        self.assertEqual(self.store.list_profiles("luckprinter:FICHERO"), {})
+        self.assertIsNotNone(self.store.get_profile(key_b1))
+
+    def test_legacy_rows_are_claimed_once(self) -> None:
+        spec = {"width_mm": 40, "height_mm": 30, "elements": []}
+        legacy = self.store.save_label(None, {**spec, "name": "old"}, "")
+        moved = self.store.claim_device_data("niimbot:B1")
+        self.assertGreaterEqual(moved, 1)
+        self.assertEqual(self.store.claimed_scope(), "niimbot:B1")
+        self.assertEqual([row["id"] for row in self.store.list_labels("niimbot:B1")], [legacy])
+        # a second printer must not steal anything
+        self.assertEqual(self.store.claim_device_data("luckprinter:FICHERO"), 0)
+        self.assertEqual(self.store.list_labels("luckprinter:FICHERO"), [])
+
+    def test_printer_registry(self) -> None:
+        self.store.remember_printer({
+            "address": "C9:48:8A:00:00:02",
+            "name": "B1-G000000001",
+            "protocol": "niimbot",
+            "model_key": "B1",
+            "model_name": "B1",
+            "scope": "niimbot:B1",
+        })
+        self.store.remember_printer({
+            "address": "C9:48:8A:00:00:01",
+            "name": "D11s_0A0B_BLE",
+            "protocol": "luckprinter",
+            "model_key": "FICHERO",
+            "model_name": "D11s (Fichero / AiYin)",
+            "scope": "luckprinter:FICHERO",
+        })
+        printers = self.store.list_printers()
+        self.assertEqual(len(printers), 2)
+        by_address = {row["address"]: row for row in printers}
+        self.assertEqual(by_address["C9:48:8A:00:00:01"]["protocol"], "luckprinter")
+        self.store.forget_printer("C9:48:8A:00:00:01")
+        self.assertEqual([row["address"] for row in self.store.list_printers()], ["C9:48:8A:00:00:02"])
+
     def test_consumable_upsert_is_idempotent(self) -> None:
         entry = {
             "barcode": "6971501227736",

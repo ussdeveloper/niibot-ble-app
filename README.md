@@ -248,6 +248,31 @@ reports the roll code while it is connected.
 
 ---
 
+## Several printers, one library per printer
+
+The app keeps **one workspace per printer type** (`niimbot:B1`, `luckprinter:FICHERO`, …):
+
+| Belongs to | Where |
+| --- | --- |
+| working draft | `ui_state` key `draft:<scope>` |
+| saved labels | `labels.device` |
+| templates | `templates.device` |
+| roll calibrations | `profiles.device` (key `<scope>|bc:<roll code>`) |
+| printer registry | `printers` table (address, protocol, model, scope, last seen) |
+
+Switching the printer switches all of it: a 40 × 30 mm B1 label is never offered to a 96 px D11s,
+and both keep their own calibrations for the same roll code.
+
+* **Detecting**: *Scan* lists every BLE device; the protocol is picked from the advertised name
+  (`FICHERO_…`, `D11s_…` → LuckPrinter, everything else → Niimbot) and can be overridden with the
+  *Protocol* select.
+* **Switching**: the status bar shows `<model> · <protocol> · <device>`; **right-click it** to get
+  the list of known printers and connect to one (or *Scan for printers…*).
+* Data written before this feature is claimed by the first **Niimbot** printer that connects —
+  the only family the earlier builds supported.
+
+---
+
 ## Fichero / Karsten label printers (LuckPrinter family)
 
 The cheap label printers sold as **Fichero** (Action) and the **Karsten** house brand are

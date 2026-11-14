@@ -4,6 +4,26 @@ All notable changes to **Niibot Studio** are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project uses [Semantic Versioning](https://semver.org/).
 
+## [0.14.0] — 2026-11-14
+
+### Added
+- **One library per printer type.** Labels, templates and roll calibrations are stored per device
+  scope (`niimbot:B1`, `luckprinter:FICHERO`, …) in new `device` columns, and the working draft is
+  kept per scope in `ui_state` (`draft:<scope>`). Connecting a different printer switches the whole
+  workspace: sizes that do not fit its printhead are never offered, and each printer keeps its own
+  calibration for the same roll code.
+- **Printer registry and switcher.** Every successful connection is remembered in a `printers`
+  table (address, protocol, model, scope). The status bar shows `<model> · <protocol> · <device>`
+  and a **right-click** opens the list of known printers, so printing can move to another unit
+  without a rescan. `GET /api/printers` and `DELETE /api/printers/{address}` back it.
+- First run on a new printer type starts from a label clamped to its printhead width (12 mm on a
+  96 px D11s, 48 mm on a B1).
+- Rows created by earlier builds are claimed by the first Niimbot printer that connects and their
+  calibration keys are rewritten to the scoped form.
+
+### Fixed
+- Saving a calibration from the UI no longer fails on the missing `device` binding.
+
 ## [0.13.13] — 2026-11-14
 
 ### Added

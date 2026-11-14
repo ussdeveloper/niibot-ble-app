@@ -70,6 +70,34 @@ class Job:
         return asdict(self)
 
 
+def _remember_current_printer(address: str) -> None:
+    """Keep the printer in the registry so the status bar can offer it later."""
+    info = state.printer.info
+    store.remember_printer({
+        "address": address,
+        "name": state.printer.link.name or info.model_name,
+        "protocol": state.protocol,
+        "device_scope": device_scope(),
+        "model_key": info.model_key,
+        "model_name": info.model_name,
+        "scope": device_scope(),
+    })
+
+
+def device_scope() -> str:
+    """Identity of the printer type — labels, templates and calibrations are kept per scope.
+
+    A B1 and a Fichero have different printheads and label stock, so their libraries are
+    separate; two printers of the same model share one library.
+    """
+    info = state.printer.info
+    model_key = (info.model_key or "").strip()
+    if model_key and model_key != "UNKNOWN":
+        return f"{state.protocol}:{model_key}"
+    # Off-line: keep showing the library of the printer that was used last.
+    return state.last_scope or f"{state.protocol}:UNKNOWN"
+
+
 def _apply_device_geometry() -> None:
     """Give the active driver the geometry override saved in the settings."""
     geometry = store.load_settings().get("device_geometry") or {}
@@ -95,6 +123,8 @@ class AppState:
         self.auto_connect_task: asyncio.Task | None = None
         self.auto_status: str = "idle"
         self.last_scan: list[dict] = []
+        #: Scope of the printer used last, kept while nothing is connected.
+        self.last_scope: str = ""
 
     @property
     def connected(self) -> bool:
@@ -124,6 +154,7 @@ async def _shutdown() -> None:
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     store.ensure_dirs()
+    state.last_scope = str(store.load_settings().get("device_scope") or "")
     log.info("%s %s - data folder: %s", APP_NAME, __version__, store.DATA_DIR)
     # Built-in formats make the picker usable without the vendor app installed.
     for entry in builtin_formats():
@@ -309,7 +340,7 @@ class FitRequest(BaseModel):
 # --------------------------------------------------------------------- state
 def _current_profile() -> dict | None:
     paper = state.printer.paper
-    key = store.profile_key(paper.barcode, paper.uuid)
+    key = store.profile_key(paper.barcode, paper.uuid, device_scope())
     if not key:
         return None
     profile = store.get_profile(key)
@@ -354,6 +385,7 @@ def _state_payload() -> dict:
         "job": state.job.to_dict() if state.job else None,
         "protocol": state.protocol,
         "protocol_name": "LuckPrinter (Fichero / AiYin)" if state.protocol == "luckprinter" else "Niimbot",
+        "device_scope": device_scope(),
         "last_address": settings.get("last_address"),
         "last_error": state.printer.last_error or state.printer.link.last_error,
     }
@@ -399,8 +431,8 @@ async def api_options() -> dict:
         "paper_presets": [vars(preset) for preset in PAPER_PRESETS],
         "templates": [{"id": key, "name": spec.name, "spec": spec.model_dump()} for key, spec in TEMPLATES.items()],
         "default_spec": default_spec().model_dump(),
-        "labels": store.list_labels(),
-        "profiles": list(store.list_profiles().values()),
+        "labels": store.list_labels(device_scope()),
+        "profiles": list(store.list_profiles(device_scope()).values()),
         "catalog": store.list_consumables(),
         "models": [
             {
@@ -501,7 +533,7 @@ async def api_auto_connect_set(request: Request) -> dict:
 # all start from the same picture.
 @app.get("/api/ui")
 async def api_ui_state() -> dict:
-    return {"keys": store.load_ui_state()}
+    return {"keys": store.load_ui_state(), "claimed_scope": store.claimed_scope()}
 
 
 @app.post("/api/ui")
@@ -516,7 +548,7 @@ async def api_ui_state_set(request: Request) -> dict:
         store.save_ui_state(payload)
     except ValueError as exc:
         raise HTTPException(status_code=413, detail=str(exc)) from exc
-    return {"keys": store.load_ui_state()}
+    return {"keys": store.load_ui_state(), "claimed_scope": store.claimed_scope()}
 
 
 @app.get("/api/settings/device")
@@ -593,6 +625,31 @@ async def api_device_diagnose(request: DiagnoseRequest) -> dict:
         raise HTTPException(status_code=502, detail=f"Could not talk to the device: {exc}") from exc
 
 
+@app.get("/api/printers")
+async def api_printers() -> dict:
+    """Every printer seen so far, with the protocol and the data scope it uses."""
+    current = state.printer.link.address if state.connected else None
+    items = []
+    for row in store.list_printers():
+        items.append({
+            **row,
+            "connected": bool(current and row["address"] == current),
+            "active_scope": row.get("scope") == device_scope(),
+        })
+    return {
+        "printers": items,
+        "current": current,
+        "scope": device_scope(),
+        "protocol": state.protocol,
+    }
+
+
+@app.delete("/api/printers/{address}")
+async def api_printer_forget(address: str) -> dict:
+    store.forget_printer(address)
+    return await api_printers()
+
+
 @app.post("/api/connect")
 async def api_connect(request: ConnectRequest) -> dict:
     async with state.lock:
@@ -609,6 +666,12 @@ async def api_connect(request: ConnectRequest) -> dict:
         store.save_settings({"last_address": request.address})
         if state.printer.info.model_name and state.printer.info.model_name != "unknown":
             store.save_settings({"last_model": state.printer.info.model_name})
+        _remember_current_printer(request.address)
+        state.last_scope = device_scope()
+        store.save_settings({"device_scope": state.last_scope})
+        if state.protocol == "niimbot":
+            # Everything created before device scoping was made on a Niimbot printer.
+            store.claim_device_data(state.last_scope)
         try:
             await state.printer.refresh()
         except Exception as exc:  # pragma: no cover - status is best effort
@@ -663,7 +726,7 @@ async def api_detect_size() -> dict:
             "state": _state_payload(),
         }
 
-    key = store.profile_key(paper.barcode, paper.uuid)
+    key = store.profile_key(paper.barcode, paper.uuid, device_scope())
     stored = None
     if key:
         stored = store.save_profile(
@@ -675,7 +738,8 @@ async def api_detect_size() -> dict:
                 gap_mm=geometry.gap_mm or 0.0,
                 label_type=geometry.label_type if geometry.label_type is not None else (paper.label_type or 1),
                 capacity=paper.capacity,
-            )
+            ),
+            device_scope(),
         )
     return {
         "detected": True,
@@ -826,7 +890,7 @@ async def api_render_png(request: PreviewRequest) -> Response:
 
 @app.get("/api/labels")
 async def api_labels() -> dict:
-    return {"labels": store.list_labels()}
+    return {"labels": store.list_labels(device_scope())}
 
 
 @app.get("/api/labels/{label_id}")
@@ -839,20 +903,20 @@ async def api_label_get(label_id: str) -> dict:
 
 @app.post("/api/labels")
 async def api_label_save(request: SaveLabelRequest) -> dict:
-    label_id = store.save_label(request.id, request.spec)
-    return {"id": label_id, "labels": store.list_labels()}
+    label_id = store.save_label(request.id, request.spec, device_scope())
+    return {"id": label_id, "labels": store.list_labels(device_scope())}
 
 
 @app.delete("/api/labels/{label_id}")
 async def api_label_delete(label_id: str) -> dict:
     store.delete_label(label_id)
-    return {"labels": store.list_labels()}
+    return {"labels": store.list_labels(device_scope())}
 
 
 # ---------------------------------------------------------------- templates
 @app.get("/api/templates")
 async def api_templates() -> dict:
-    return {"templates": store.list_templates()}
+    return {"templates": store.list_templates(device_scope())}
 
 
 @app.get("/api/templates/{template_id}")
@@ -866,20 +930,20 @@ async def api_template_get(template_id: str) -> dict:
 @app.post("/api/templates")
 async def api_template_save(request: SaveTemplateRequest) -> dict:
     name = request.name.strip() or request.spec.name or "Template"
-    template_id = store.save_template(request.id, name, request.spec)
-    return {"id": template_id, "templates": store.list_templates()}
+    template_id = store.save_template(request.id, name, request.spec, device_scope())
+    return {"id": template_id, "templates": store.list_templates(device_scope())}
 
 
 @app.delete("/api/templates/{template_id}")
 async def api_template_delete(template_id: str) -> dict:
     store.delete_template(template_id)
-    return {"templates": store.list_templates()}
+    return {"templates": store.list_templates(device_scope())}
 
 
 # ----------------------------------------------------------------- profiles
 @app.get("/api/profiles")
 async def api_profiles() -> dict:
-    return {"profiles": list(store.list_profiles().values())}
+    return {"profiles": list(store.list_profiles(device_scope()).values())}
 
 
 # ------------------------------------------------------------------- catalog
@@ -981,7 +1045,7 @@ async def api_roll_format(request: RollFormatRequest) -> dict:
         "source": "manual",
     }
     store.upsert_consumable(entry)
-    profile_key_value = store.profile_key(request.barcode, None)
+    profile_key_value = store.profile_key(request.barcode, None, device_scope())
     if profile_key_value:
         store.save_profile(
             PaperProfile(
@@ -999,7 +1063,8 @@ async def api_roll_format(request: RollFormatRequest) -> dict:
                 col_space_mm=request.col_space_mm,
                 rows=request.rows,
                 cols=request.cols,
-            )
+            ),
+            device_scope(),
         )
     log.info(
         "Roll %s remembered as %g × %g mm, sticker %g × %g mm (%d rows, %d zones drawn)",
@@ -1089,14 +1154,14 @@ async def api_profile_save(request: ProfileRequest) -> dict:
         capacity=request.capacity,
         regions=regions,
     )
-    stored = store.save_profile(profile)
-    return {"profile": stored, "profiles": list(store.list_profiles().values())}
+    stored = store.save_profile(profile, device_scope())
+    return {"profile": stored, "profiles": list(store.list_profiles(device_scope()).values())}
 
 
 @app.delete("/api/profiles/{key}")
 async def api_profile_delete(key: str) -> dict:
     store.delete_profile(key)
-    return {"profiles": list(store.list_profiles().values())}
+    return {"profiles": list(store.list_profiles(device_scope()).values())}
 
 
 # ------------------------------------------------------------------ uploads

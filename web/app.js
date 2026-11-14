@@ -152,10 +152,13 @@ const uiPrefs = {};
 let uiPrefsPending = {};
 let uiPrefsTimer = null;
 
+let claimedScope = null;
+
 async function loadUiPrefs() {
   try {
     const payload = await api('/api/ui');
     Object.assign(uiPrefs, payload?.keys || {});
+    claimedScope = payload?.claimed_scope || null;
   } catch (_) { /* server not up yet — defaults are used, nothing is lost */ }
   await importBrowserPrefs();
 }
@@ -280,9 +283,15 @@ function scheduleAutosave() {
   autosaveTimer = setTimeout(saveDraft, 1200);
 }
 
+/* One working draft per printer type: a B1 label makes no sense on a 96 px D11s. */
+function draftKey() {
+  const scope = state.printer?.device_scope || state.deviceScope || '';
+  return scope ? `draft:${scope}` : 'draft';
+}
+
 function saveDraft() {
   if (!state.spec) return;
-  writePref('draft', {
+  writePref(draftKey(), {
     at: Date.now(),
     labelId: state.labelId,
     view: state.view,
@@ -292,13 +301,29 @@ function saveDraft() {
 
 function clearDraft() {
   clearTimeout(autosaveTimer);
-  if (!Object.prototype.hasOwnProperty.call(uiPrefs, 'draft')) return;
+  if (!Object.prototype.hasOwnProperty.call(uiPrefs, draftKey())) return;
+  writePref(draftKey(), null);
+  flushPrefs();
+}
+
+/* The draft used to be global; give it to the first printer type that is in use. */
+function adoptLegacyDraft() {
+  if (claimDone || uiPrefs.draft === undefined) return;
+  // The pre-scope library belonged to the first Niimbot printer (the only family the old
+  // build supported), so never hand it to a Fichero/LuckPrinter unit.
+  const target = claimedScope || (String(state.deviceScope || '').startsWith('niimbot:') ? state.deviceScope : '');
+  if (!target) return;
+  claimDone = true;
+  const key = `draft:${target}`;
+  if (uiPrefs[key] === undefined) writePref(key, uiPrefs.draft);
   writePref('draft', null);
   flushPrefs();
 }
 
+let claimDone = false;
+
 function restoreDraft() {
-  const draft = readPref('draft');
+  const draft = readPref(draftKey());
   if (!draft || !draft.spec || !Array.isArray(draft.spec.elements)) return false;
   setSpec(draft.spec, { labelId: draft.labelId || null });
   if (draft.view === 'sheet') switchView('sheet');
@@ -425,6 +450,31 @@ function clampElements() {
     element.y = y;
   }
   if (moved) toast(`Fitted ${moved} element(s) to the new format.`);
+}
+
+/* Load the workspace that belongs to the printer that just connected. */
+function switchToDeviceScope(payload) {
+  adoptLegacyDraft();
+  if (restoreDraft()) {
+    toast(`Workspace: ${payload?.info?.model_name || state.deviceScope}`, 'ok');
+    requestPreview();
+    return;
+  }
+  setSpec(state.options?.default_spec || state.spec);
+  const profile = payload?.profile;
+  if (profile) {
+    applySize(profile.width_mm, profile.height_mm, {
+      gap_mm: profile.gap_mm ?? state.spec.gap_mm,
+      label_type: profile.label_type ?? state.spec.label_type,
+    });
+  } else {
+    const dpi = Number(payload?.info?.dpi) || 203;
+    const headMm = ((Number(payload?.info?.printhead_px) || 384) / dpi) * 25.4;
+    applySize(Math.max(5, round2(Math.min(state.spec.width_mm, headMm))), state.spec.height_mm, {});
+  }
+  saveDraft();
+  toast(`New workspace for ${payload?.info?.model_name || state.deviceScope}`, 'ok');
+  requestPreview();
 }
 
 function applyKnownFormat(paper) {
@@ -3767,6 +3817,61 @@ document.addEventListener('niibot:language-changed', (event) => {
   if (code) writePref('language', code);
 });
 
+/* ------------------------------------------------------- context menu (status bar) */
+function showContextMenu(event, items) {
+  document.querySelectorAll('.ctx-menu').forEach((node) => node.remove());
+  const menu = document.createElement('div');
+  menu.className = 'ctx-menu';
+  menu.innerHTML = items.map((item) => (item.sep
+    ? '<div class="ctx-sep"></div>'
+    : `<button type="button" data-key="${escapeHtml(item.key)}"${item.disabled ? ' disabled' : ''}>
+         <i data-lucide="${item.icon || 'circle'}"></i>
+         <span>${escapeHtml(item.label)}</span>
+         ${item.hint ? `<em>${escapeHtml(item.hint)}</em>` : ''}
+       </button>`)).join('');
+  document.body.appendChild(menu);
+  refreshIcons(menu);
+  const rect = menu.getBoundingClientRect();
+  menu.style.left = `${Math.max(6, Math.min(window.innerWidth - rect.width - 8, event.clientX))}px`;
+  menu.style.top = `${Math.max(6, event.clientY - rect.height - 6)}px`;
+
+  const close = () => {
+    menu.remove();
+    document.removeEventListener('pointerdown', outside, true);
+  };
+  const outside = (event_) => { if (!menu.contains(event_.target)) close(); };
+  document.addEventListener('pointerdown', outside, true);
+  menu.onclick = async (event_) => {
+    const button = event_.target.closest('button[data-key]');
+    if (!button) return;
+    const item = items.find((entry) => entry.key === button.dataset.key);
+    close();
+    if (item && item.run) await item.run();
+  };
+  return menu;
+}
+
+/* Right-click on the connection chip: pick the printer to print on. Every printer keeps its
+   own labels, templates and calibrations, so switching also switches the library. */
+async function openPrinterSwitcher(event) {
+  let payload = { printers: [], current: null };
+  try {
+    payload = await api('/api/printers');
+  } catch (_) { /* server busy — still allow a scan */ }
+  const printers = payload.printers || [];
+  const items = printers.map((printer) => ({
+    key: printer.address,
+    icon: printer.connected ? 'bluetooth-connected' : 'bluetooth',
+    label: printer.model_name || printer.name || printer.address,
+    hint: `${PROTOCOL_LABELS[printer.protocol] || printer.protocol}${printer.connected ? ' · connected' : ''}`,
+    disabled: printer.connected,
+    run: () => connect(printer.address, printer.protocol),
+  }));
+  if (printers.length) items.push({ sep: true });
+  items.push({ key: 'scan', icon: 'search', label: 'Scan for printers…', run: () => { openSettings('printer'); } });
+  showContextMenu(event, items);
+}
+
 /* =============================================================== status bar */
 function renderStatusBar() {
   const payload = state.printer || {};
@@ -3778,7 +3883,9 @@ function renderStatusBar() {
   if (state.connected) {
     connBox.classList.add('ok');
     connBox.classList.remove('err');
-    connText.textContent = `${info.model_name || 'printer'} · ${payload.link?.name || payload.link?.address || ''}`.trim();
+    const protocol = payload.protocol === 'luckprinter' ? 'LuckPrinter' : 'Niimbot';
+    connText.textContent = `${info.model_name || 'printer'} · ${protocol} · ${payload.link?.name || payload.link?.address || ''}`.trim();
+    connBox.title = 'Connection — right-click to choose the printer (each printer keeps its own labels, templates and calibrations)';
   } else {
     connBox.classList.remove('ok');
     connBox.classList.add('err');
@@ -6194,9 +6301,15 @@ function loadLastProfile() {
 /* =================================================================== state */
 function applyState(payload) {
   const wasConnected = state.connected;
+  const previousScope = state.deviceScope;
   state.printer = payload;
   state.connected = Boolean(payload.connected);
   if (payload.protocol) state.printerProtocol = payload.protocol;
+  state.deviceScope = payload.device_scope || previousScope || null;
+  if (state.deviceScope && previousScope && state.deviceScope !== previousScope) {
+    // A different printer type: labels, templates and calibrations are its own.
+    switchToDeviceScope(payload);
+  }
   /* A calibration always follows the database for the roll that is inserted. Only when the
      printer is away (no roll code at all) does the last-used one stay on screen, flagged. */
   const syncProfile = payload.profile || null;
@@ -6410,6 +6523,10 @@ function bindControls() {
   });
 
   $('#sb-conn').onclick = () => openSettings(state.connected ? 'paper' : 'printer');
+  $('#sb-conn').oncontextmenu = (event) => {
+    event.preventDefault();
+    openPrinterSwitcher(event);
+  };
   $('#sb-paper').onclick = () => openSettings('paper');
   $('#sb-format').onclick = () => openSettings('paper');
 
@@ -6494,9 +6611,15 @@ async function init() {
     state.catalog = options.catalog || [];
     setSpec(options.default_spec);
     applyState(payload);
+    adoptLegacyDraft();
+    if (restoreDraft()) {
+      toast('Restored the last unsaved draft', 'ok');
+    } else if (state.deviceScope && state.connected) {
+      // First time on this printer type: start from a label that fits its printhead.
+      switchToDeviceScope(state.printer);
+    }
     applyKnownFormat(payload.paper);
     renderStatusBar();
-    if (restoreDraft()) toast('Restored the last unsaved draft', 'ok');
     await requestPreview();
     if (state.connected) startStatusTimer();
     startWatchTimer();

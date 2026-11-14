@@ -76,6 +76,18 @@ CREATE TABLE IF NOT EXISTS consumables (
 CREATE INDEX IF NOT EXISTS idx_consumables_sku ON consumables(sku);
 CREATE INDEX IF NOT EXISTS idx_consumables_size ON consumables(width_mm, height_mm);
 
+-- Labels, templates and calibrations belong to one printer type: a B1 and a D11s have
+-- different printheads, sizes and zone layouts, so their libraries must not mix.
+CREATE TABLE IF NOT EXISTS printers (
+    address    TEXT PRIMARY KEY,
+    name       TEXT,
+    protocol   TEXT NOT NULL,
+    model_key  TEXT,
+    model_name TEXT,
+    scope      TEXT,
+    last_seen  REAL NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS labels (
     id         TEXT PRIMARY KEY,
     name       TEXT,
@@ -175,6 +187,19 @@ def init_db() -> None:
 
 
 def _migrate_schema(db: sqlite3.Connection) -> None:
+    for table in ("labels", "templates", "profiles"):
+        columns = {row["name"] for row in db.execute(f"PRAGMA table_info({table})").fetchall()}
+        if "device" not in columns:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN device TEXT NOT NULL DEFAULT ''")
+    # Calibration keys became ``<device>|bc:...``; rename the ones written before that.
+    for row in db.execute("SELECT key, device FROM profiles").fetchall():
+        if row["device"] and "|" not in row["key"]:
+            db.execute(
+                "UPDATE profiles SET key = ? WHERE key = ?",
+                (f"{row['device']}|{row['key']}", row["key"]),
+            )
+
+    # device_scope() prefixes every key; rows written by the pre-scope build must match.
     """Add columns introduced after the first release (CREATE TABLE IF NOT EXISTS skips them)."""
     profile_columns = {row["name"] for row in db.execute("PRAGMA table_info(profiles)").fetchall()}
     if "regions" not in profile_columns:
@@ -443,9 +468,14 @@ def merge_catalog(existing: dict[str, dict], incoming: dict[str, dict]) -> dict[
 
 
 # -------------------------------------------------------------------- labels
-def list_labels() -> list[dict[str, Any]]:
+def list_labels(device: str | None = None) -> list[dict[str, Any]]:
+    query = "SELECT id, name, updated_at, spec, device FROM labels"
+    params: tuple = ()
+    if device is not None:
+        query += " WHERE device = ?"
+        params = (device,)
     with connect() as db:
-        rows = db.execute("SELECT id, name, updated_at, spec FROM labels ORDER BY updated_at DESC").fetchall()
+        rows = db.execute(query + " ORDER BY updated_at DESC", params).fetchall()
     result = []
     for row in rows:
         spec: dict[str, Any] = {}
@@ -476,16 +506,17 @@ def load_label(label_id: str) -> dict | None:
         return None
 
 
-def save_label(label_id: str | None, spec: Any) -> str:
+def save_label(label_id: str | None, spec: Any, device: str = "") -> str:
     payload = spec.model_dump() if hasattr(spec, "model_dump") else dict(spec)
     name = str(payload.get("name") or "Label")
     identifier = (label_id or f"{slugify(name)}-{uuid.uuid4().hex[:4]}").strip()
     now = _now()
     with connect() as db:
         db.execute(
-            "INSERT INTO labels(id, name, spec, created_at, updated_at) VALUES(?, ?, ?, ?, ?)"
-            " ON CONFLICT(id) DO UPDATE SET name=excluded.name, spec=excluded.spec, updated_at=excluded.updated_at",
-            (identifier, name, json.dumps(payload, ensure_ascii=False), now, now),
+            "INSERT INTO labels(id, name, spec, created_at, updated_at, device) VALUES(?, ?, ?, ?, ?, ?)"
+            " ON CONFLICT(id) DO UPDATE SET name=excluded.name, spec=excluded.spec,"
+            " updated_at=excluded.updated_at, device=excluded.device",
+            (identifier, name, json.dumps(payload, ensure_ascii=False), now, now, device),
         )
     return identifier
 
@@ -496,9 +527,14 @@ def delete_label(label_id: str) -> None:
 
 
 # ----------------------------------------------------------------- templates
-def list_templates() -> list[dict[str, Any]]:
+def list_templates(device: str | None = None) -> list[dict[str, Any]]:
+    query = "SELECT id, name, updated_at, spec, device FROM templates"
+    params: tuple = ()
+    if device is not None:
+        query += " WHERE device = ?"
+        params = (device,)
     with connect() as db:
-        rows = db.execute("SELECT id, name, updated_at, spec FROM templates ORDER BY name COLLATE NOCASE").fetchall()
+        rows = db.execute(query + " ORDER BY name COLLATE NOCASE", params).fetchall()
     result = []
     for row in rows:
         spec: dict[str, Any] = {}
@@ -530,16 +566,17 @@ def load_template(template_id: str) -> dict | None:
         return None
 
 
-def save_template(template_id: str | None, name: str, spec: Any) -> str:
+def save_template(template_id: str | None, name: str, spec: Any, device: str = "") -> str:
     payload = spec.model_dump() if hasattr(spec, "model_dump") else dict(spec)
     payload["name"] = name or payload.get("name") or "Szablon"
     identifier = (template_id or f"tpl-{slugify(name)}-{uuid.uuid4().hex[:4]}").strip()
     now = _now()
     with connect() as db:
         db.execute(
-            "INSERT INTO templates(id, name, spec, created_at, updated_at) VALUES(?, ?, ?, ?, ?)"
-            " ON CONFLICT(id) DO UPDATE SET name=excluded.name, spec=excluded.spec, updated_at=excluded.updated_at",
-            (identifier, payload["name"], json.dumps(payload, ensure_ascii=False), now, now),
+            "INSERT INTO templates(id, name, spec, created_at, updated_at, device) VALUES(?, ?, ?, ?, ?, ?)"
+            " ON CONFLICT(id) DO UPDATE SET name=excluded.name, spec=excluded.spec,"
+            " updated_at=excluded.updated_at, device=excluded.device",
+            (identifier, payload["name"], json.dumps(payload, ensure_ascii=False), now, now, device),
         )
     return identifier
 
@@ -560,9 +597,14 @@ def _profile_row(row: sqlite3.Row) -> dict[str, Any]:
     return data
 
 
-def list_profiles() -> dict[str, dict[str, Any]]:
+def list_profiles(device: str | None = None) -> dict[str, dict[str, Any]]:
+    query = "SELECT * FROM profiles"
+    params: tuple = ()
+    if device is not None:
+        query += " WHERE device = ?"
+        params = (device,)
     with connect() as db:
-        rows = db.execute("SELECT * FROM profiles").fetchall()
+        rows = db.execute(query, params).fetchall()
     return {row["key"]: _profile_row(row) for row in rows}
 
 
@@ -572,19 +614,19 @@ def get_profile(key: str) -> dict | None:
     return _profile_row(row) if row else None
 
 
-def upsert_profile(profile: PaperProfile) -> dict[str, Any]:
+def upsert_profile(profile: PaperProfile, device: str = "") -> dict[str, Any]:
     regions = json.dumps([region.to_dict() for region in profile.regions], ensure_ascii=False) if profile.regions else None
     with connect() as db:
         db.execute(
             "INSERT INTO profiles(key, name, width_mm, height_mm, gap_mm, label_type, capacity, regions,"
-            " sticker_w_mm, sticker_h_mm, row_space_mm, col_space_mm, rows, cols, updated_at)"
-            " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            " sticker_w_mm, sticker_h_mm, row_space_mm, col_space_mm, rows, cols, updated_at, device)"
+            " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
             " ON CONFLICT(key) DO UPDATE SET name=excluded.name, width_mm=excluded.width_mm,"
             " height_mm=excluded.height_mm, gap_mm=excluded.gap_mm, label_type=excluded.label_type,"
             " capacity=excluded.capacity, regions=excluded.regions, sticker_w_mm=excluded.sticker_w_mm,"
             " sticker_h_mm=excluded.sticker_h_mm, row_space_mm=excluded.row_space_mm,"
             " col_space_mm=excluded.col_space_mm, rows=excluded.rows, cols=excluded.cols,"
-            " updated_at=excluded.updated_at",
+            " updated_at=excluded.updated_at, device=excluded.device",
             (
                 profile.key,
                 profile.name,
@@ -601,13 +643,14 @@ def upsert_profile(profile: PaperProfile) -> dict[str, Any]:
                 profile.rows,
                 profile.cols,
                 _now(),
+                device,
             ),
         )
     return get_profile(profile.key) or profile.to_dict()
 
 
-def save_profile(profile: PaperProfile) -> dict[str, Any]:
-    return upsert_profile(profile)
+def save_profile(profile: PaperProfile, device: str = "") -> dict[str, Any]:
+    return upsert_profile(profile, device)
 
 
 def delete_profile(key: str) -> None:
@@ -615,12 +658,71 @@ def delete_profile(key: str) -> None:
         db.execute("DELETE FROM profiles WHERE key = ?", (key,))
 
 
-def profile_key(barcode: str | None, uid: str | None) -> str | None:
-    if barcode:
-        return f"bc:{barcode}"
-    if uid:
-        return f"uid:{uid}"
-    return None
+def profile_key(barcode: str | None, uid: str | None, device: str = "") -> str | None:
+    """Calibration key: one roll may be calibrated differently on each printer type."""
+    if not barcode and not uid:
+        return None
+    base = f"bc:{barcode}" if barcode else f"uid:{uid}"
+    return f"{device}|{base}" if device else base
+
+
+# ------------------------------------------------------------------ printers
+def remember_printer(entry: dict[str, Any]) -> None:
+    """Upsert a printer seen in range: address, protocol, model and its data scope."""
+    address = str(entry.get("address") or "").strip()
+    if not address:
+        return
+    with connect() as db:
+        db.execute(
+            "INSERT INTO printers(address, name, protocol, model_key, model_name, scope, last_seen)"
+            " VALUES(?, ?, ?, ?, ?, ?, ?)"
+            " ON CONFLICT(address) DO UPDATE SET name=excluded.name, protocol=excluded.protocol,"
+            " model_key=excluded.model_key, model_name=excluded.model_name, scope=excluded.scope,"
+            " last_seen=excluded.last_seen",
+            (
+                address,
+                entry.get("name"),
+                entry.get("protocol") or "niimbot",
+                entry.get("model_key"),
+                entry.get("model_name"),
+                entry.get("scope"),
+                _now(),
+            ),
+        )
+
+
+def list_printers() -> list[dict[str, Any]]:
+    with connect() as db:
+        rows = db.execute("SELECT * FROM printers ORDER BY last_seen DESC").fetchall()
+    return [dict(row) for row in rows]
+
+
+def forget_printer(address: str) -> None:
+    with connect() as db:
+        db.execute("DELETE FROM printers WHERE address = ?", (address,))
+
+
+def claim_device_data(device: str) -> int:
+    """Give rows created before device scoping to the first printer that connects."""
+    if not device:
+        return 0
+    moved = 0
+    with connect() as db:
+        row = db.execute("SELECT value FROM schema_meta WHERE key = 'device_data_claimed'").fetchone()
+        if row:
+            return 0
+        for table in ("labels", "templates", "profiles"):
+            cursor = db.execute(f"UPDATE {table} SET device = ? WHERE device = ''", (device,))
+            moved += cursor.rowcount if cursor.rowcount > 0 else 0
+        db.execute("INSERT OR REPLACE INTO schema_meta(key, value) VALUES('device_data_claimed', ?)", (device,))
+    return moved
+
+
+def claimed_scope() -> str | None:
+    """The printer type that inherited the library written before device scoping."""
+    with connect() as db:
+        row = db.execute("SELECT value FROM schema_meta WHERE key = 'device_data_claimed'").fetchone()
+    return row["value"] if row else None
 
 
 # ------------------------------------------------------------------- uploads

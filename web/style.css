@@ -986,6 +986,39 @@ textarea { resize: vertical; min-height: 58px; }
 .row + .row { margin-top: 7px; }
 .hint { color: var(--ink-muted); font-size: 11px; line-height: 1.45; }
 .hint.warn { color: #9a5b00; background: #fff6e5; border: 1px solid #f0d9a8; border-radius: 6px; padding: 6px 8px; }
+.ctx-menu {
+  position: fixed;
+  z-index: 400;
+  min-width: 260px;
+  max-width: 380px;
+  padding: 5px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 12px 30px rgba(0, 26, 77, 0.18);
+}
+.ctx-menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--navy);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.ctx-menu button:hover:not(:disabled) { background: rgba(0, 194, 194, 0.12); }
+.ctx-menu button:disabled { opacity: 0.55; cursor: default; }
+.ctx-menu button svg { width: 14px; height: 14px; flex: 0 0 auto; }
+.ctx-menu button span { flex: 1; }
+.ctx-menu button em { font-style: normal; color: var(--ink-muted); font-size: 10px; }
+.ctx-sep { height: 1px; margin: 4px 6px; background: var(--line); }
+
 .protocol-row {
   display: flex;
   align-items: flex-end;
