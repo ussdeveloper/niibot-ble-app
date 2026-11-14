@@ -4,6 +4,23 @@ All notable changes to **Niibot Studio** are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project uses [Semantic Versioning](https://semver.org/).
 
+## [0.14.3] — 2026-11-14
+
+### Changed
+- **The printer list only shows printers.** A device is listed when it is known (connected at least
+  once → it owns a library) or when its advertisement looks like a label printer: a Niimbot name
+  prefix (`B1`, `D11`, `B21`, …), a LuckPrinter/AiYin name (`FICHERO_`, `D11s_`, `Karsten`, …), the
+  Niimbot service UUID or one of the LuckPrinter UART services. Phones, trackers and sensors no
+  longer clutter the list.
+- New **Show all Bluetooth devices** switch in *Settings → Printer* (remembered in the database)
+  brings the full `GET /api/printers?all=true` view back when something has to be diagnosed.
+- The list paints immediately from what the server already knows and refreshes after the scan, so
+  it is never empty while the radio is busy.
+
+### Fixed
+- The off-line status bar and model panel now report the printer that will be used next — name,
+  protocol **and** geometry — instead of mixing the saved name with the previous driver's dpi/printhead.
+
 ## [0.14.2] — 2026-11-14
 
 ### Fixed

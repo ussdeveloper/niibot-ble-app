@@ -1019,6 +1019,16 @@ textarea { resize: vertical; min-height: 58px; }
 .ctx-menu button em { font-style: normal; color: var(--ink-muted); font-size: 10px; }
 .ctx-sep { height: 1px; margin: 4px 6px; background: var(--line); }
 
+.inline-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--ink-muted);
+  cursor: pointer;
+}
+.inline-check input { width: 14px; height: 14px; }
 .protocol-row {
   display: flex;
   align-items: flex-end;

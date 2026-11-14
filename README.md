@@ -285,9 +285,11 @@ The app keeps **one workspace per printer type** (`niimbot:B1`, `luckprinter:FIC
 Switching the printer switches all of it: a 40 × 30 mm B1 label is never offered to a 96 px D11s,
 and both keep their own calibrations for the same roll code.
 
-* **Detecting**: *Scan* lists every BLE device; the protocol is picked from the advertised name
-  (`FICHERO_…`, `D11s_…` → LuckPrinter, everything else → Niimbot) and can be overridden with the
-  *Protocol* select.
+* **Detecting**: *Scan* looks at every BLE device, but the list only shows **printers** — a known
+  address (one that was connected at least once) or a device whose name/service looks like a label
+  printer (`B1…`, `D11…`, `FICHERO_…`, `D11s_…`, `Karsten…`, the Niimbot service or a
+  LuckPrinter UART bridge). Tick **Show all Bluetooth devices** to see everything else in range
+  (phones, trackers, sensors) — the switch is remembered in the database.
 * **Switching**: the status bar shows `<model> · <protocol> · <device>`; **right-click it** to get
   the list of known printers and connect to one (or *Scan for printers…*).
 * Data written before this feature is claimed by the first **Niimbot** printer that connects —

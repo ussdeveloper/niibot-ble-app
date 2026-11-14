@@ -255,6 +255,7 @@ const state = {
   catalog: [],
   lastDevices: null,
   printerProtocol: 'auto',
+  showAllBle: false,
   printers: [],
   printerInventory: null,
   /* Calibration that was in use when the printer was last connected — kept on screen
@@ -3860,7 +3861,7 @@ async function openPrinterSwitcher(event) {
   let payload = { printers: [], current: null };
   try {
     await api('/api/scan', 'POST', { timeout: 3, show_all: true });
-    payload = await api('/api/printers');
+    payload = await api(`/api/printers${state.showAllBle ? '?all=true' : ''}`);
     state.printers = payload.printers || [];
     state.printerInventory = payload;
   } catch (_) {
@@ -5100,6 +5101,14 @@ function renderSettingsTab() {
 /* The protocol select in Settings → Printer: the value is stored server-side so the
    auto-connect and the Windows queue use the same driver. */
 function bindProtocolSelect(content) {
+  const showsAll = $('#show-all-ble', content);
+  if (showsAll) {
+    showsAll.onchange = () => {
+      state.showAllBle = showsAll.checked;
+      writePref('showAllBle', state.showAllBle);
+      loadPrinters(true);
+    };
+  }
   const select = $('#protocol-select', content);
   if (!select) return;
   select.onchange = async () => {
@@ -5254,19 +5263,28 @@ let printersLoading = false;
 async function loadPrinters(force = false) {
   if (printersLoading) return;
   printersLoading = true;
+  const query = state.showAllBle ? '?all=true' : '';
+  const paint = () => {
+    if (settingsTab === 'printer' && modalStack.some((entry) => entry.id === 'settings')) renderSettingsTab();
+  };
   try {
+    // First paint from what the server already knows — no waiting for the radio.
+    const quick = await api(`/api/printers${query}`);
+    state.printers = quick.printers || [];
+    state.printerInventory = quick;
+    paint();
     if (force || Date.now() - printersLoadedAt > 20000) {
       try {
         await api('/api/scan', 'POST', { timeout: 4, show_all: true });
       } catch (_) { /* Bluetooth off — the known printers still list */ }
+      const payload = await api(`/api/printers${query}`);
+      state.printers = payload.printers || [];
+      state.printerInventory = payload;
+      printersLoadedAt = Date.now();
+      paint();
     }
-    const payload = await api('/api/printers');
-    state.printers = payload.printers || [];
-    state.printerInventory = payload;
-    printersLoadedAt = Date.now();
   } catch (_) { /* keep the previous list */ }
   printersLoading = false;
-  if (settingsTab === 'printer' && modalStack.some((entry) => entry.id === 'settings')) renderSettingsTab();
 }
 
 /* One row per printer: everything that was ever connected (it owns a library) plus whatever
@@ -5310,6 +5328,8 @@ function renderPrinterTab() {
         <button class="btn" data-action="test-print" ${state.connected ? '' : 'disabled'}><i data-lucide="scan-line"></i> Test print</button>
         <button class="btn danger" data-action="disconnect" ${state.connected ? '' : 'disabled'}><i data-lucide="power"></i> Disconnect</button>
       </div>
+      <label class="inline-check"><input type="checkbox" id="show-all-ble" ${state.showAllBle ? 'checked' : ''}>
+        Show all Bluetooth devices (not only printers)</label>
       <div class="protocol-row">
         <label>Protocol<select id="protocol-select">
           <option value="auto" ${state.printerProtocol === 'auto' ? 'selected' : ''}>Automatic (recommended)</option>
@@ -6659,6 +6679,7 @@ function bindControls() {
 
 async function init() {
   await loadUiPrefs();
+  state.showAllBle = readPref('showAllBle', false) === true;
   const savedLanguage = readPref('language');
   if (savedLanguage && window.I18N) {
     window.I18N.setLanguage(savedLanguage, { silent: true, persist: false });

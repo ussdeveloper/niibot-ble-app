@@ -100,6 +100,32 @@ def _protocol_for(address: str, settings: dict) -> str:
     return store.printer_protocol(address) or detect_protocol(store.printer_name(address))
 
 
+#: Service UUIDs only label printers advertise (Niimbot's own + the LuckPrinter UART bridges).
+PRINTER_SERVICES = (
+    "e7810a71-73ae-499d-8c15-faa9aef0c3f2",
+    "000018f0-0000-1000-8000-00805f9b34fb",
+    "0000ff00-0000-1000-8000-00805f9b34fb",
+    "49535343-fe7d-4ae5-8fa9-9fafd205e455",
+)
+
+
+def looks_like_printer(name: str | None, service_uuids=None, niimbot_flag: bool = False) -> bool:
+    """True when an advertisement belongs to a label printer we can drive."""
+    from .ble import NAME_PREFIXES
+
+    if niimbot_flag:
+        return True
+    upper = str(name or "").upper()
+    hints = [prefix.upper() for prefix in NAME_PREFIXES]
+    from .fichero import NAME_HINTS
+
+    hints += [hint.upper() for hint in NAME_HINTS]
+    if any(hint in upper for hint in hints):
+        return True
+    uuids = [str(uuid).lower() for uuid in (service_uuids or [])]
+    return any(uuid in PRINTER_SERVICES for uuid in uuids)
+
+
 def _scanned_protocol(address: str) -> str | None:
     for device in state.last_scan:
         if device.get("address") == address:
@@ -430,6 +456,11 @@ def _state_payload() -> dict:
             info["model_name"] = remembered.get("model_name") or info.get("model_name")
             info["model_key"] = remembered.get("model_key") or info.get("model_key")
             offline_protocol = remembered.get("protocol") or state.protocol
+            if offline_protocol == "luckprinter":
+                # Keep the reported geometry consistent with that family's printhead.
+                info["dpi"], info["printhead_px"] = 203, 96
+            elif remembered.get("model_key") == "B1":
+                info["dpi"], info["printhead_px"] = 203, 384
         else:
             offline_protocol = state.protocol
     else:
@@ -820,8 +851,11 @@ async def api_device_diagnose(request: DiagnoseRequest) -> dict:
 
 
 @app.get("/api/printers")
-async def api_printers() -> dict:
-    """The printer list: everything known (once connected → own library) plus what is in range."""
+async def api_printers(all: bool = False) -> dict:
+    """The printer list: everything known (once connected → own library) plus printers in range.
+
+    Other Bluetooth devices are only included with ``?all=true`` (the "show everything" switch).
+    """
     current = state.printer.link.address if state.connected else None
     items: list[dict] = []
     seen: set[str] = set()
@@ -839,6 +873,11 @@ async def api_printers() -> dict:
         address = device.get("address")
         if not address or address in seen:
             continue
+        is_printer = looks_like_printer(
+            device.get("name"), device.get("service_uuids"), bool(device.get("niimbot"))
+        )
+        if not is_printer and not all:
+            continue
         protocol = detect_protocol(device.get("name"))
         items.append({
             "address": address,
@@ -851,7 +890,7 @@ async def api_printers() -> dict:
             "available": True,
             "connected": False,
             "active_scope": False,
-            "label_printer": bool(device.get("niimbot")) or protocol == "luckprinter",
+            "label_printer": is_printer,
         })
     items.sort(key=lambda item: (not item["connected"], not item["available"], not item["known"], str(item.get("name"))))
     return {

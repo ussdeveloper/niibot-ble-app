@@ -12,6 +12,29 @@ import io
 from PIL import Image
 
 
+class PrinterRecognitionTests(unittest.TestCase):
+    """The printer list must not be flooded with every BLE gadget in the room."""
+
+    def test_names(self) -> None:
+        from niibot.server import looks_like_printer
+
+        self.assertTrue(looks_like_printer("B1-G000000001"))
+        self.assertTrue(looks_like_printer("D11s_0A0B_BLE"))
+        self.assertTrue(looks_like_printer("FICHERO_5836"))
+        self.assertTrue(looks_like_printer("Karsten Label"))
+        self.assertFalse(looks_like_printer("radar-sensor-f6b558"))
+        self.assertFalse(looks_like_printer("(no name)"))
+        self.assertFalse(looks_like_printer(None))
+
+    def test_services_and_flag(self) -> None:
+        from niibot.server import looks_like_printer
+
+        self.assertTrue(looks_like_printer("x", ["e7810a71-73ae-499d-8c15-faa9aef0c3f2"]))
+        self.assertTrue(looks_like_printer("x", ["000018f0-0000-1000-8000-00805f9b34fb"]))
+        self.assertTrue(looks_like_printer("x", None, True))
+        self.assertFalse(looks_like_printer("x", ["0000180a-0000-1000-8000-00805f9b34fb"]))
+
+
 class StorageTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
