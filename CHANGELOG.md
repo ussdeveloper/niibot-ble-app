@@ -4,6 +4,21 @@ All notable changes to **Niibot Studio** are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project uses [Semantic Versioning](https://semver.org/).
 
+## [0.13.8] — 2026-11-14
+
+### Fixed
+- **A roll swap no longer leaves the previous roll's calibration in the header.** While connected the
+  calibration is exactly what the database has for the inserted code; the last-used one is only kept
+  on screen when the printer is away (with its warning badge). An uncalibrated roll now shows its
+  label size and `Calibrate this roll` instead of another roll's name, zones and „fit” warning.
+- A fresh roll with no calibration opens the **calibration library** even when the catalogue knows its
+  size, and the stored calibration now also applies its page size automatically.
+
+### Added
+- **„Waiting for the roll” spinner**: when the printer reports no paper (lid open, roll out) a toast
+  with a spinner stays on screen and the status is polled every 1.5 s, so the new roll and its
+  calibration appear the moment the paper is back. The regular status poll went from 25 s to 12 s.
+
 ## [0.13.7] — 2026-11-14
 
 ### Removed

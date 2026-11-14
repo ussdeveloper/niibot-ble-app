@@ -1376,6 +1376,18 @@ button.btn.wide { width: 100%; }
 
 /* -------------------------------------------------------------------- toast */
 
+/* toasts that stay until something happens (waiting for a new roll) */
+.toast.waiting {
+  display: flex; align-items: center; gap: 9px;
+  border-color: rgba(232, 122, 42, 0.55); background: #fff8f1; color: #8a4a15;
+}
+.spinner {
+  width: 13px; height: 13px; border-radius: 50%; flex: 0 0 auto;
+  border: 2px solid rgba(232, 122, 42, 0.28); border-top-color: #e87a2a;
+  animation: spin 0.9s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
 #toast {
   position: fixed;
   right: 16px;

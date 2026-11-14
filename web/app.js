@@ -484,7 +484,6 @@ function renderStageMeta() {
   const spec = state.spec;
   const geo = paperGeometry();
   const paper = state.printer?.paper || {};
-  const known = !!geo.catalog || Number(paper.detected_width_mm) > 0 || !!state.printer?.profile;
   /* Headline chip = the roll's name when it has one, otherwise the label (print page) size.
      The sticker size only matters inside the calibrator, so it lives in the tooltip. */
   const rollProfile = state.printer?.profile;
@@ -510,10 +509,12 @@ function renderStageMeta() {
     <b>${escapeHtml(headline)}</b></button>`);
   if (geo.typeName) chips.push(`<span class="meta-chip type">paper: ${escapeHtml(geo.typeName)}</span>`);
   // Reachable off-line too: the calibrator can be edited and stored for the remembered roll.
-  chips.push(`<button type="button" class="meta-chip${known ? '' : ' warn'}" id="meta-calibrate"
-    title="${known ? 'Size and printable cells of this roll — reopen the calibrator any time'
-      : 'No calibration for this roll yet — draw its item zones'}">
-    <i data-lucide="ruler"></i> ${known ? 'Correct calibration' : 'Calibrate this roll'}
+  /* "Correct calibration" only when a calibration is actually stored for this roll. */
+  const calibrated = !!state.printer?.profile;
+  chips.push(`<button type="button" class="meta-chip${calibrated ? '' : ' warn'}" id="meta-calibrate"
+    title="${calibrated ? 'Item zones of this roll — reopen the calibrator any time'
+      : 'No calibration for this roll yet — draw its item zones or pick one from the library'}">
+    <i data-lucide="ruler"></i> ${calibrated ? 'Correct calibration' : 'Calibrate this roll'}
   </button>`);
   if (rollProfile && rollProfile.width_mm && rollProfile.height_mm) {
     const headLimit = printheadWidthMm() || Math.max(rollProfile.width_mm, rollProfile.height_mm);
@@ -5835,12 +5836,16 @@ function applyState(payload) {
   const wasConnected = state.connected;
   state.printer = payload;
   state.connected = Boolean(payload.connected);
-  /* A calibration always follows the database for the roll that is inserted; without a
-     printer there is no roll code, so the last-used one stays on screen and is flagged. */
+  /* A calibration always follows the database for the roll that is inserted. Only when the
+     printer is away (no roll code at all) does the last-used one stay on screen, flagged. */
   const syncProfile = payload.profile || null;
-  if (syncProfile) {
-    state.lastProfile = syncProfile;
-    rememberLastProfile(syncProfile);
+  if (state.connected) {
+    // Never show another roll's calibration: an uncalibrated roll simply has none.
+    state.printer.profile = syncProfile;
+    if (syncProfile) {
+      state.lastProfile = syncProfile;
+      rememberLastProfile(syncProfile);
+    }
   } else if (state.lastProfile) {
     state.printer.profile = state.lastProfile;
   }
@@ -5851,6 +5856,7 @@ function applyState(payload) {
   renderPaperRegions();
   renderJobStatus(payload.job || null);
   if (state.connected) startStatusTimer(); else stopStatusTimer();
+  updatePaperWait();
 
   /* The roll changed (or the printer just connected): re-apply the stored calibration. */
   const profileKey = syncProfile?.key || null;
@@ -5873,9 +5879,9 @@ function applyState(payload) {
     // RFID of the roll just arrived (connect or a roll swap) — update the whole screen.
     const rollName = paper.sku || paper.catalog?.name || paper.barcode || 'RFID read';
     if (!wasConnected) toast(`Roll detected: ${rollName}`, 'ok');
-    const knownSize = Boolean(paper.catalog || Number(paper.detected_width_mm) > 0 || payload.profile);
-    if (!knownSize && paper.barcode) {
-      // An unrecognised roll always starts the calibrator — once per insertion, not per poll.
+    const calibrated = Boolean(payload.profile);
+    if (!calibrated && paper.barcode) {
+      // A roll with no stored calibration always asks once per insertion, not per poll.
       if (state.promptedRoll !== paper.barcode) {
         state.promptedRoll = paper.barcode;
         toast(`Roll ${paper.barcode}: no calibration in the database for it.`, 'error');
@@ -5885,10 +5891,23 @@ function applyState(payload) {
           }
         }, 400);
       }
-    } else if (knownSize) {
+    } else if (calibrated) {
       state.promptedRoll = null;
     }
     applyKnownFormat(paper);
+    // The stored calibration also knows the page size, even when the catalogue does not.
+    const stored = payload.profile;
+    if (stored?.width_mm && stored?.height_mm && state.spec) {
+      const sameSize = Math.abs(state.spec.width_mm - stored.width_mm) < 0.05
+        && Math.abs(state.spec.height_mm - stored.height_mm) < 0.05;
+      if (!sameSize) {
+        applySize(stored.width_mm, stored.height_mm, {
+          gap_mm: stored.gap_mm ?? gapInfoMm(),
+          label_type: stored.label_type ?? state.spec.label_type,
+        });
+        toast(`Calibration „${stored.name}”: ${round2(stored.width_mm)} × ${round2(stored.height_mm)} mm`, 'ok');
+      }
+    }
     renderStatusBar();
     renderStageMeta();
     if (state.view === 'sheet') renderSheet();
@@ -5903,6 +5922,50 @@ async function refreshState() {
   applyState(payload);
 }
 
+/* ------------------------------------------------------- waiting for a roll */
+/* After a swap the printer reports no paper for a while. Keep a spinner on screen and poll
+   quickly, so the new roll (and its calibration) appears the moment it is inserted. */
+let paperWait = { node: null, timer: null };
+
+function paperMissing() {
+  const paper = state.printer?.paper || {};
+  if (!state.connected) return false;
+  return paper.paper_inserted === false || paper.lid_closed === false || !paper.barcode;
+}
+
+function startPaperWait() {
+  if (paperWait.node) return;
+  const node = document.createElement('div');
+  node.className = 'toast waiting';
+  node.innerHTML = '<span class="spinner"></span> Waiting for the roll — insert the paper, '
+    + 'the calibration loads by itself';
+  $('#toast').appendChild(node);
+  paperWait.node = node;
+  paperWait.timer = setInterval(async () => {
+    if (!state.connected) {
+      stopPaperWait();
+      return;
+    }
+    try {
+      const payload = await api('/api/refresh', 'POST');
+      applyState(payload);
+    } catch (_) { /* the printer is busy feeding — try again in a moment */ }
+    if (!paperMissing()) stopPaperWait();
+  }, 1500);
+}
+
+function stopPaperWait() {
+  if (paperWait.timer) clearInterval(paperWait.timer);
+  paperWait.timer = null;
+  paperWait.node?.remove();
+  paperWait.node = null;
+}
+
+function updatePaperWait() {
+  if (paperMissing()) startPaperWait();
+  else if (paperWait.node) stopPaperWait();
+}
+
 function startStatusTimer() {
   if (state.statusTimer) return;
   state.statusTimer = setInterval(async () => {
@@ -5913,7 +5976,7 @@ function startStatusTimer() {
       const payload = await api('/api/refresh', 'POST');
       applyState(payload);
     } catch (_) { /* transient */ }
-  }, 25000);
+  }, 12000);
 }
 
 /* Picks up a background auto-connect (the server connects to the remembered printer
