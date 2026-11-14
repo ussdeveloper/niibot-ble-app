@@ -2857,7 +2857,7 @@ function renderOverlay() {  if (!state.spec) return;  const overlay = $('#overla
       && (element.w < limit.recommended_w_mm - 0.01
         || (limit.recommended_h_mm > 0 && element.h < limit.recommended_h_mm - 0.01))) {
       box.classList.add('code-risky');
-      box.title = `One-dot modules — several phones will not read it. ${limit.recommended_w_mm} mm is safe.`;
+      box.title = `Tight for scanners — no room for the quiet zone. ${limit.recommended_w_mm} mm is safe.`;
     }
 
     const handle = document.createElement('div');
@@ -3505,8 +3505,9 @@ function codeLimitHint(element) {
       <br><span class="mono">${modules}</span></div>`;
   }
   if (risky) {
-    return `<div class="hint warn-text" id="code-limit">Modules are one dot wide — many phones will not
-      read it. ${comfy} is safe <button type="button" class="btn" data-fit-code="1">Fit</button>
+    return `<div class="hint warn-text" id="code-limit">Tight for scanners — there is no room for the quiet zone yet,
+      so modules may print one dot wide. ${comfy} is safe
+      <button type="button" class="btn" data-fit-code="1">Fit</button>
       <br><span class="mono">${modules}</span></div>`;
   }
   return `<div class="hint" id="code-limit">Scannable from <b>${hard}</b>, safe at <b>${comfy}</b>
