@@ -698,6 +698,13 @@ def printer_name(address: str) -> str | None:
     return row["name"] if row else None
 
 
+def printer_protocol(address: str) -> str | None:
+    """Protocol remembered for an address (what worked last time)."""
+    with connect() as db:
+        row = db.execute("SELECT protocol FROM printers WHERE address = ?", (address,)).fetchone()
+    return row["protocol"] if row else None
+
+
 def list_printers() -> list[dict[str, Any]]:
     with connect() as db:
         rows = db.execute("SELECT * FROM printers ORDER BY last_seen DESC").fetchall()

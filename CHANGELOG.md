@@ -17,7 +17,8 @@ project uses [Semantic Versioning](https://semver.org/).
   label) with a **Feed now** button, and `POST /api/printer/feed` for scripted use.
 - **The offline status bar shows the printer that will be used next** (name and protocol from the
   printer registry), so the B1 is labelled `B1`/`Niimbot` instead of inheriting the last driver's
-  Fichero name. A failed connect restores the saved protocol too.
+  Fichero name. A failed connect restores the saved protocol too, and a successful one stores
+  `auto`, so the protocol select stays on *Automatic* instead of pinning the detected family.
 
 ## [0.14.1] — 2026-11-14
 

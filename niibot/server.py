@@ -92,6 +92,14 @@ def detect_protocol(name: str | None) -> str:
     return "luckprinter" if any(hint in lower for hint in NAME_HINTS) else "niimbot"
 
 
+def _protocol_for(address: str, settings: dict) -> str:
+    """Which protocol to use for a saved address: forced value, else what worked last time."""
+    value = str(settings.get("printer_protocol") or "auto").lower()
+    if value in {"niimbot", "luckprinter"}:
+        return value
+    return store.printer_protocol(address) or detect_protocol(store.printer_name(address))
+
+
 def _scanned_protocol(address: str) -> str | None:
     for device in state.last_scan:
         if device.get("address") == address:
@@ -525,7 +533,7 @@ async def _auto_connect_loop() -> None:
                 if in_range:
                     state.auto_status = f"Connecting to {address}\u2026"
                     async with state.lock:
-                        state.use_protocol(settings.get("printer_protocol") or "niimbot")
+                        state.use_protocol(_protocol_for(address, settings))
                         _apply_device_geometry()
                         await state.printer.connect(address)
                         store.save_settings({"last_address": address})
@@ -617,7 +625,7 @@ async def _keep_alive_loop() -> None:
             if not job_running:
                 settings = store.load_settings()
                 address = (settings.get("last_address") or "").strip()
-                protocol = settings.get("printer_protocol") or "niimbot"
+                protocol = _protocol_for(address, settings)
 
                 if state.connected:
                     keep_alive = getattr(state.printer, "keep_alive", None)
@@ -869,7 +877,7 @@ async def api_connect(request: ConnectRequest) -> dict:
         first = (
             _scanned_protocol(request.address)
             or detect_protocol(store.printer_name(request.address))
-            or settings.get("printer_protocol")
+            or _protocol_for(request.address, settings)
             or "niimbot"
         ) if auto else requested
         order = [first, "luckprinter" if first == "niimbot" else "niimbot"] if auto else [first]
@@ -891,10 +899,10 @@ async def api_connect(request: ConnectRequest) -> dict:
                 except Exception:  # noqa: BLE001
                     pass
         if not connected:
-            state.use_protocol(settings.get("printer_protocol") or "niimbot")
+            state.use_protocol(_protocol_for(request.address, settings))
             detail = f"Could not connect: {last_error}" if last_error else "Could not connect"
             raise HTTPException(status_code=502, detail=detail) from last_error
-        store.save_settings({"printer_protocol": state.protocol})
+        store.save_settings({"printer_protocol": "auto" if auto else state.protocol})
         store.save_settings({"last_address": request.address})
         if state.printer.info.model_name and state.printer.info.model_name != "unknown":
             store.save_settings({"last_model": state.printer.info.model_name})
