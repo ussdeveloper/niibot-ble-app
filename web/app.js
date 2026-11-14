@@ -2049,7 +2049,7 @@ function openRollSizeDialog(options = {}) {
       stepHistory(1);
       return;
     }
-    if (event.key === 'Delete' || event.key === 'Backspace') {
+    if (event.key === 'Delete') {
       if (!selectedIndices().length) return;
       event.preventDefault();
       event.stopPropagation();
@@ -3306,11 +3306,7 @@ function renderLayers() {
     eye.innerHTML = `<i data-lucide="${element.visible === false ? 'eye-off' : 'eye'}"></i>`;
     eye.onclick = (event) => {
       event.stopPropagation();
-      element.visible = element.visible === false;
-      pushHistory();
-      renderOverlay();
-      schedulePreview();
-      buildInspector();
+      toggleElementVisible(element);
     };
     row.appendChild(eye);
 
@@ -3820,6 +3816,14 @@ function duplicateSelected() {
   renderOverlay();
   buildInspector();
   schedulePreview();
+}
+
+function toggleElementVisible(element) {
+  element.visible = element.visible === false;
+  pushHistory();
+  renderOverlay();
+  schedulePreview();
+  buildInspector();
 }
 
 function moveLayer(id, direction) {
@@ -7144,6 +7148,31 @@ function bindControls() {
   bindSheetControls();
   bindSplitters();
 
+  // Right-click on an element: the menu is where an element is deleted, duplicated or reordered
+  // (the keyboard only deletes with Delete, never with Backspace).
+  document.addEventListener('contextmenu', (event) => {
+    if (event.target.closest('#inspector-card') || event.target.closest('.panel')) return;
+    const box = event.target.closest('#overlay .element-box');
+    if (!box) return;
+    const element = state.spec?.elements.find((item) => item.id === box.dataset.id);
+    if (!element) return;
+    event.preventDefault();
+    state.selectedId = element.id;
+    renderOverlay();
+    buildInspector();
+    const locked = isMirrorLocked(element);
+    showContextMenu(event, [
+      { key: 'duplicate', icon: 'copy', label: 'Duplicate', hint: 'Ctrl+D', run: () => duplicateSelected() },
+      { key: 'up', icon: 'chevron-up', label: 'Move up', run: () => moveLayer(element.id, 1) },
+      { key: 'down', icon: 'chevron-down', label: 'Move down', run: () => moveLayer(element.id, -1) },
+      { key: 'hidden', icon: element.visible === false ? 'eye' : 'eye-off',
+        label: element.visible === false ? 'Show' : 'Hide', run: () => toggleElementVisible(element) },
+      { sep: true },
+      { key: 'delete', icon: 'trash-2', label: locked ? 'Delete (mirror copy)' : 'Delete', hint: 'Del',
+        run: () => { state.selectedId = element.id; deleteSelected(); } },
+    ]);
+  });
+
   document.addEventListener('pointerdown', onPointerDown);
   document.addEventListener('pointermove', onPointerMove);
   document.addEventListener('pointermove', updateHover);
@@ -7167,7 +7196,9 @@ function bindControls() {
     else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'n') { event.preventDefault(); openNewLabelDialog(); }
     else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'p') { event.preventDefault(); printLabel(); }
     else if ((event.ctrlKey || event.metaKey) && event.key === ',') { event.preventDefault(); openSettings('printer'); }
-    else if (event.key === 'Delete' || event.key === 'Backspace') { if (state.selectedId) { event.preventDefault(); deleteSelected(); } }
+    // Only Delete removes an element: Backspace belongs to text editing, where deleting the
+    // whole element after a typo is the last thing anyone expects.
+    else if (event.key === 'Delete') { if (state.selectedId) { event.preventDefault(); deleteSelected(); } }
     else if (event.key === 'ArrowLeft' && state.selectedId) { event.preventDefault(); nudge(-1, 0, event); }
     else if (event.key === 'ArrowRight' && state.selectedId) { event.preventDefault(); nudge(1, 0, event); }
     else if (event.key === 'ArrowUp' && state.selectedId) { event.preventDefault(); nudge(0, -1, event); }

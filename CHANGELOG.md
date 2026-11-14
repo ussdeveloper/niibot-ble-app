@@ -4,6 +4,22 @@ All notable changes to **Niibot Studio** are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project uses [Semantic Versioning](https://semver.org/).
 
+## [0.14.10] — 2026-11-14
+
+### Fixed
+- **Backspace no longer deletes the selected element.** It is the key everyone presses to fix a
+  typo, and it removed the whole element when the focus was not in a text field. Deleting now has
+  exactly three paths: the **Delete** key, the right-click menu and the trash button in the panel
+  (the calibrator's zone selection follows the same rule).
+
+### Added
+- **Right-click menu on an element**: Duplicate, Move up, Move down, Hide/Show and Delete, with the
+  element selected by the click that opened the menu.
+
+### Changed
+- The panel section called *Layers* is now **Items** (`Elementy`, `Elemente`, `Éléments`, …), which
+  is what it actually lists; the reorder buttons say *Move up* / *Move down*.
+
 ## [0.14.9] — 2026-11-14
 
 ### Fixed
