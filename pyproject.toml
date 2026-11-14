@@ -4,7 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "niibot-studio"
-version = "0.7.0"
+# Single source of truth: niibot/version.py — bumping it there is enough.
+dynamic = ["version"]
 description = "Local Niimbot B1 label printing over Bluetooth LE with a browser designer and a Windows print queue"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -37,6 +38,9 @@ niibot = "niibot.cli:main"
 
 [tool.setuptools]
 packages = ["niibot"]
+
+[tool.setuptools.dynamic]
+version = { attr = "niibot.version.__version__" }
 
 [tool.setuptools.package-data]
 niibot = ["py.typed"]

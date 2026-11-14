@@ -4,6 +4,24 @@ All notable changes to **Niibot Studio** are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project uses [Semantic Versioning](https://semver.org/).
 
+## [0.15.3] — 2026-11-14
+
+### Changed
+- **The panel makes no external requests.** It loaded Roboto from Google Fonts on every start,
+  which contradicts a local-first printer tool and slowed the first paint offline; the stylesheet
+  now uses the system UI font and the webfont links are gone.
+- **One version number.** `pyproject.toml` takes the version from `niibot/version.py` instead of
+  carrying its own stale copy, and `niibot.__version__` re-exports the same value.
+- Documentation review: the start-up reconnection chapter describes the per-printer workers
+  (discovery, retry after 60 s / 20 s, name matching), the old “Layers” section is folded into
+  *Items*, and the About panel no longer mixes a Polish sentence into the English UI.
+
+### Fixed
+- The repository contained no user data, but the tests, one docstring and a screenshot caption
+  still used the author's own Bluetooth addresses and printer serials; they are now synthetic
+  (`C9:48:8A:00:00:01`, `B1-G000000001`), and the serial and MAC visible in the screenshots are
+  masked. A note under *Screenshots* says that all company and product data there is fictional.
+
 ## [0.15.2] — 2026-11-14
 
 ### Fixed
@@ -334,8 +352,8 @@ project uses [Semantic Versioning](https://semver.org/).
 - `bitmap.encode_image()` now carries the 1-bit rows, so both protocols print the same render.
 
 ### Verified
-- Against a real D11s: firmware `2.4.1`, serial `D263W000000000`, battery 81 %, lid closed, paper
-  present, and a 12 × 30 mm test label printed (`rows=240, cols=96, state=done`).
+- Against a real D11s: firmware `2.4.1`, lid closed, paper present, and a 12 × 30 mm test label
+  printed (`rows=240, cols=96, state=done`).
 
 ## [0.13.12] — 2026-11-14
 

@@ -1,6 +1,6 @@
 /* Niibot Studio — VS Code-like shell.
    Surfaces/palette: SunCore Studio (navy #001a4d, teal #00c2c2/#35b0ae, violet #8a6fe6,
-   page #f8fcff, frosted glass, pill buttons, Roboto). Icons: Lucide only. */
+   page #f8fcff, frosted glass, pill buttons, system UI font). Icons: Lucide only. */
 
 :root {
   --navy: #001a4d;
@@ -48,7 +48,7 @@ html, body {
   overflow: hidden;
   background: var(--page);
   color: var(--ink);
-  font-family: "Roboto", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Arial, sans-serif;
+  font-family: "Segoe UI", ui-sans-serif, system-ui, -apple-system, "Roboto", Arial, sans-serif;
   font-weight: 300;
   font-size: 13px;
   line-height: 1.5;

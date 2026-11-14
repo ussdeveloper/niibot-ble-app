@@ -29,3 +29,5 @@ desktop.ini
 
 # scratch renders
 .tmp_*
+.tmp-*
+.tmp*

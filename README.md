@@ -31,6 +31,9 @@ devices (`v4`, e.g. B1 Pro / B21 Pro).
 
 ## Screenshots
 
+All company, product and batch data in these screenshots is fictional; device serial numbers and
+Bluetooth addresses are masked.
+
 | Designer | Sheet |
 | --- | --- |
 | ![Designer](docs/screenshots/01-designer.jpg) | ![Sheet](docs/screenshots/02-sheet.jpg) |
@@ -165,9 +168,10 @@ frame following, so artwork hidden under a big block can still be picked.
 ### Items and the printer queue
 
 The right panel lists every element as an **item**: eye to hide/show it, thumbnail, click to select,
-drag to reorder, and the trash button deletes. The **Printer queue** sits under it with its own
-resizer — every job with state, size, time and printer, **Repeat** to print the stored label again,
-**Remove** to drop it from the history, **Cancel** for the running job.
+drag to reorder, and the trash button deletes. Like in a layer stack the top row is the topmost
+artwork, and the row name can be edited with a double-click. The **Printer queue** sits under it
+with its own resizer — every job with state, size, time and printer, **Repeat** to print the stored
+label again, **Remove** to drop it from the history, **Cancel** for the running job.
 
 Right-click an element for **Duplicate / Move up / Move down / Hide / Delete**; right-click the
 connection chip in the status bar to switch printers. `Delete` is the only key that removes an
@@ -186,12 +190,6 @@ The **Sheet** tab treats the label as data:
   or as a vertical flip.
 
 The sheet lives inside the label document, so it is saved, loaded and versioned with it.
-
-### Layers
-
-The list is reversed like in Photoshop — the top row is the topmost artwork. Each row has a
-visibility eye, an ink-trimmed thumbnail of that element, the name (double-click to rename),
-a drag handle and the ordering toolbar underneath.
 
 ### Fonts and icons
 
@@ -229,6 +227,14 @@ the last calibration are all rows of `ui_state` (`GET`/`POST /api/ui`). That is 
 second window and the packaged EXE always open on the same picture, and why clearing the browser
 cache cannot lose work. Anything an older build left in `localStorage` is moved into the database
 and deleted on the first start.
+
+### Privacy
+
+Everything stays on this machine: the app talks to the printer over Bluetooth LE and never contacts
+a server, so label content, print history, uploads and the printer's serial number never leave the
+computer. The repository contains **no user data** — `data/`, `dist/`, `build/` and `.venv/` are
+ignored by Git, and the screenshots use fictional company, product and batch data with masked
+serial numbers and Bluetooth addresses.
 
 ---
 
@@ -305,17 +311,28 @@ hook the active worker recovers from.
 
 ### Connecting at start-up
 
-The app reconnects to the printer you used last, without being asked. It scans for that printer
-(by address, then by advertised name — a random BLE address changes when the printer is power
-cycled), connects with up to three attempts and backs off from 8 s to 18 s while the printer is
-away. A scan that sees the printer connects immediately. Windows' `find_device_by_address` is
-deliberately **not** used: it returns a cached, nameless device for an address that is not
-advertising, which made a switched-off printer look reachable — a nameless advertisement now gets
-a single attempt and the address is skipped for 90 s. When the remembered printer does not answer,
-the app connects to another printer it already knows that *is* advertising, and remembers it.
+The app reconnects to the printer you used last, without being asked. **Discovery** (one scan every
+15 s) only answers *who is advertising right now*; each printer's **worker** then decides when to
+connect, retry and ping, so a printer that is switched off is waited for instead of being hit with a
+connect timeout every cycle:
 
-The status bar shows exactly what the reconnect is doing, and `GET /api/health` (the Ready / Not
-Ready chip in the top-right corner) proves the backend itself is alive.
+* a printer that is seen advertising is connected straight away (the scan is the trigger, not a
+  timer);
+* a failed attempt is retried after **60 s** — a Fichero/LuckPrinter only re-advertises in short
+  windows, so that family is retried after **20 s**;
+* an address that is not advertising at all costs nothing: the worker sleeps until a scan sees it
+  again;
+* when several printers come up at once, the one you used last becomes the active one;
+* Windows' `find_device_by_address` is deliberately **not** used: it returns a cached, nameless
+  device for an address that is not advertising, which made a switched-off printer look reachable.
+  A nameless advertisement never triggers a connect, and a name that two known printers share (the
+  random tail of `D11s_xxxx_BLE`) is never used to match;
+* a printer that comes back under a new BLE address is matched by its name, which carries the
+  serial — the stale registry row is merged away instead of being retried forever.
+
+The status bar shows exactly what each link is doing (`connected`, `connecting (niimbot)`,
+`dropped`, `not in range`), and `GET /api/health` (the Ready / Not Ready chip in the top-right
+corner) proves the backend itself is alive.
 
 ---
 

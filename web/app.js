@@ -6532,10 +6532,10 @@ function renderAboutTab() {
     <section>
       <h3>Niibot Studio</h3>
       <div class="hint" style="margin-bottom:10px">Standalone panel for the Niimbot B1 printer over Bluetooth LE.
-        Dane trzymane lokalnie w jednej bazie SQLite — bez chmury.</div>
+        All data stays in one local SQLite database — no cloud.</div>
       <div class="status-line"><span>Protocol</span><span>Niimbot BLE (0x55 0x55 … 0xAA 0xAA)</span></div>
       <div class="status-line"><span>Formats</span><span>${(state.catalog || []).length} stored</span></div>
-      <div class="status-line"><span>Interface</span><span>Lucide + Roboto, VS Code layout</span></div>
+      <div class="status-line"><span>Interface</span><span>Lucide icons, system fonts, VS Code layout</span></div>
       <div class="status-line"><span>Windows printer</span><span>IPP queue (Microsoft IPP Class Driver)</span></div>
       <h4>Shortcuts</h4>
       <div class="status-line"><span>Undo / redo</span><span class="mono">Ctrl+Z / Ctrl+Y</span></div>
