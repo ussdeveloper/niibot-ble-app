@@ -4620,13 +4620,23 @@ async function openPrinterSwitcher(event) {
   const items = printers.map((printer) => {
     const connected = !!printer.connected;
     const active = !!printer.active;
+    // Each printer keeps its own worker, so the panel can say what that one is doing.
+    const stateLabel = connected
+      ? (active ? 'printing now' : 'connected — click to switch')
+      : printer.status === 'connecting'
+        ? 'connecting…'
+        : printer.status === 'dropped'
+          ? 'link dropped — reconnecting'
+          : printer.available
+            ? 'in range — click to connect'
+            : 'known, not in range';
     return {
       key: printer.address,
       icon: active ? 'bluetooth-connected' : connected ? 'bluetooth' : printer.available ? 'signal' : 'bluetooth-off',
       label: `${printer.model_name || printer.name || printer.address}${active ? ' ✓' : ''}`,
       hint: [
         PROTOCOL_LABELS[printer.protocol] || printer.protocol,
-        active ? 'printing now' : connected ? 'connected — click to switch' : printer.available ? 'in range — click to connect' : 'known, not in range',
+        stateLabel,
         !connected && printer.last_error ? printer.last_error : '',
       ].filter(Boolean).join(' · '),
       disabled: active,
@@ -6151,7 +6161,7 @@ function renderPrinterTab() {
           <option value="niimbot" ${state.printerProtocol === 'niimbot' ? 'selected' : ''}>Niimbot (B1, B1 Pro, …)</option>
           <option value="luckprinter" ${state.printerProtocol === 'luckprinter' ? 'selected' : ''}>LuckPrinter (Fichero, Karsten, AiYin)</option>
         </select></label>
-        <span class="hint" id="protocol-hint">Automatic: the protocol follows the device name, and the other one is tried when the connection fails.</span>
+        <span class="hint" id="protocol-hint">Automatic: what answered for this printer is remembered, the other family is tried when the first attempt fails, and the name decides for a device the app has never seen.</span>
       </div>
       <div class="device-list" style="margin-top:10px">${list}</div>
       <div class="hint" style="margin-top:6px">Every Bluetooth LE device nearby is listed — printers that are not from the Niimbot family show up as

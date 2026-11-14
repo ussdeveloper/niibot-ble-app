@@ -272,22 +272,29 @@ reports the roll code while it is connected.
 ## Keep-alive and automatic reconnect
 
 A Bluetooth link dies quietly: Windows (and the printer itself) will drop an idle connection, and
-the panel only polls while its window is visible. The server therefore pings every **5 s** on its own:
+the panel only polls while its window is visible. The server therefore pings each link every **4 s**
+— and it does so **per printer**, in that printer's own worker task:
 
 * Niimbot — a heartbeat frame (`0xDC`); the driver reports the link as dead when the frame fails.
 * Fichero / LuckPrinter — the status query (`10 FF 40`); the reply also refreshes the
   lid/paper state sitting in the status bar.
 
-A failed ping, or a link the printer closed itself, starts a **silent reconnect** with the address
-and protocol used last: the printer is looked up by the scanner first (a peripheral that dropped
-the link stops advertising for a moment), then connected again. Measured on a D11s: the link is
-back in 14–28 s with no user action, and printing continues. An explicit **Disconnect** in the
-panel stops the watchdog so it does not fight the user, and a recovery never hijacks a different
-printer that was connected in the meantime.
+One task per printer is what keeps the links stable: with a single loop a slow status read or a
+connect attempt on one printer delayed the ping of the other, and the printer whose ping was late
+dropped its link on its own supervision timeout. Each worker now owns its driver, its lock, its
+timer and its retry schedule, so nothing one printer does can starve another.
 
-`GET /api/state` reports it: `keep_alive.ping_age_s` (age of the last successful ping) and
-`keep_alive.reconnects` (successful recoveries). `POST /api/keepalive/drop` closes the link on
-purpose — a test hook.
+A failed ping, or a link the printer closed itself, starts a **silent reconnect** on that worker
+alone: the printer is looked up by the scanner first (a peripheral that dropped the link stops
+advertising for a moment), then connected again with the protocol it answered with. An explicit
+**Disconnect** in the panel stops the workers so they do not fight the user, and a recovery never
+hijacks a different printer that was connected in the meantime.
+
+`GET /api/state` reports it: `keep_alive.ping_age_s` (age of the active printer's last successful
+ping), `keep_alive.reconnects` and `keep_alive.links` (one status per printer). `GET /api/connections`
+lists every worker with its `status` (`connected`, `connecting (niimbot)`, `dropped`,
+`not in range`) and `ping_age_s`. `POST /api/keepalive/drop` closes the link on purpose — a test
+hook the active worker recovers from.
 
 ### Connecting at start-up
 
@@ -321,12 +328,22 @@ queue) are kept for reference but cannot be repeated. The history is capped at 5
 
 ## Several printers, one library per printer
 
-Switching printers is instant: a background manager keeps **every** printer the app knows
-connected while it is advertising (and pings them so Windows does not drop the links), so the
-right-click menu on the connection chip only lists what is already there — *printing now*,
-*connected*, *in range* or *known, not in range* — and clicking a connected printer switches to it
-with `POST /api/activate`, no scan involved. A printer that is off simply disappears from the
-connected list and comes back when it is switched on again.
+Switching printers is instant: each known printer keeps **its own worker** (driver, lock, ping,
+reconnect) while it is advertising, so the right-click menu on the connection chip only lists what
+is already there — *printing now*, *connected*, *in range* or *known, not in range* — and clicking a
+connected printer switches to it with `POST /api/activate`, no scan involved. A printer that is off
+simply disappears from the connected list and comes back when it is switched on again.
+
+**The protocol is remembered per printer.** A unit that answered as `luckprinter` keeps being
+connected that way, and the B1 next to it stays `niimbot`; the *Settings → Printer → Protocol*
+switch is only a default for devices the app has never talked to. When the first attempt is wrong,
+the worker tries the other family and stores the one that answered.
+
+**One physical printer, one entry.** A BLE address can change when a printer is power cycled, and
+Windows happily keeps advertising the old one from its cache — which used to give one printer two
+rows, two workers and two BLE links fighting each other. The advertised name carries the serial, so
+the old row is merged away; the panel shows one entry per unit, and a name two different units
+share (the random tail of `D11s_xxxx_BLE`) is never used to match.
 
 The app keeps **one workspace per printer type** (`niimbot:B1`, `luckprinter:FICHERO`, …):
 
@@ -392,9 +409,10 @@ Niimbot's framed one. `niibot/luckprinter.py` holds the command bytes and
 | Print | wake (12 × `00`) → `10 FF FE 01` enable → `GS v 0` raster → `1D 0C` form feed → `10 FF FE 45` stop |
 
 Pick **LuckPrinter (Fichero / AiYin)** in *Settings → Printer → Protocol* — or just press
-*Connect* next to the device: the protocol is chosen from its name (`FICHERO_…`, `D11s_…`).
-Everything else works as usual; this family has no roll tag, so its calibration is stored under
-the fixed key `AIYIN` (make one with *Correct calibration*).
+*Connect* next to the device: the protocol is chosen from its name (`FICHERO_…`, `D11s_…`), the
+other family is tried when the first attempt gets no answer, and the one that works is stored for
+that printer. Everything else works as usual; this family has no roll tag, so its calibration is
+stored under the fixed key `AIYIN` (make one with *Correct calibration*).
 
 **Paper type and advance.** The panel numbers label types like Niimbot (1 = labels with gaps,
 2 = black mark, 3 = continuous tape); this family uses 0/1/2. The mapping is done in

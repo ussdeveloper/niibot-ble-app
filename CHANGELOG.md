@@ -4,6 +4,33 @@ All notable changes to **Niibot Studio** are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project uses [Semantic Versioning](https://semver.org/).
 
+## [0.15.0] — 2026-11-14
+
+### Changed
+- **One worker per printer.** Every printer now has its own task with its own driver, lock, timer,
+  ping and reconnect schedule (`PrinterWorker`), instead of one ping loop that visited all links in
+  turn. A slow Fichero status read or a BLE connect attempt can no longer delay the keep-alive of
+  the B1 next to it — which is what used to drop a perfectly healthy link. The printing lock is
+  the active printer's lock, so a job and a ping on the same printer still never interleave.
+- **The protocol belongs to the printer, not to the app.** Each printer remembers the family that
+  answered (`printers.protocol`), and the global *Protocol* switch is only the default for devices
+  the app has never talked to. Older builds stored the protocol of the last connection globally,
+  which made the next printer start with the wrong family; that value is cleared once on start.
+- A printer that comes back under a **new BLE address** is recognised by its advertised name (it
+  carries the serial): the stale row is merged away and its worker stopped, so one physical printer
+  can never hold two BLE links — the collision that kept both links flapping.
+- Discovery only reports who is advertising; the workers decide when to connect, so a printer that
+  is switched off is waited for instead of being hit with a connect timeout every cycle. A name two
+  different units share (the random tail of `D11s_xxxx_BLE`) never matches by name, so the app
+  cannot connect the wrong unit.
+
+### Fixed
+- When an attempt fails with the wrong family, the worker tries the other one and **remembers the
+  one that answered** — and it does not waste that second attempt on a printer that is not even
+  advertising (`DeviceNotFound`).
+- If the active printer drops while another link is still up, the app prints on the surviving
+  printer instead of reporting "not connected".
+
 ## [0.14.13] — 2026-11-14
 
 ### Added

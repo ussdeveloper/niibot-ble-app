@@ -723,6 +723,14 @@ def printer_protocol(address: str) -> str | None:
     return row["protocol"] if row else None
 
 
+def set_printer_protocol(address: str, protocol: str) -> None:
+    """Remember which protocol answered for this printer — never a global switch."""
+    if protocol not in {"niimbot", "luckprinter"}:
+        return
+    with connect() as db:
+        db.execute("UPDATE printers SET protocol = ? WHERE address = ?", (protocol, address))
+
+
 def list_printers() -> list[dict[str, Any]]:
     with connect() as db:
         rows = db.execute("SELECT * FROM printers ORDER BY last_seen DESC").fetchall()
