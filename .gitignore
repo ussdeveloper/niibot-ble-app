@@ -26,3 +26,6 @@ desktop.ini
 # local secrets
 .env
 *.local.json
+
+# scratch renders
+.tmp_*
