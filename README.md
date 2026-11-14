@@ -123,6 +123,12 @@ rest of the preview dims. While dragging, edges and centres of other elements as
 label edges/centre produce subtle alignment guides (centre lines use a different colour).
 With snapping on, positions snap to the 1 mm grid and to those guides.
 
+**Hovering shows what a click would grab**: the element under the pointer gets a dashed frame and
+a name chip, so it is clear what will move before pressing. An **unfilled frame** is caught on its
+border only — everything it surrounds stays clickable. When several elements overlap, the chip
+counts the stack (`1/3`) and **Ctrl+click** (Cmd on macOS) steps one element deeper, with the hover
+frame following, so artwork hidden under a big block can still be picked.
+
 ### Sheet view
 
 The **Sheet** tab treats the label as data:

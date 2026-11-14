@@ -4,6 +4,17 @@ All notable changes to **Niibot Studio** are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project uses [Semantic Versioning](https://semver.org/).
 
+## [0.13.10] — 2026-11-14
+
+### Added
+- **Hover picking with a visible target.** Pointing at an element draws a dashed frame with its
+  name, so it is obvious what a click will grab before pressing the button.
+- **Unfilled frames no longer block what they surround** — an outline rectangle is now caught on
+  its border band only, so a text or picture inside a big frame can be clicked and dragged directly.
+- **Ctrl+click (Cmd on macOS) selects one element deeper** in the stack, and the hover frame
+  previews exactly which element that will be; the chip shows the depth (`1/3`). Previously a large
+  element in front made everything behind it unreachable.
+
 ## [0.13.9] — 2026-11-14
 
 ### Added

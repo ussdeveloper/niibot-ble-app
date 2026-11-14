@@ -149,6 +149,8 @@ const state = {
   printer: null,
   connected: false,
   selectedId: null,
+  /* Element the next click would pick — the frame drawn on it is the hint that it is draggable. */
+  hoverId: null,
   preview: null,
   previewToken: 0,
   pxPerMm: 4,
@@ -2681,7 +2683,9 @@ function renderOverlay() {  if (!state.spec) return;  const overlay = $('#overla
     const hidden = element.visible === false;
     const locked = isMirrorLocked(element);
     const crossing = !locked && crossesCut(element);
-    box.className = `element-box${element.id === state.selectedId ? ' selected' : ''}${hidden ? ' hidden-el' : ''}${locked ? ' locked' : ''}${crossing ? ' crosses' : ''}`;
+    const hovered = element.id === state.hoverId && element.id !== state.selectedId;
+    box.className = `element-box${element.id === state.selectedId ? ' selected' : ''}${hovered ? ' hover' : ''}${hidden ? ' hidden-el' : ''}${locked ? ' locked' : ''}${crossing ? ' crosses' : ''}`;
+    box.dataset.name = elementTitle(element) || element.type;
     box.dataset.id = element.id;
     box.style.left = `${(element.x / labelWidth) * 100}%`;
     box.style.top = `${(element.y / labelHeight) * 100}%`;
@@ -3470,6 +3474,93 @@ function dropDragGhost(ghost) {
   $('#stage')?.classList.remove('lifting');
 }
 
+/* ---------------------------------------------------------------- picking
+   Element boxes sit on top of each other, so the browser's own hit test only ever
+   reaches the front-most one. Picking is done here instead: every element under the
+   cursor is collected back-to-front, an unfilled frame is caught on its border only
+   (so whatever it frames stays reachable), and Ctrl+click walks deeper into the stack.
+   The hover frame shows the element a click would take, so it is clear what will move. */
+
+function labelPoint(clientX, clientY) {
+  // Element boxes are positioned against the stage (they map 0..label size in mm).
+  const surface = $('#stage') || $('#preview');
+  if (!surface || !state.spec) return null;
+  const rect = surface.getBoundingClientRect();
+  if (rect.width < 2 || rect.height < 2) return null;
+  return {
+    x: ((clientX - rect.left) / rect.width) * state.spec.width_mm,
+    y: ((clientY - rect.top) / rect.height) * state.spec.height_mm,
+  };
+}
+
+function elementUnderPoint(element, x, y) {
+  if (x < element.x || x > element.x + element.w || y < element.y || y > element.y + element.h) {
+    return false;
+  }
+  // An outline frame must not swallow the artwork it surrounds: only its border answers.
+  if (element.type === 'rect' && !element.fill) {
+    const band = Math.max(1.6, (Number(element.thickness_mm) || 0.3) + 0.8);
+    if (x > element.x + band && x < element.x + element.w - band
+      && y > element.y + band && y < element.y + element.h - band) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/* Every element under the cursor, front-most first. */
+function elementStackAt(clientX, clientY) {
+  const point = labelPoint(clientX, clientY);
+  if (!point) return [];
+  return state.spec.elements
+    .filter((element) => elementUnderPoint(element, point.x, point.y))
+    .reverse();
+}
+
+function pickFromStack(stack, deep) {
+  if (!stack.length) return null;
+  if (!deep) return stack[0];
+  // Ctrl steps one element towards the back, wrapping to the front, so the whole stack is reachable.
+  // With nothing selected the step starts from the front element — a plain click already gives that one.
+  const base = state.selectedId ? stack.findIndex((element) => element.id === state.selectedId) : 0;
+  return stack[((base < 0 ? 0 : base) + 1) % stack.length];
+}
+
+function deepPickKey(event) {
+  return event.ctrlKey || event.metaKey;
+}
+
+function setHover(element, stack) {
+  const id = element ? element.id : null;
+  const overlay = $('#overlay');
+  if (overlay) {
+    overlay.querySelectorAll('.element-box.hover').forEach((box) => box.classList.remove('hover'));
+    if (id) {
+      const box = overlay.querySelector(`.element-box[data-id="${id}"]`);
+      if (box) {
+        // Overlapping elements: the counter tells how deep the frame is (Ctrl+click goes deeper).
+        const depth = stack && stack.length > 1 ? ` \u00b7 ${stack.indexOf(element) + 1}/${stack.length}` : '';
+        box.dataset.name = `${elementTitle(element) || element.type}${depth}`;
+        box.classList.add('hover');
+      }
+    }
+    $('#stage')?.classList.toggle('picking', !!id);
+  }
+  state.hoverId = id;
+}
+
+function isStageTarget(target) {
+  return !!target?.closest?.('.element-box')
+    || ['stage', 'preview', 'grid-layer', 'guides', 'overlay'].includes(target?.id);
+}
+
+function updateHover(event) {
+  if (drag || modalStack.length) return;
+  if (!isStageTarget(event.target)) { setHover(null); return; }
+  const stack = elementStackAt(event.clientX, event.clientY);
+  setHover(pickFromStack(stack, deepPickKey(event)), stack);
+}
+
 function onPointerDown(event) {
   if (event.button !== 0) return;
   const box = event.target.closest('.element-box');
@@ -3481,13 +3572,18 @@ function onPointerDown(event) {
     }
     return;
   }
-  const element = state.spec.elements.find((item) => item.id === box.dataset.id);
+  // Ctrl+click reaches the element underneath the one in front; the hover frame already shows it.
+  const stack = isStageTarget(event.target) ? elementStackAt(event.clientX, event.clientY) : [];
+  const picked = pickFromStack(stack, deepPickKey(event));
+  const element = picked
+    || state.spec.elements.find((item) => item.id === box.dataset.id);
   if (!element) return;
   if (isMirrorLocked(element)) {
     toast('Mirror: this region is generated automatically — edit the first region.');
     return;
   }
   state.selectedId = element.id;
+  setHover(null);
   renderOverlay();
   buildInspector();
   pushHistory();
@@ -6139,6 +6235,9 @@ function bindControls() {
 
   document.addEventListener('pointerdown', onPointerDown);
   document.addEventListener('pointermove', onPointerMove);
+  document.addEventListener('pointermove', updateHover);
+  document.addEventListener('pointerup', () => setHover(null));
+  $('#stage')?.addEventListener('pointerleave', () => setHover(null));
   document.addEventListener('pointerup', onPointerUp);
   document.addEventListener('pointercancel', onPointerUp);
 

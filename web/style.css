@@ -368,7 +368,30 @@ svg.lucide { width: 16px; height: 16px; stroke-width: 1.7; }
 #overlay { z-index: 6; }
 #paper-regions, #guides { z-index: 8; }
 .stage.lifting #preview { opacity: 0.28; }
-.element-box:hover { border-color: rgba(0, 194, 194, 0.6); }
+/* The frame of the element a click would grab (it may sit under a bigger one). */
+.element-box.hover {
+  border: 1.5px dashed var(--teal);
+  background: rgba(0, 194, 194, 0.05);
+  cursor: move;
+}
+.element-box.hover::after {
+  content: attr(data-name);
+  position: absolute;
+  left: -1px;
+  top: -18px;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--teal);
+  color: #fff;
+  font-size: 10px;
+  line-height: 14px;
+  pointer-events: none;
+}
+.element-box.hover.locked::after { background: var(--ink-muted); }
 .element-box.selected {
   border: 1.5px solid var(--teal);
   background: rgba(0, 194, 194, 0.06);
