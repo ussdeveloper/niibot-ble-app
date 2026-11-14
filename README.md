@@ -148,8 +148,10 @@ a drag handle and the ordering toolbar underneath.
 * **Properties → Font** (or **Edit → Font…**) opens a searchable list of all detected
   families rendered in their own typeface; the renderer loads the very same font file.
 * **Left toolbar → icons** (or **Edit → Insert icon…**) opens the icon browser with source
-  filter and tag search; picking an icon rasterises the SVG to a 384 px PNG and uploads it
-  into the database.
+  filter and tag search; picking an icon rasterises the SVG at the connected printhead width
+  (384 px on a B1, 567 px on 300 dpi models) and uploads it into the database.
+* Pictures and icons are placed with **`Contain`** fill, so resizing the box never cuts the artwork;
+  `Cover` and `Stretch` stay available in **Properties → Fill mode**.
 
 ---
 
@@ -213,6 +215,28 @@ calibration opens the **calibration library** — cards with a preview of the zo
 and the print page, so an existing layout can be reused (`Use`), edited or replaced. Off-line the
 last calibration stays on screen with an `⚠ offline calibration` badge, because the printer only
 reports the roll code while it is connected.
+
+---
+
+## Device resolution (dpi) and unknown printers
+
+Every label decision needs two numbers: the printer's **resolution** and its **printhead width in
+pixels**. Both come from `niibot/models.py`, a 71-entry table of model ids (the id the printer
+answers to `GetInfo 0x08`) with the values the vendor app uses — B1 = 203 dpi × 384 px,
+B1 Pro = 300 dpi × 567 px, B2 Pro 300/567, B21 Pro 300/591, B3S 203/576, B4 Pro 300/1229,
+M3 300/851, D11 203/96, … The label canvas, the renderer, the print packing and the Windows queue
+all follow the connected device, so a 300 dpi printer gets 300 dpi artwork and PDFs are
+rasterised at 300 dpi instead of being upscaled from 203.
+
+A printer that is not in the table reports `unknown`, and the model panel says so. Use
+**Settings → Printer → Printhead override** to enter the resolution (dpi), the printhead width in
+pixels and, if needed, the print task (`Auto`, `B1 / legacy`, `V4`). The override is stored in
+SQLite, applied to the live connection at once and survives restarts; clearing both numbers
+returns to automatic detection.
+
+Printers that speak a different protocol entirely (for example Finchero units, which have no
+public Niimbot-compatible command set) still need a protocol implementation — the override only
+fixes the geometry, not the command frames.
 
 ---
 

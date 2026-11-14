@@ -56,7 +56,9 @@ class Element(BaseModel):
     # image
     image_id: str | None = None
     #: How the picture fills its box: ``cover`` crops, ``contain`` letterboxes, ``stretch`` distorts.
-    image_fit: str = "cover"
+    #: How the picture fills its box. ``contain`` never hides artwork, so a resize
+    #: cannot crop a logo or an icon; ``cover`` and ``stretch`` are opt-in.
+    image_fit: str = "contain"
     #: Extra magnification on top of the fit (1.0 = exactly the fit size).
     image_zoom: float = 1.0
     #: Crop window offset in millimetres — moves the picture inside the box.

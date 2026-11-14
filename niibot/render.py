@@ -555,7 +555,7 @@ def _draw_image(
         return
     source = source.convert("RGBA")
     width, height = layer.size
-    fit = element.image_fit if element.image_fit in ("cover", "contain", "stretch") else "cover"
+    fit = element.image_fit if element.image_fit in ("cover", "contain", "stretch") else "contain"
 
     def place(picture: Image.Image, x: float, y: float) -> None:
         if element.image_dither:

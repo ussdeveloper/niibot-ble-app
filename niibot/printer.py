@@ -39,6 +39,7 @@ class PrinterInfo:
     hardware: str | None = None
     serial: str | None = None
     bluetooth_address: str | None = None
+    geometry_override: bool = False
     battery: int | None = None
     density: int | None = None
     label_type: int | None = None
@@ -171,16 +172,44 @@ class NiimbotPrinter:
         model = model_for_id(self.info.model_id)
         self._apply_model(model)
 
+    def set_geometry_override(
+        self,
+        dpi: int | None = None,
+        printhead_px: int | None = None,
+        print_task: str | None = None,
+    ) -> None:
+        """Force the device geometry — needed for printers missing from the model table."""
+        self.geometry_override = {
+            "dpi": int(dpi) if dpi else None,
+            "printhead_px": int(printhead_px) if printhead_px else None,
+            "print_task": print_task or None,
+        }
+
+    def refresh_geometry(self) -> None:
+        """Re-apply the model/override after the override changed while connected."""
+        self._apply_model(model_for_id(self.info.model_id))
+
     def _apply_model(self, model: PrinterModel) -> None:
         protocol = self.info.protocol_version or 0
         task = model.print_task
         if task is None:
             task = "v4" if protocol >= 4 else "b1"
+        override = getattr(self, "geometry_override", None) or {}
+        dpi = override.get("dpi") or model.dpi
+        head_px = override.get("printhead_px") or model.printhead_px
+        forced_task = override.get("print_task")
+        if forced_task:
+            task = forced_task
         self.info.model_key = model.key
-        self.info.model_name = model.name
-        self.info.dpi = model.dpi
-        self.info.printhead_px = model.printhead_px
+        self.info.model_name = model.name if (model.key != "UNKNOWN" or not dpi) else "unknown"
+        self.info.dpi = dpi
+        self.info.printhead_px = head_px
         self.info.print_task = task
+        self.info.geometry_override = bool(
+            override.get("dpi") or override.get("printhead_px") or override.get("print_task")
+        )
+        if model.key == "UNKNOWN" and self.info.geometry_override:
+            self.info.model_name = f"custom {dpi} dpi"
 
     async def _b1_handshake(self) -> None:
         """The B1 ignores print commands until this exact handshake is done."""

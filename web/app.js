@@ -3026,7 +3026,7 @@ function applyImageCrop(element, mode) {
   }
 }
 
-/* Tells the user what the crop does to print quality — the label is only 203 dpi. */
+/* Tells the user what the crop does to print quality, measured against this printer's dpi. */
 async function renderCropQuality(element) {
   const target = $('#crop-quality');
   if (!target || !element.image_id) return;
@@ -3037,7 +3037,7 @@ async function renderCropQuality(element) {
   }
   if (!document.body.contains(target)) return;
   const printerDpi = Number(state.printer?.info?.dpi) || 203;
-  const fit = element.image_fit === 'contain' ? 'contain' : element.image_fit === 'stretch' ? 'stretch' : 'cover';
+  const fit = element.image_fit === 'cover' ? 'cover' : element.image_fit === 'stretch' ? 'stretch' : 'contain';
   const zoom = Math.max(0.05, Number(element.image_zoom) || 1);
   let dpi;
   if (fit === 'stretch') {
@@ -3299,7 +3299,10 @@ function addElement(type) {
   if (type === 'qr') Object.assign(base, { text: 'https://', w: Math.min(16, width - 2), h: Math.min(16, height - 2) });
   if (type === 'rect') Object.assign(base, { x: 0.5, y: 0.5, w: width - 1, h: height - 1, thickness_mm: 0.4 });
   if (type === 'line') Object.assign(base, { w: width - 2, h: Math.min(2, height - 2), thickness_mm: 0.4 });
-  if (type === 'image') Object.assign(base, { w: Math.min(20, width - 2), h: Math.min(20, height - 2) });
+  if (type === 'image') {
+    // Whole picture by default; "Fill box" in the inspector crops it deliberately.
+    Object.assign(base, { w: Math.min(20, width - 2), h: Math.min(20, height - 2), image_fit: 'contain' });
+  }
   state.spec.elements.push(base);
   state.selectedId = base.id;
   pushHistory();
@@ -3831,7 +3834,11 @@ function iconSvgMarkup(icon, extra = '') {
   return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" ${extra}>${children}</svg>`;
 }
 
-async function rasterizeIcon(icon, sizePx = 384) {
+function printheadPx() {
+  return Math.max(96, Number(state.printer?.info?.printhead_px) || 384);
+}
+
+async function rasterizeIcon(icon, sizePx = printheadPx()) {
   const svg = iconSvgMarkup(icon, `xmlns="http://www.w3.org/2000/svg" width="${sizePx}" height="${sizePx}" color="#000000"`);
   const url = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
   const image = new Image();
@@ -3871,6 +3878,8 @@ async function insertIcon(icon) {
     visible: true,
     label: icon.name.replace(/-/g, ' '),
     image_id: uploaded.id,
+    // An icon must stay whole: resizing the box letterboxes it instead of cropping it.
+    image_fit: 'contain',
   };
   state.spec.elements.push(element);
   state.selectedId = element.id;
@@ -4801,6 +4810,7 @@ function bindSettingsActions(content) {
       if (action === 'install-info') showInstallCommand(content);
       if (action === 'import-catalog') await importCatalog(event.target.closest('[data-action]'));
       if (action === 'roll-format') openRollSizeDialog();
+      if (action === 'device-save') await saveDeviceGeometry(content);
       if (action === 'use-format') {
         const index = Number(event.target.closest('[data-index]').dataset.index);
         const item = state.catalog[index];
@@ -4813,6 +4823,68 @@ function bindSettingsActions(content) {
       toast(error.message, 'error');
     }
   };
+}
+
+/* Some printers (clones / OEM units) are not in the model library. When we cannot look the
+   geometry up, the dpi and printhead width have to be entered by hand — everything else in the
+   app (canvas, print packing, PDF rasterising) follows these two numbers. */
+let deviceSettings = null;
+
+function loadDeviceSettings(force) {
+  if (deviceSettings && !force) return Promise.resolve(deviceSettings);
+  return api('/api/settings/device')
+    .then((payload) => {
+      deviceSettings = payload;
+      return payload;
+    })
+    .catch(() => null);
+}
+
+function renderGeometryOverride(info) {
+  if (state.connected && !deviceSettings) loadDeviceSettings().then(() => renderSettingsTab());
+  const override = deviceSettings?.override || {};
+  const detected = deviceSettings?.detected || {};
+  const unknown = state.connected && detected.known === false;
+  const note = unknown
+    ? `<div class="hint warn">This printer is not in the model library, so the detected geometry may be wrong.
+        Set the resolution and the printhead width by hand.</div>`
+    : '';
+  return `
+    <div class="geom-override">
+      <h4>Printhead override</h4>
+      ${note}
+      <div class="grid-2" style="margin-top:6px">
+        <label>Resolution (dpi)<input type="number" id="geom-dpi" min="100" max="1200" step="1"
+          placeholder="${detected.dpi || 203}" value="${override.dpi || ''}"></label>
+        <label>Printhead width (px)<input type="number" id="geom-head" min="32" max="2048" step="1"
+          placeholder="${detected.printhead_px || 384}" value="${override.printhead_px || ''}"></label>
+      </div>
+      <div class="geom-row">
+        <label>Print task<select id="geom-task">
+          <option value="">Auto</option>
+          <option value="b1" ${override.print_task === 'b1' ? 'selected' : ''}>B1 / legacy</option>
+          <option value="v4" ${override.print_task === 'v4' ? 'selected' : ''}>V4</option>
+        </select></label>
+        <button class="btn" data-action="device-save"><i data-lucide="save"></i> Apply</button>
+      </div>
+      <div class="hint">Leave empty for automatic. Changes apply to the live connection immediately.</div>
+    </div>`;
+}
+
+async function saveDeviceGeometry(content) {
+  const dpi = Number($('#geom-dpi', content)?.value || 0);
+  const printhead_px = Number($('#geom-head', content)?.value || 0);
+  const print_task = $('#geom-task', content)?.value || '';
+  const payload = await api('/api/settings/device', 'POST', { dpi, printhead_px, print_task });
+  deviceSettings = payload;
+  await refreshState();
+  renderSettingsTab();
+  toast(
+    payload?.detected?.dpi
+      ? `Device geometry: ${payload.detected.dpi} dpi · ${payload.detected.printhead_px} px`
+      : 'Device geometry updated',
+    'ok',
+  );
 }
 
 function renderPrinterTab() {
@@ -4859,6 +4931,7 @@ function renderPrinterTab() {
       <div class="status-line"><span>Firmware</span><span>${escapeHtml(info.firmware || '—')}</span></div>
       <div class="status-line"><span>Protocol</span><span>${info.protocol_version ?? '—'}</span></div>
       <div class="status-line"><span>Serial number</span><span class="mono">${escapeHtml(info.serial || '—')}</span></div>
+      ${renderGeometryOverride(info)}
     </section>
     <section>
       <h3>Service</h3>

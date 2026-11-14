@@ -28,7 +28,7 @@ from .bitmap import encode_image
 from .ble import BleLink
 from .consumables import Consumable, builtin_formats, scan_vendor_catalog
 from .fit import FitOptions, fit_to_label
-from .models import MODELS, PAPER_PRESETS, PaperProfile, Region, ZoneShape
+from .models import model_for_id, MODELS, PAPER_PRESETS, PaperProfile, Region, ZoneShape
 from .paths import resource_dir
 from .printer import NiimbotPrinter
 from .protocol import LABEL_TYPE_NAMES, ProtocolError
@@ -459,6 +459,51 @@ async def api_auto_connect_set(request: Request) -> dict:
     return {"enabled": bool(payload.get("enabled", True))}
 
 
+@app.get("/api/settings/device")
+async def api_device_settings() -> dict:
+    geometry = store.load_settings().get("device_geometry") or {}
+    info = state.printer.info
+    return {
+        "override": {
+            "dpi": int(geometry.get("dpi") or 0),
+            "printhead_px": int(geometry.get("printhead_px") or 0),
+            "print_task": geometry.get("print_task") or "",
+        },
+        "detected": {
+            "model": info.model_name,
+            "model_id": info.model_id,
+            "dpi": info.dpi,
+            "printhead_px": info.printhead_px,
+            "print_task": info.print_task,
+            "overridden": info.geometry_override,
+            "known": info.model_key != "UNKNOWN",
+        },
+    }
+
+
+@app.post("/api/settings/device")
+async def api_device_settings_set(request: Request) -> dict:
+    payload = await request.json()
+    dpi = int(payload.get("dpi") or 0)
+    printhead_px = int(payload.get("printhead_px") or 0)
+    print_task = str(payload.get("print_task") or "").strip().lower()
+    if dpi and not 100 <= dpi <= 1200:
+        raise HTTPException(status_code=400, detail="DPI must be between 100 and 1200.")
+    if printhead_px and not 32 <= printhead_px <= 2048:
+        raise HTTPException(status_code=400, detail="Printhead width must be between 32 and 2048 px.")
+    if print_task and print_task not in {"b1", "v4"}:
+        raise HTTPException(status_code=400, detail="Unknown print task.")
+    store.save_settings(
+        {"device_geometry": {"dpi": dpi, "printhead_px": printhead_px, "print_task": print_task}}
+    )
+    async with state.lock:
+        state.printer.set_geometry_override(dpi or None, printhead_px or None, print_task or None)
+        if state.connected:
+            # Re-apply immediately so the canvas and printing pick the new geometry up.
+            state.printer.refresh_geometry()
+    return await api_device_settings()
+
+
 # ------------------------------------------------------------------ devices
 @app.post("/api/scan")
 async def api_scan(request: ScanRequest) -> dict:
@@ -473,6 +518,10 @@ async def api_scan(request: ScanRequest) -> dict:
 @app.post("/api/connect")
 async def api_connect(request: ConnectRequest) -> dict:
     async with state.lock:
+        _over = store.load_settings().get("device_geometry") or {}
+        state.printer.set_geometry_override(
+            _over.get("dpi"), _over.get("printhead_px"), _over.get("print_task")
+        )
         try:
             await state.printer.connect(request.address)
         except Exception as exc:
@@ -1392,7 +1441,8 @@ def _ipp_state() -> ipp_mod.IppPrinterState:
 async def _print_ipp_document(payload: bytes, mime: str, copies: int) -> tuple[bool, str]:
     if not state.connected:
         raise HTTPException(status_code=409, detail="The printer is not connected.")
-    image = ipp_mod.decode_document(payload, mime)
+    _w, _h, dpi, _head, _wpx, _hpx = _label_geometry()
+    image = ipp_mod.decode_document(payload, mime, dpi=dpi)
     if image is None:
         return False, f"unsupported document format ({mime or 'none'})"
 

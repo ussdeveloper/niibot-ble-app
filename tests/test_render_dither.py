@@ -62,3 +62,41 @@ class ImageDitherTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ImageFitTest(unittest.TestCase):
+    """A resized image element must not lose its artwork to the new aspect ratio."""
+
+    def setUp(self) -> None:
+        self.folder = tempfile.TemporaryDirectory()
+        self.addCleanup(self.folder.cleanup)
+        path = Path(self.folder.name) / "square.png"
+        Image.new("L", (64, 64), color=0).save(path)
+        self.path = path
+
+    def _render(self, fit: str, width_mm: float, height_mm: float) -> Image.Image:
+        extra = {"image_fit": fit} if fit else {}
+        spec = LabelSpec(
+            width_mm=40,
+            height_mm=30,
+            elements=[
+                Element(type="image", x=0, y=0, w=width_mm, h=height_mm, image_id="square", **extra)
+            ],
+        )
+        return render_label(spec, dpi=203, printhead_px=384, image_loader=lambda _id: self.path).image
+
+    def test_contain_letterboxes_a_stretched_box(self) -> None:
+        rendered = self._render("contain", 40, 30)
+        # The square art fits the 30 mm height, so the left/right bands stay blank.
+        row = rendered.height // 2
+        self.assertTrue(all(rendered.getpixel((x, row)) > 200 for x in range(2, 20)))
+
+    def test_missing_fit_keeps_the_whole_picture(self) -> None:
+        rendered = self._render("", 40, 30)
+        row = rendered.height // 2
+        self.assertTrue(all(rendered.getpixel((x, row)) > 200 for x in range(2, 20)))
+
+    def test_cover_fills_the_box(self) -> None:
+        rendered = self._render("cover", 40, 30)
+        row = rendered.height // 2
+        self.assertTrue(any(rendered.getpixel((x, row)) < 60 for x in range(rendered.width)))

@@ -4,6 +4,26 @@ All notable changes to **Niibot Studio** are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project uses [Semantic Versioning](https://semver.org/).
 
+## [0.13.9] — 2026-11-14
+
+### Added
+- **71 printer models with their real printhead geometry** (`niibot/models.py`): id, resolution and
+  printhead width per model, taken from the vendor model list. The B1 stays 203 dpi × 384 px,
+  the B1 Pro is 300 dpi × 567 px, B2 Pro 300/567, B21 Pro 300/591, B3S 203/576, B4 Pro
+  300/1229, M3 300/851 and so on. Canvas size, label rendering, print packing and the Windows (IPP)
+  queue all follow the connected device instead of assuming 203 dpi every time.
+- **Printhead override** in `Settings → Printer`: resolution, printhead width and print task can be
+  entered by hand and are applied to the live connection immediately. This is the path for printers
+  missing from the table (clones/OEM units) — the tab warns when the model is unknown.
+
+### Fixed
+- **A resized picture or icon is no longer cropped.** Pictures and icons are inserted with
+  `contain` and a stored `cover` is now opt-in, so stretching a box letterboxes the artwork
+  instead of cutting it. Icons are also rasterised at the connected printhead width (384 px on a
+  B1, 567 px on 300 dpi devices) instead of being upscaled afterwards.
+- PDF documents arriving through the Windows print queue are rasterised at the printer's own
+  resolution — a 300 dpi device no longer prints an upscaled 203 dpi render.
+
 ## [0.13.8] — 2026-11-14
 
 ### Fixed

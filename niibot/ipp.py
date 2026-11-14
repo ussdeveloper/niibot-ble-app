@@ -355,15 +355,19 @@ def build_simple_response(
 
 
 # ---------------------------------------------------------------- decoding
-def decode_document(payload: bytes, mime: str) -> Image.Image | None:
-    """Turn an IPP document into a PIL image we can fit onto the label."""
+def decode_document(payload: bytes, mime: str, dpi: int = 203) -> Image.Image | None:
+    """Turn an IPP document into a PIL image we can fit onto the label.
+
+    ``dpi`` is the target printer's resolution — vector documents are rasterised at it,
+    so a 300 dpi device gets a 300 dpi render instead of an upscaled 203 dpi one.
+    """
     if not payload:
         return None
 
     if payload[:4] in (b"RaS2", b"RaS3"):
         return decode_pwg_raster(payload)
     if payload[:4] == b"%PDF" or mime == "application/pdf":
-        return decode_pdf(payload)
+        return decode_pdf(payload, dpi=dpi)
     try:
         image = Image.open(io.BytesIO(payload))
         image.load()
@@ -373,7 +377,7 @@ def decode_document(payload: bytes, mime: str) -> Image.Image | None:
         return None
 
 
-def decode_pdf(payload: bytes) -> Image.Image | None:
+def decode_pdf(payload: bytes, dpi: int = 203) -> Image.Image | None:
     try:  # optional dependency, only needed for PDF jobs
         import pypdfium2 as pdfium
     except ImportError:
@@ -382,8 +386,8 @@ def decode_pdf(payload: bytes) -> Image.Image | None:
     try:
         document = pdfium.PdfDocument(payload)
         page = document[0]
-        # Render at ~203 dpi so a full-page design lands at print resolution.
-        bitmap = page.render(scale=203 / 72)
+        # Rasterise at the printer's own resolution so a full-page design lands at print size.
+        bitmap = page.render(scale=max(72, int(dpi)) / 72)
         return bitmap.to_pil()
     except Exception as exc:  # pragma: no cover
         log.warning("PDF rendering failed: %s", exc)

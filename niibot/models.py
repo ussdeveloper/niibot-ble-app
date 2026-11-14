@@ -26,32 +26,105 @@ class PrinterModel:
         return round(self.printhead_px * self.mm_per_px, 1)
 
 
+#: Model table (ids / dpi / printhead width) taken from the vendor app's own model library.
+#: ``print_task`` is ``None`` for models whose job format is decided by the protocol version.
 MODELS: tuple[PrinterModel, ...] = (
+    # --- B series (top-facing label printers) ---------------------------------
     PrinterModel("B1", "B1", (4096,), 203, 384, "b1"),
     PrinterModel("B1_SE", "B1 SE", (4098,), 203, 384, "b1"),
     PrinterModel("B1_PRO", "B1 Pro", (4097,), 300, 567, "v4"),
-    PrinterModel("M2_H", "M2-H", (4608,), 300, 567, "b1"),
-    PrinterModel("N1", "N1", (3586,), 203, 96, "b1"),
-    PrinterModel("D101", "D101", (2560,), 203, 192, "b1"),
-    PrinterModel("D110_M", "D110_M", (2320,), 203, 96, "b1"),
-    PrinterModel("B21_C2B", "B21 (C2B)", (771, 775), 203, 384, "b1"),
-    PrinterModel("B21_PRO", "B21 Pro", (785,), 300, 591, "v4"),
-    PrinterModel("D11_H", "D11_H", (528,), 300, 142, "v4"),
-    PrinterModel("C1", "C1", (5120,), 300, 178, "v4"),
-    PrinterModel("EP1C", "EP1C", (5121,), 300, 178, "v4"),
-    PrinterModel("B21", "B21", (768,), 203, 384),
-    PrinterModel("B21S", "B21S", (777, 776), 203, 384),
-    PrinterModel("D11", "D11", (512,), 203, 96),
-    PrinterModel("D11S", "D11S", (514,), 203, 96),
-    PrinterModel("D110", "D110", (2304, 2305), 203, 96),
-    PrinterModel("B18", "B18", (3584,), 203, 96),
     PrinterModel("B2", "B2", (6913,), 203, 384),
     PrinterModel("B2_PRO", "B2 Pro", (6912,), 300, 567),
+    PrinterModel("B203", "B203", (2816,), 203, 400),
+    PrinterModel("B21", "B21", (768,), 203, 384),
+    PrinterModel("B21_PRO", "B21 Pro", (785,), 300, 591, "v4"),
+    PrinterModel("B21_C2B", "B21 (C2B)", (771, 775), 203, 384, "b1"),
+    PrinterModel("B21_L2B", "B21 (L2B)", (769,), 203, 384),
+    PrinterModel("B21S", "B21S", (777, 776), 203, 384),
+    PrinterModel("B3", "B3", (52993,), 203, 600),
+    PrinterModel("B31", "B31", (5632,), 203, 600),
+    PrinterModel("B32", "B32", (2049,), 300, 851),
+    PrinterModel("B32R", "B32R", (2050,), 300, 851),
+    PrinterModel("B3S", "B3S", (256, 260, 262), 203, 576),
+    PrinterModel("B3S_A", "B3S-A", (275,), 203, 576),
+    PrinterModel("B3S_P", "B3S-P", (272,), 203, 576),
+    PrinterModel("B4", "B4", (6656,), 203, 832),
+    PrinterModel("B4_PRO", "B4 Pro", (6657,), 300, 1229),
+    PrinterModel("B11", "B11", (51457,), 203, 384),
+    PrinterModel("B16", "B16", (1792,), 203, 96),
+    PrinterModel("B18", "B18", (3584,), 203, 96),
+    PrinterModel("B18S", "B18S", (3585,), 203, 96),
+    PrinterModel("B50", "B50", (51713,), 203, 400),
+    PrinterModel("B50W", "B50W", (51714,), 203, 384),
+    # --- A series -------------------------------------------------------------
+    PrinterModel("A1_PRO", "A1 Pro", (7424,), 300, 296),
+    PrinterModel("A20", "A20", (2817,), 203, 400),
+    PrinterModel("A203", "A203", (2818,), 203, 400),
+    PrinterModel("A63", "A63", (2054,), 300, 851),
+    PrinterModel("A8", "A8", (273,), 203, 576),
+    # --- narrow / handheld ----------------------------------------------------
+    PrinterModel("D11", "D11", (512,), 203, 96),
+    PrinterModel("D11S", "D11S", (514,), 203, 96),
+    PrinterModel("D11_H", "D11_H", (528,), 300, 142, "v4"),
+    PrinterModel("D11_PRO", "D11 Pro", (531,), 300, 142, "v4"),
+    PrinterModel("D101", "D101", (2560,), 203, 192, "b1"),
+    PrinterModel("D110", "D110", (2304, 2305), 203, 96),
+    PrinterModel("D110_M", "D110_M", (2320,), 203, 96, "b1"),
+    PrinterModel("D41", "D41", (2816,), 203, 400),
+    PrinterModel("H1", "H1", (3840,), 203, 96),
+    PrinterModel("H1S", "H1S", (4352,), 203, 96),
+    PrinterModel("N1", "N1", (3586,), 203, 96, "b1"),
+    PrinterModel("FUST", "Fust", (513,), 203, 96),
+    # --- 300 dpi kiosk / industrial ------------------------------------------
+    PrinterModel("C1", "C1", (5120,), 300, 178, "v4"),
+    PrinterModel("EP1C", "EP1C", (5121,), 300, 178, "v4"),
+    PrinterModel("EP2M_H", "EP2M-H", (4610,), 300, 567),
+    PrinterModel("EP3M", "EP3M", (6402,), 300, 851),
+    PrinterModel("K2", "K2", (6144,), 203, 448),
+    PrinterModel("K3", "K3", (4864,), 203, 640),
+    PrinterModel("K3_ITD", "K3-ITD", (4868,), 203, 640),
+    PrinterModel("K3_W", "K3-W", (4865,), 203, 640),
+    PrinterModel("K4", "K4", (7168,), 203, 832),
+    PrinterModel("M2_H", "M2-H", (4608,), 300, 567, "b1"),
+    PrinterModel("M3", "M3", (6400,), 300, 851),
+    PrinterModel("MP3K", "MP3K", (4866,), 203, 640),
+    PrinterModel("MP3K_W", "MP3K-W", (4867,), 203, 640),
+    PrinterModel("P1", "P1", (1024,), 300, 697),
+    PrinterModel("P1S", "P1S", (1025,), 300, 662),
+    PrinterModel("P18", "P18", (1026,), 300, 662),
+    PrinterModel("S1", "S1", (51458,), 203, 384),
+    PrinterModel("S3", "S3", (51460,), 203, 384),
+    PrinterModel("S6", "S6", (261, 259, 258, 257), 203, 576),
+    PrinterModel("S6_P", "S6-P", (274,), 203, 600),
+    PrinterModel("T2S", "T2S", (53250,), 203, 832),
+    PrinterModel("T6", "T6", (51715,), 203, 384),
+    PrinterModel("T7", "T7", (51717,), 203, 384),
+    PrinterModel("T8", "T8", (51718,), 300, 567),
+    PrinterModel("T8S", "T8S", (51719,), 300, 567),
+    PrinterModel("JC_M90", "JC-M90", (51461,), 203, 384),
+    PrinterModel("JCB3S", "JC-B3S", (2561,), 203, 576),
+    PrinterModel("Z401", "Z401", (6145,), 203, 448),
 )
 
-MODEL_BY_ID: dict[int, PrinterModel] = {model_id: model for model in MODELS for model_id in model.ids}
+MODEL_BY_ID: dict[int, PrinterModel] = {}
+for _model in MODELS:
+    for _model_id in _model.ids:
+        # First entry wins: the table is ordered from the most likely model for an id.
+        MODEL_BY_ID.setdefault(_model_id, _model)
 
 UNKNOWN_MODEL = PrinterModel("UNKNOWN", "unknown", (), 203, 384, "b1")
+
+
+def model_for_id(model_id: int | None) -> PrinterModel:
+    """The model table entry for a reported id (``UNKNOWN_MODEL`` when unknown)."""
+    if model_id is None:
+        return UNKNOWN_MODEL
+    return MODEL_BY_ID.get(int(model_id), UNKNOWN_MODEL)
+
+
+def model_with_dpi(dpi: int, printhead_px: int) -> PrinterModel:
+    """A stand-in model for a printer we do not know but whose geometry was set by hand."""
+    return PrinterModel("CUSTOM", f"custom {dpi} dpi", (), int(dpi), int(printhead_px), None)
 
 #: Models whose firmware inverts the "lid closed" bit of the heartbeat.
 INVERTED_LID_MODELS = frozenset({512, 513, 514, 272, 273, 274, 1792, 2304, 2560, 3584, 3840, 4352, 5120})
