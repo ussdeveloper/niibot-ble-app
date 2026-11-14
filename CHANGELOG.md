@@ -4,6 +4,19 @@ All notable changes to **Niibot Studio** are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project uses [Semantic Versioning](https://semver.org/).
 
+## [0.15.2] — 2026-11-14
+
+### Fixed
+- **Typing into a text element could fail with `Input should be a valid integer`.** A freshly added
+  element was built with only a handful of fields, so the inspector showed empty *Font* and
+  *Rotation*, and once a number field was involved the spec went out with `NaN` — which JSON turns
+  into `null` — and the server refused the whole label, so every keystroke bounced. Elements are
+  now always created from one complete set of defaults (`makeElement`), the spec is sanitised on
+  its way to the server and to the draft, and a cleared number field no longer writes `NaN`.
+- The server treats `null` in an element as "use the default" instead of rejecting the label, and
+  clamps line spacing, font size and thickness, so an already-saved draft with nulls previews and
+  prints again.
+
 ## [0.15.1] — 2026-11-14
 
 ### Added

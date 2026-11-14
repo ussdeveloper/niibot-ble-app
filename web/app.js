@@ -582,7 +582,8 @@ function saveDraft() {
     at: Date.now(),
     labelId: state.labelId,
     view: state.view,
-    spec: state.spec,
+    // Sanitised: a half-filled element must never become a draft that cannot be reopened.
+    spec: sanitizedSpec(),
   });
 }
 
@@ -641,36 +642,63 @@ function redo() {
 }
 
 /* ===================================================================== spec */
+/** Every field an element needs. `addElement` used to build a bare object, so a freshly added
+ *  text had no `rotation`/`font`/`line_spacing` at all: the inspector showed blanks and the spec
+ *  sent `NaN` (which JSON turns into `null`), which the server refused — typing then failed. */
+const ELEMENT_DEFAULTS = {
+  type: 'text',
+  x: 0, y: 0, w: 30, h: 8,
+  rotation: 0,
+  visible: true,
+  text: '',
+  font: 'Arial',
+  font_size_pt: 9,
+  bold: false,
+  italic: false,
+  align: 'left',
+  valign: 'middle',
+  line_spacing: 1.15,
+  auto_fit: true,
+  barcode_format: 'code128',
+  show_text: false,
+  ec_level: 'M',
+  fill: false,
+  thickness_mm: 0.3,
+  image_id: null,
+};
+
+/** Numbers arrive as null/undefined/NaN from old drafts and half-filled inputs; the server accepts
+ *  a number only, so everything is coerced here instead of failing the whole preview. */
+function finiteNumber(value, fallback, min = null, max = null) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  const clamped = Math.min(max ?? number, Math.max(min ?? number, number));
+  return clamped;
+}
+
+function makeElement(partial = {}) {
+  const element = { ...ELEMENT_DEFAULTS, ...partial };
+  element.id = element.id || uid();
+  element.rotation = Math.round(finiteNumber(element.rotation, 0)) % 360;
+  if (element.rotation < 0) element.rotation += 360;
+  element.font = String(element.font ?? '').trim() || 'Arial';
+  element.font_size_pt = finiteNumber(element.font_size_pt, 9, 1, 200);
+  element.line_spacing = finiteNumber(element.line_spacing, 1.15, 0.6, 3);
+  element.thickness_mm = finiteNumber(element.thickness_mm, 0.3, 0.05, 5);
+  element.x = finiteNumber(element.x, 0);
+  element.y = finiteNumber(element.y, 0);
+  element.w = finiteNumber(element.w, 30, 0.5);
+  element.h = finiteNumber(element.h, 8, 0.5);
+  element.visible = element.visible !== false;
+  return element;
+}
+
 function normalizeSpec(spec) {
   const normalized = Object.assign(
     { name: 'Label', width_mm: 40, height_mm: 30, gap_mm: 2, label_type: 1, density: 3, copies: 1, elements: [] },
     spec,
   );
-  normalized.elements = (normalized.elements || []).map((element) => Object.assign(
-    {
-      id: uid(),
-      type: 'text',
-      x: 0, y: 0, w: 30, h: 8,
-      rotation: 0,
-      text: '',
-      font: 'Arial',
-      font_size_pt: 9,
-      bold: false,
-      italic: false,
-      align: 'left',
-      valign: 'middle',
-      line_spacing: 1.15,
-      auto_fit: true,
-      barcode_format: 'code128',
-      show_text: false,
-      ec_level: 'M',
-      fill: false,
-      thickness_mm: 0.3,
-      image_id: null,
-    },
-    element,
-    { id: element.id || uid() },
-  ));
+  normalized.elements = (normalized.elements || []).map((element) => makeElement(element));
   normalized.sheet = Object.assign(
     { columns: [], rows: [], mirror: false, mirror_flip: false },
     normalized.sheet || {},
@@ -692,6 +720,21 @@ function setSpec(spec, options = {}) {
   syncSpec();
   buildInspector();
   refreshCodeLimits();
+}
+
+/** The spec exactly as the server must receive it: complete elements, real numbers only. */
+function sanitizedSpec(spec = state.spec) {
+  if (!spec) return spec;
+  return {
+    ...spec,
+    width_mm: finiteNumber(spec.width_mm, 40, 5, 200),
+    height_mm: finiteNumber(spec.height_mm, 30, 5, 200),
+    gap_mm: finiteNumber(spec.gap_mm, 2, 0, 50),
+    label_type: Math.round(finiteNumber(spec.label_type, 1, 0, 99)),
+    density: Math.round(finiteNumber(spec.density, 3, 1, 5)),
+    copies: Math.round(finiteNumber(spec.copies, 1, 1, 99)),
+    elements: (spec.elements || []).map((element) => makeElement(element)),
+  };
 }
 
 /** Re-read the printable minimum for every code in the label (dpi may have changed too). */
@@ -834,7 +877,7 @@ function schedulePreview() {
 async function requestPreview() {
   const token = ++state.previewToken;
   try {
-    const result = await api('/api/preview', 'POST', { spec: state.spec, mirror: mirrorRequest() });
+    const result = await api('/api/preview', 'POST', { spec: sanitizedSpec(), mirror: mirrorRequest() });
     if (token !== state.previewToken) return;
     state.preview = result;
     // The canvas must show exactly the bitmap the printer receives — never a smoothed stand-in.
@@ -3679,8 +3722,13 @@ function onInspectorInput(event) {
   const element = selectedElement();
   if (!element) return;
   let value = event.target.type === 'checkbox' ? event.target.checked : event.target.value;
-  if (event.target.type === 'number') value = Number(value);
-  if (key === 'rotation' || key === 'font_size_pt') value = Number(value);
+  if (event.target.type === 'number' || key === 'rotation' || key === 'font_size_pt') {
+    // A cleared or half-typed field must not become NaN — JSON turns that into `null`, which the
+    // server rejects and every keystroke after it fails.
+    const number = Number(value);
+    if (value === '' || !Number.isFinite(number)) return;
+    value = number;
+  }
   element[key] = value;
   if (key === 'y' || key === 'h') {
     // Mirror prints only the first region — do not let the fields push the element into a generated one.
@@ -4085,7 +4133,7 @@ function deleteSelected() {
 function duplicateSelected() {
   const element = selectedElement();
   if (!element) return;
-  const copy = Object.assign(clone(element), { id: uid(), x: element.x + 2, y: element.y + 2 });
+  const copy = makeElement({ ...clone(element), id: uid(), x: element.x + 2, y: element.y + 2 });
   state.spec.elements.push(copy);
   state.selectedId = copy.id;
   pushHistory();
@@ -4143,7 +4191,7 @@ function addElement(type) {
   const { width_mm: width } = state.spec;
   const band = editBand();
   const height = band.height;
-  const base = { id: uid(), type, x: 1, y: 1, w: Math.min(width - 2, 28), h: Math.min(height - 2, 9) };
+  const base = makeElement({ type, x: 1, y: 1, w: Math.min(width - 2, 28), h: Math.min(height - 2, 9) });
   if (type === 'text') Object.assign(base, { text: 'New text', font_size_pt: 10, align: 'center' });
   if (type === 'barcode') Object.assign(base, { text: '1234567890', h: Math.min(10, height - 2), w: Math.min(width - 2, 38) });
   if (type === 'qr') Object.assign(base, { text: 'https://', w: Math.min(16, width - 2), h: Math.min(16, height - 2) });
@@ -5093,8 +5141,9 @@ async function insertIcon(icon) {
     // An icon must stay whole: resizing the box letterboxes it instead of cropping it.
     image_fit: 'contain',
   };
-  state.spec.elements.push(element);
-  state.selectedId = element.id;
+  const added = makeElement(element);
+  state.spec.elements.push(added);
+  state.selectedId = added.id;
   pushHistory();
   renderOverlay();
   buildInspector();
@@ -7097,7 +7146,7 @@ function openPrintDialog({ fromSheet = false } = {}) {
     try {
       if (useSheet) {
         const result = await api('/api/print-sheet', 'POST', {
-          spec: state.spec,
+          spec: sanitizedSpec(),
           rows: state.spec.sheet.rows,
           include_current: true,
           copies,
@@ -7107,7 +7156,7 @@ function openPrintDialog({ fromSheet = false } = {}) {
         renderJobStatus(result.job || { state: 'running', progress: 0, message: 'Sheet queued…' });
       } else {
         await api('/api/print', 'POST', {
-          spec: state.spec,
+          spec: sanitizedSpec(),
           copies,
           density,
           mirror: mirrorRequest(),

@@ -18,6 +18,40 @@ def new_id() -> str:
     return uuid.uuid4().hex[:8]
 
 
+#: What ``null`` means for each element field: the value the editor would have supplied anyway.
+#: A field that is not listed keeps ``None`` so a genuinely invalid value is still reported.
+_NONE_FALLBACKS: dict[str, object] = {
+    "type": "text",
+    "x": 0.0,
+    "y": 0.0,
+    "w": 30.0,
+    "h": 8.0,
+    "rotation": 0,
+    "visible": True,
+    "label": None,
+    "text": "",
+    "font": "Arial",
+    "font_size_pt": 9.0,
+    "bold": False,
+    "italic": False,
+    "align": "left",
+    "valign": "middle",
+    "line_spacing": 1.15,
+    "auto_fit": True,
+    "barcode_format": "code128",
+    "show_text": False,
+    "ec_level": "M",
+    "fill": False,
+    "thickness_mm": 0.3,
+    "image_id": None,
+    "image_fit": "contain",
+    "image_zoom": 1.0,
+    "image_offset_x": 0.0,
+    "image_offset_y": 0.0,
+    "image_dither": False,
+}
+
+
 class Element(BaseModel):
     model_config = {"extra": "ignore"}
 
@@ -67,6 +101,21 @@ class Element(BaseModel):
     #: Halftone the picture instead of hard-thresholding it — keeps gradients readable.
     image_dither: bool = False
 
+    @field_validator("*", mode="before")
+    @classmethod
+    def _fill_missing(cls, value, info):
+        """A UI that sends ``null`` for a field it never touched must still be usable.
+
+        Half-filled inspector inputs used to arrive as ``null`` (JavaScript turns ``NaN`` into
+        ``null``) and the whole preview failed with a validation error. ``None`` now means
+        "the default", not "reject the label".
+        """
+        if value is not None:
+            return value
+        fallback = _NONE_FALLBACKS.get(info.field_name)
+        return fallback if fallback is not None else value
+
+
     @field_validator("type")
     @classmethod
     def _check_type(cls, value: str) -> str:
@@ -81,10 +130,44 @@ class Element(BaseModel):
             raise ValueError(f"unknown image fit: {value}")
         return value
 
-    @field_validator("rotation")
+    @field_validator("rotation", mode="before")
     @classmethod
-    def _check_rotation(cls, value: int) -> int:
-        return (round(int(value) / 90) * 90) % 360
+    def _check_rotation(cls, value) -> int:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            number = 0.0
+        if number != number or number in (float("inf"), float("-inf")):  # NaN / infinity
+            number = 0.0
+        return (round(number / 90) * 90) % 360
+
+    @field_validator("line_spacing", mode="before")
+    @classmethod
+    def _check_spacing(cls, value) -> float:
+        """Zero (an emptied inspector field) would stack every line on one another."""
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return 1.15
+        return min(3.0, max(0.6, number))
+
+    @field_validator("font_size_pt", mode="before")
+    @classmethod
+    def _check_font_size(cls, value) -> float:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return 9.0
+        return min(200.0, max(1.0, number))
+
+    @field_validator("w", "h", "thickness_mm", mode="before")
+    @classmethod
+    def _check_positive(cls, value) -> float:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return 0.5
+        return max(0.05, number)
 
 
 class SheetColumn(BaseModel):
