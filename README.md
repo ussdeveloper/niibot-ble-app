@@ -248,6 +248,28 @@ reports the roll code while it is connected.
 
 ---
 
+## Keep-alive and automatic reconnect
+
+A Bluetooth link dies quietly: Windows (and the printer itself) will drop an idle connection, and
+the panel only polls while its window is visible. The server therefore pings every **5 s** on its own:
+
+* Niimbot — a heartbeat frame (`0xDC`); the driver reports the link as dead when the frame fails.
+* Fichero / LuckPrinter — the status query (`10 FF 40`); the reply also refreshes the
+  lid/paper state sitting in the status bar.
+
+A failed ping, or a link the printer closed itself, starts a **silent reconnect** with the address
+and protocol used last: the printer is looked up by the scanner first (a peripheral that dropped
+the link stops advertising for a moment), then connected again. Measured on a D11s: the link is
+back in 14–28 s with no user action, and printing continues. An explicit **Disconnect** in the
+panel stops the watchdog so it does not fight the user, and a recovery never hijacks a different
+printer that was connected in the meantime.
+
+`GET /api/state` reports it: `keep_alive.ping_age_s` (age of the last successful ping) and
+`keep_alive.reconnects` (successful recoveries). `POST /api/keepalive/drop` closes the link on
+purpose — a test hook.
+
+---
+
 ## Several printers, one library per printer
 
 The app keeps **one workspace per printer type** (`niimbot:B1`, `luckprinter:FICHERO`, …):

@@ -266,6 +266,19 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(int.from_bytes(page_size[2:4], "big"), encoded.cols)
         self.assertEqual(int.from_bytes(page_size[4:6], "big"), 1)
 
+    def test_keep_alive_sends_a_heartbeat(self) -> None:
+        link = FakeLink()
+        printer = NiimbotPrinter(link)  # type: ignore[arg-type]
+
+        async def scenario() -> bool:
+            await printer.connect(link.address)
+            link.sent.clear()
+            return await printer.keep_alive()
+
+        self.assertTrue(asyncio.run(scenario()))
+        self.assertEqual([cmd for cmd, _ in link.sent], [Cmd.HEARTBEAT])
+        self.assertEqual(link.sent[0][1], b"\x01")
+
     def test_paper_detection(self) -> None:
         link = FakeLink()
         link.rfid_payload = sample_rfid_payload()

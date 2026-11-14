@@ -254,7 +254,9 @@ const state = {
   previewPending: false,
   catalog: [],
   lastDevices: null,
-  printerProtocol: 'niimbot',
+  printerProtocol: 'auto',
+  printers: [],
+  printerInventory: null,
   /* Calibration that was in use when the printer was last connected — kept on screen
      (with a warning) while the printer is away, because an offline printer reports no RFID. */
   lastProfile: null,
@@ -3854,18 +3856,28 @@ function showContextMenu(event, items) {
 /* Right-click on the connection chip: pick the printer to print on. Every printer keeps its
    own labels, templates and calibrations, so switching also switches the library. */
 async function openPrinterSwitcher(event) {
+  showContextMenu(event, [{ key: 'loading', icon: 'loader', label: 'Looking for printers…', disabled: true }]);
   let payload = { printers: [], current: null };
   try {
+    await api('/api/scan', 'POST', { timeout: 3, show_all: true });
     payload = await api('/api/printers');
-  } catch (_) { /* server busy — still allow a scan */ }
+    state.printers = payload.printers || [];
+    state.printerInventory = payload;
+  } catch (_) {
+    payload = { printers: state.printers || [], current: null };
+  }
   const printers = payload.printers || [];
   const items = printers.map((printer) => ({
     key: printer.address,
     icon: printer.connected ? 'bluetooth-connected' : 'bluetooth',
     label: printer.model_name || printer.name || printer.address,
-    hint: `${PROTOCOL_LABELS[printer.protocol] || printer.protocol}${printer.connected ? ' · connected' : ''}`,
+    hint: [
+      PROTOCOL_LABELS[printer.protocol] || printer.protocol,
+      printer.connected ? 'connected' : printer.available ? 'in range' : 'known',
+      printer.known ? 'own library' : '',
+    ].filter(Boolean).join(' · '),
     disabled: printer.connected,
-    run: () => connect(printer.address, printer.protocol),
+    run: () => connect(printer.address, 'auto'),
   }));
   if (printers.length) items.push({ sep: true });
   items.push({ key: 'scan', icon: 'search', label: 'Scan for printers…', run: () => { openSettings('printer'); } });
@@ -5076,7 +5088,10 @@ function renderSettingsTab() {
   content.innerHTML = (renderers[settingsTab] || renderAboutTab)();
   refreshIcons(content);
   bindSettingsActions(content);
-  if (settingsTab === 'printer') bindProtocolSelect(content);
+  if (settingsTab === 'printer') {
+    bindProtocolSelect(content);
+    if (!state.printers || Date.now() - printersLoadedAt > 20000) setTimeout(() => loadPrinters(), 50);
+  }
   if (settingsTab === 'paper') bindPaperTabInputs(content);
   if (settingsTab === 'windows') loadFitInto(content);
   if (settingsTab === 'stats') loadStats(content);
@@ -5127,6 +5142,7 @@ function bindSettingsActions(content) {
       if (action === 'import-catalog') await importCatalog(event.target.closest('[data-action]'));
       if (action === 'roll-format') openRollSizeDialog();
       if (action === 'device-save') await saveDeviceGeometry(content);
+      if (action === 'scan-printers') await loadPrinters(true);
       if (action === 'diagnose') await diagnoseDevice(event.target.closest('[data-address]').dataset.address);
       if (action === 'use-format') {
         const index = Number(event.target.closest('[data-index]').dataset.index);
@@ -5217,39 +5233,61 @@ async function saveDeviceGeometry(content) {
   );
 }
 
-function renderPrinterTab() {
-  const payload = state.printer || {};
-  const devices = state.lastDevices;
-  const connectedAddress = state.connected ? (payload.link?.address || '') : '';
-  const connectedCard = state.connected
-    ? `<div class="device">
-        <div><strong>${escapeHtml(payload.info?.model_name || 'printer')}</strong>
-          <span class="device-tag known">connected</span>
-          <small>${escapeHtml(connectedAddress)}</small></div>
-        <div class="row" style="gap:6px">
-          <button class="btn" data-action="test-print"><i data-lucide="printer"></i> Test print</button>
-          <span class="dot ok"></span>
-        </div>
-      </div>`
-    : '';
-  const scanned = (devices || []).map((device) => `
+/* ------------------------------------------------------------ printer inventory */
+/* The list is the merged view from the server: printers that were connected at least once
+   (each with its own library) and printers that are advertising right now. A light scan runs
+   in the background when the list is opened, so both units show up without pressing anything. */
+let printersLoadedAt = 0;
+let printersLoading = false;
+
+async function loadPrinters(force = false) {
+  if (printersLoading) return;
+  printersLoading = true;
+  try {
+    if (force || Date.now() - printersLoadedAt > 20000) {
+      try {
+        await api('/api/scan', 'POST', { timeout: 4, show_all: true });
+      } catch (_) { /* Bluetooth off — the known printers still list */ }
+    }
+    const payload = await api('/api/printers');
+    state.printers = payload.printers || [];
+    state.printerInventory = payload;
+    printersLoadedAt = Date.now();
+  } catch (_) { /* keep the previous list */ }
+  printersLoading = false;
+  if (settingsTab === 'printer' && modalStack.some((entry) => entry.id === 'settings')) renderSettingsTab();
+}
+
+/* One row per printer: everything that was ever connected (it owns a library) plus whatever
+   is advertising right now. The protocol is detected, never chosen by hand. */
+function renderPrinterRows() {
+  const rows = (state.printers || []).map((printer) => {
+    const stage = printer.connected ? 'connected' : printer.available ? 'in range' : 'known';
+    return `
       <div class="device">
         <div>
-          <strong>${escapeHtml(device.name)}</strong>
-          <span class="device-tag ${device.niimbot ? 'known' : 'other'}">${device.niimbot ? 'label printer' : 'BLE device'}</span>
-          ${detectProtocol(device.name) === 'luckprinter' ? '<span class="device-tag other">LuckPrinter</span>' : ''}
-          ${device.address === connectedAddress ? '<span class="device-tag known">current</span>' : ''}
-          <small>${escapeHtml(device.address)}${device.rssi ? ` · ${device.rssi} dBm` : ''}</small>
+          <strong>${escapeHtml(printer.model_name || printer.name || printer.address)}</strong>
+          <span class="device-tag ${printer.connected ? 'known' : 'other'}">${stage}</span>
+          <span class="device-tag other">${escapeHtml(PROTOCOL_LABELS[printer.protocol] || printer.protocol || '?')}</span>
+          ${printer.known ? '<span class="device-tag known">own library</span>' : ''}
+          <small>${escapeHtml(printer.address)}${printer.scope ? ` · ${escapeHtml(printer.scope)}` : ''}</small>
         </div>
         <div class="row" style="gap:6px">
-          <button class="btn" data-action="diagnose" data-address="${escapeHtml(device.address)}" title="Inspect services and notification traffic"><i data-lucide="stethoscope"></i></button>
-          <button class="btn" data-action="connect" data-address="${escapeHtml(device.address)}" data-protocol="${detectProtocol(device.name)}" ${device.address === connectedAddress ? 'disabled' : ''}>Connect</button>
+          ${printer.available || printer.connected
+            ? `<button class="btn" data-action="diagnose" data-address="${escapeHtml(printer.address)}" title="Inspect services and notification traffic"><i data-lucide="stethoscope"></i></button>`
+            : ''}
+          ${printer.connected
+            ? '<span class="dot ok"></span>'
+            : `<button class="btn" data-action="connect" data-address="${escapeHtml(printer.address)}" data-protocol="auto">Connect</button>`}
         </div>
-      </div>`).join('');
-  // A scan result stays visible while connected, so a second printer can be inspected.
-  const list = connectedCard + (scanned || (state.connected
-    ? ''
-    : '<div class="empty">Turn the printer on and press “Scan”.</div>'));
+      </div>`;
+  }).join('');
+  return rows || '<div class="empty">No printer yet — switch it on and press “Scan Bluetooth”.</div>';
+}
+
+function renderPrinterTab() {
+  const payload = state.printer || {};
+  const list = renderPrinterRows();
 
   const info = payload.info || {};
   return `
@@ -5263,10 +5301,11 @@ function renderPrinterTab() {
       </div>
       <div class="protocol-row">
         <label>Protocol<select id="protocol-select">
+          <option value="auto" ${state.printerProtocol === 'auto' ? 'selected' : ''}>Automatic (recommended)</option>
           <option value="niimbot" ${state.printerProtocol === 'niimbot' ? 'selected' : ''}>Niimbot (B1, B1 Pro, …)</option>
           <option value="luckprinter" ${state.printerProtocol === 'luckprinter' ? 'selected' : ''}>LuckPrinter (Fichero, Karsten, AiYin)</option>
         </select></label>
-        <span class="hint" id="protocol-hint">Choosing a device from the list picks the protocol by its name.</span>
+        <span class="hint" id="protocol-hint">Automatic: the protocol follows the device name, and the other one is tried when the connection fails.</span>
       </div>
       <div class="device-list" style="margin-top:10px">${list}</div>
       <div class="hint" style="margin-top:6px">Every Bluetooth LE device nearby is listed — printers that are not from the Niimbot family show up as
@@ -6258,7 +6297,8 @@ function pollJob() {
 
 /* ================================================================= connect */
 async function connect(address, protocol) {
-  const payload = await api('/api/connect', 'POST', { address, protocol: protocol || state.printerProtocol || null });
+  const chosen = protocol && protocol !== 'auto' ? protocol : (state.printerProtocol === 'auto' ? 'auto' : state.printerProtocol);
+  const payload = await api('/api/connect', 'POST', { address, protocol: chosen || 'auto' });
   applyState(payload);
   toast(`Connected: ${payload.info.model_name}`, 'ok');
   const paper = payload.paper || {};
@@ -6304,7 +6344,7 @@ function applyState(payload) {
   const previousScope = state.deviceScope;
   state.printer = payload;
   state.connected = Boolean(payload.connected);
-  if (payload.protocol) state.printerProtocol = payload.protocol;
+  if (payload.protocol && state.printerProtocol !== 'auto') state.printerProtocol = payload.protocol;
   state.deviceScope = payload.device_scope || previousScope || null;
   if (state.deviceScope && previousScope && state.deviceScope !== previousScope) {
     // A different printer type: labels, templates and calibrations are its own.

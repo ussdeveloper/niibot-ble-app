@@ -84,6 +84,21 @@ def _remember_current_printer(address: str) -> None:
     })
 
 
+def detect_protocol(name: str | None) -> str:
+    """Pick the protocol from the advertised name; both families are told apart by it."""
+    from .fichero import NAME_HINTS
+
+    lower = str(name or "").lower()
+    return "luckprinter" if any(hint in lower for hint in NAME_HINTS) else "niimbot"
+
+
+def _scanned_protocol(address: str) -> str | None:
+    for device in state.last_scan:
+        if device.get("address") == address:
+            return detect_protocol(device.get("name"))
+    return None
+
+
 def device_scope() -> str:
     """Identity of the printer type — labels, templates and calibrations are kept per scope.
 
@@ -123,6 +138,15 @@ class AppState:
         self.auto_connect_task: asyncio.Task | None = None
         self.auto_status: str = "idle"
         self.last_scan: list[dict] = []
+        self.keepalive_task: asyncio.Task | None = None
+        #: When the last keep-alive ping succeeded (``time.monotonic``).
+        self.last_ping: float | None = None
+        self.reconnects: int = 0
+        #: True while the user expects a printer to be connected (cleared by /api/disconnect);
+        #: lets the watchdog bring a dropped link back.
+        self.reconnect_wanted: bool = False
+        #: True while the watchdog is re-establishing the link (keeps the auto-connect loop out).
+        self.reconnecting: bool = False
         #: Scope of the printer used last, kept while nothing is connected.
         self.last_scope: str = ""
 
@@ -171,8 +195,12 @@ async def lifespan(_app: FastAPI):
     # Remembered printer: look for it in the background and connect when it is in range.
     auto_task = asyncio.create_task(_auto_connect_loop())
     state.auto_connect_task = auto_task
+    # Keep the Bluetooth link from idling out, and bring it back when the printer drops it.
+    keepalive_task = asyncio.create_task(_keep_alive_loop())
+    state.keepalive_task = keepalive_task
     yield
     auto_task.cancel()
+    keepalive_task.cancel()
     await _shutdown()
 
 
@@ -386,6 +414,12 @@ def _state_payload() -> dict:
         "protocol": state.protocol,
         "protocol_name": "LuckPrinter (Fichero / AiYin)" if state.protocol == "luckprinter" else "Niimbot",
         "device_scope": device_scope(),
+        "keep_alive": {
+            "ping_age_s": (
+                round(time.monotonic() - state.last_ping, 1) if state.last_ping is not None else None
+            ),
+            "reconnects": state.reconnects,
+        },
         "last_address": settings.get("last_address"),
         "last_error": state.printer.last_error or state.printer.link.last_error,
     }
@@ -460,7 +494,7 @@ async def _auto_connect_loop() -> None:
             settings = store.load_settings()
             address = (settings.get("last_address") or "").strip()
             enabled = str(settings.get("auto_connect", "1")) not in {"0", "false", "False", ""}
-            if enabled and address and not state.connected:
+            if enabled and address and not state.connected and not state.reconnecting:
                 state.auto_status = f"Looking for {address}\u2026"
                 in_range = await BleLink.find_by_address(address, timeout=6.0)
                 if in_range:
@@ -487,6 +521,123 @@ async def _auto_connect_loop() -> None:
             state.auto_status = f"auto-connect failed: {exc}"
             log.debug("Automatic connect failed: %s", exc)
         await asyncio.sleep(AUTO_CONNECT_RETRY_S)
+
+
+KEEP_ALIVE_S = 5.0
+RECONNECT_ATTEMPTS = 12
+
+
+async def _reconnect_printer(address: str, protocol: str) -> bool:
+    """Bring a dropped link back without the user touching anything."""
+    if state.reconnecting:
+        return state.connected
+    state.reconnecting = True
+    try:
+        return await _reconnect_attempts(address, protocol)
+    finally:
+        state.reconnecting = False
+
+
+async def _reconnect_attempts(address: str, protocol: str) -> bool:
+    for attempt in range(1, RECONNECT_ATTEMPTS + 1):
+        if state.connected:
+            # Somebody (the user) may have connected a different printer meanwhile — never
+            # hijack that: only our own target counts as a successful recovery.
+            live = (state.printer.link.address or "").lower()
+            return live == address.lower()
+        state.auto_status = f"reconnecting ({attempt}/{RECONNECT_ATTEMPTS})\u2026"
+        try:
+            # A peripheral that dropped the link stops advertising for a moment; asking the
+            # scanner first makes Windows resolve the (often random) address again.
+            if not await BleLink.find_by_address(address, timeout=6.0):
+                log.warning("Printer %s is not advertising yet (attempt %s)", address, attempt)
+                await asyncio.sleep(min(15.0, 1.5 * attempt))
+                continue
+            async with state.lock:
+                # Drop whatever is left of the old link first; Windows keeps the handle for a
+                # moment and a second client to the same address would fight with it.
+                try:
+                    await asyncio.wait_for(state.printer.disconnect(), timeout=6.0)
+                except Exception:  # noqa: BLE001
+                    pass
+                state.use_protocol(protocol)
+                _apply_device_geometry()
+                await state.printer.connect(address)
+                try:
+                    await state.printer.refresh()
+                except Exception:  # noqa: BLE001 - status is best effort
+                    pass
+            state.auto_status = "connected"
+            log.info("Reconnected to %s after a dropped link", address)
+            return True
+        except Exception as exc:  # noqa: BLE001 - printer likely off/out of range
+            state.printer.last_error = f"reconnect failed: {exc}"
+            log.debug("Reconnect attempt %s failed: %s", attempt, exc)
+            await asyncio.sleep(min(15.0, 1.5 * attempt))
+    return False
+
+
+async def _keep_alive_loop() -> None:
+    """Ping the printer every few seconds so the BLE link never idles out.
+
+    Without traffic Windows (and the printer itself) can drop an idle Bluetooth connection
+    after a while, and the panel only polls while its window is visible — so the pings run
+    server-side. A failed ping, or a link the printer closed itself, triggers a silent
+    reconnect with the address and protocol used last.
+    """
+    await asyncio.sleep(3.0)
+    while True:
+        try:
+            job_running = bool(state.job and state.job.state == "running")
+            if not job_running:
+                settings = store.load_settings()
+                address = (settings.get("last_address") or "").strip()
+                protocol = settings.get("printer_protocol") or "niimbot"
+
+                if state.connected:
+                    keep_alive = getattr(state.printer, "keep_alive", None)
+                    alive = True
+                    if keep_alive is not None:
+                        async with state.lock:
+                            try:
+                                alive = bool(await keep_alive())
+                            except Exception:  # noqa: BLE001 - treat as a dead link
+                                alive = False
+                    if alive:
+                        state.last_ping = time.monotonic()
+                    else:
+                        log.warning("Keep-alive lost the printer; reconnecting")
+                        try:
+                            await state.printer.disconnect()
+                        except Exception:  # noqa: BLE001
+                            pass
+                        if address and await _reconnect_printer(address, protocol):
+                            state.reconnects += 1
+                elif state.reconnect_wanted and address:
+                    # The printer dropped the link on its own (or the link died between pings).
+                    log.warning("Printer link is down; reconnecting to %s", address)
+                    if await _reconnect_printer(address, protocol):
+                        state.reconnects += 1
+                        log.warning("Printer is back online (%s)", state.printer.info.model_name)
+                elif not state.reconnect_wanted:
+                    state.auto_status = "disconnected" if not state.connected else state.auto_status
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - keep the loop alive
+            log.debug("Keep-alive error: %s", exc)
+        await asyncio.sleep(KEEP_ALIVE_S)
+
+
+@app.post("/api/keepalive/drop")
+async def api_keepalive_drop() -> dict:
+    """Test hook: close the BLE link the way a printer does when it idles out."""
+    if not state.connected:
+        raise HTTPException(status_code=409, detail="The printer is not connected.")
+    try:
+        await state.printer.disconnect()
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {"dropped": True, "keep_alive": {"reconnects": state.reconnects}}
 
 
 @app.post("/api/auto-connect")
@@ -627,15 +778,39 @@ async def api_device_diagnose(request: DiagnoseRequest) -> dict:
 
 @app.get("/api/printers")
 async def api_printers() -> dict:
-    """Every printer seen so far, with the protocol and the data scope it uses."""
+    """The printer list: everything known (once connected → own library) plus what is in range."""
     current = state.printer.link.address if state.connected else None
-    items = []
+    items: list[dict] = []
+    seen: set[str] = set()
     for row in store.list_printers():
+        seen.add(row["address"])
         items.append({
             **row,
+            "known": True,
+            "available": any(device.get("address") == row["address"] for device in state.last_scan),
+            "protocol": row.get("protocol") or detect_protocol(row.get("name")),
             "connected": bool(current and row["address"] == current),
             "active_scope": row.get("scope") == device_scope(),
         })
+    for device in state.last_scan:
+        address = device.get("address")
+        if not address or address in seen:
+            continue
+        protocol = detect_protocol(device.get("name"))
+        items.append({
+            "address": address,
+            "name": device.get("name"),
+            "protocol": protocol,
+            "model_key": None,
+            "model_name": None,
+            "scope": None,
+            "known": False,
+            "available": True,
+            "connected": False,
+            "active_scope": False,
+            "label_printer": bool(device.get("niimbot")) or protocol == "luckprinter",
+        })
+    items.sort(key=lambda item: (not item["connected"], not item["available"], not item["known"], str(item.get("name"))))
     return {
         "printers": items,
         "current": current,
@@ -654,19 +829,43 @@ async def api_printer_forget(address: str) -> dict:
 async def api_connect(request: ConnectRequest) -> dict:
     async with state.lock:
         settings = store.load_settings()
-        protocol = request.protocol or settings.get("printer_protocol") or "niimbot"
-        state.use_protocol(protocol)
+        # "auto" (or nothing) means: trust the advertised name, and if the first attempt
+        # fails try the other protocol before giving up.
+        requested = (request.protocol or "").strip().lower()
+        auto = requested in {"", "auto"}
+        first = (
+            _scanned_protocol(request.address)
+            or detect_protocol(store.printer_name(request.address))
+            or settings.get("printer_protocol")
+            or "niimbot"
+        ) if auto else requested
+        order = [first, "luckprinter" if first == "niimbot" else "niimbot"] if auto else [first]
+        last_error: Exception | None = None
+        connected = False
+        for protocol in order:
+            state.use_protocol(protocol)
+            _apply_device_geometry()
+            try:
+                await state.printer.connect(request.address)
+                connected = True
+                break
+            except Exception as exc:  # noqa: BLE001 - try the next protocol
+                last_error = exc
+                state.printer.last_error = str(exc)
+                log.info("Connect with %s failed: %s", protocol, exc)
+                try:
+                    await state.printer.disconnect()
+                except Exception:  # noqa: BLE001
+                    pass
+        if not connected:
+            detail = f"Could not connect: {last_error}" if last_error else "Could not connect"
+            raise HTTPException(status_code=502, detail=detail) from last_error
         store.save_settings({"printer_protocol": state.protocol})
-        _apply_device_geometry()
-        try:
-            await state.printer.connect(request.address)
-        except Exception as exc:
-            state.printer.last_error = str(exc)
-            raise HTTPException(status_code=502, detail=f"Could not connect: {exc}") from exc
         store.save_settings({"last_address": request.address})
         if state.printer.info.model_name and state.printer.info.model_name != "unknown":
             store.save_settings({"last_model": state.printer.info.model_name})
         _remember_current_printer(request.address)
+        state.reconnect_wanted = True
         state.last_scope = device_scope()
         store.save_settings({"device_scope": state.last_scope})
         if state.protocol == "niimbot":
@@ -681,6 +880,8 @@ async def api_connect(request: ConnectRequest) -> dict:
 @app.post("/api/disconnect")
 async def api_disconnect() -> dict:
     async with state.lock:
+        # An explicit disconnect must not be undone by the watchdog.
+        state.reconnect_wanted = False
         await state.printer.disconnect()
     return _state_payload()
 

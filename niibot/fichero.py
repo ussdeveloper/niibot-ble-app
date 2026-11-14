@@ -57,11 +57,11 @@ class FicheroLink:
         self.max_write = 180
 
     # ------------------------------------------------------------------ setup
-    async def connect(self, address: str, timeout: float = 20.0) -> None:
+    async def connect(self, address: str, timeout: float = 12.0) -> None:
         from bleak import BleakClient
 
         await self.disconnect()
-        client = BleakClient(address, timeout=timeout)
+        client = BleakClient(address, timeout=timeout, disconnected_callback=self._on_disconnected)
         await client.connect()
         self._client = client
         self.address = address
@@ -76,6 +76,21 @@ class FicheroLink:
         self.connected = True
         self.last_error = None
         log.info("Connected to %s (%s, LuckPrinter family)", self.name, address)
+
+    def _on_disconnected(self, client) -> None:  # type: ignore[no-untyped-def]
+        # A stale client closing (during a reconnect) must not mark the live link as dead.
+        if self._client is not None and client is not self._client:
+            return
+        if self.connected:
+            log.warning("The printer dropped the Bluetooth link")
+        self.connected = False
+        self._event.set()
+
+    @property
+    def alive(self) -> bool:
+        """True while the underlying BLE client still thinks it is connected."""
+        client = self._client
+        return bool(self.connected and client is not None and getattr(client, "is_connected", True))
 
     def _pick_characteristics(self, client) -> None:  # type: ignore[no-untyped-def]
         by_uuid = {}
@@ -272,6 +287,25 @@ class FicheroPrinter:
     async def read_paper_info(self, timeout: float = 1.5) -> PaperGeometry:
         """The family does not measure the label; the size comes from the calibration."""
         return PaperGeometry(valid=False, supported=False, raw="luckprinter: no geometry query")
+
+    async def keep_alive(self) -> bool:
+        """Poll the status byte: keeps the link from idling out and detects a drop fast."""
+        if not self.connected:
+            return False
+        try:
+            reply = await self.link.request(lp.REQUESTS["status"], timeout=2.5)
+        except Exception:  # noqa: BLE001 - a dead link raises here
+            return False
+        alive = getattr(self.link, "alive", self.link.connected)
+        if not alive:
+            return False
+        if reply:
+            status = lp.parse_status(reply)
+            self.paper.lid_closed = not status.get("cover_open", False)
+            self.paper.paper_inserted = not status.get("out_of_paper", False)
+            self.paper.raw_heartbeat = f"status={status.get('raw')}"
+        # An empty reply is normal when the printer is busy; only the link state decides.
+        return True
 
     # -------------------------------------------------------------- settings
     async def set_density(self, density: int) -> None:

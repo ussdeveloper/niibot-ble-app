@@ -4,6 +4,27 @@ All notable changes to **Niibot Studio** are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project uses [Semantic Versioning](https://semver.org/).
 
+## [0.14.1] — 2026-11-14
+
+### Added
+- **Keep-alive watchdog with automatic reconnect.** The server pings the printer every 5 s on its
+  own (Niimbot heartbeat `0xDC`, LuckPrinter status `10 FF 40`), so an idle BLE link no longer times
+  out — even with the panel closed. A dead ping, or a link the printer closed, triggers a silent
+  reconnect: the device is rediscovered by the scanner and connected again with the address and
+  protocol used last. Measured on a D11s: back on-line in 14–28 s, no clicks.
+- `GET /api/state` exposes `keep_alive.ping_age_s` and `keep_alive.reconnects`;
+  `POST /api/keepalive/drop` is a test hook that closes the link on purpose.
+- **Automatic protocol choice** on connect: the device name decides (Fichero/D11s/Karsten →
+  LuckPrinter, otherwise Niimbot) and the other family is tried when the first attempt fails.
+  The protocol select is now `Automatic` by default and only there to force a value.
+- The printer list is the merged inventory: everything ever connected (**own library**) plus
+  everything advertising right now, refreshed by a light background scan when the list opens.
+
+### Fixed
+- A disconnect callback from an **old** BLE client no longer marks a freshly re-established link as
+  dead (that made recovery bounce), and an explicit Disconnect stops the watchdog so it cannot
+  fight the user. A recovery never hijacks a different printer connected meanwhile.
+
 ## [0.14.0] — 2026-11-14
 
 ### Added

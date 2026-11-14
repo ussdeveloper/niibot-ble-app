@@ -45,6 +45,17 @@ class FakeLink:
     async def wait_for_finish(self, timeout: float = 60.0) -> bool:
         return True
 
+    fail = False
+
+    @property
+    def alive(self) -> bool:
+        return self.connected
+
+    async def request_keep_alive(self, payload: bytes, timeout: float = 2.0) -> bytes:
+        if self.fail:
+            raise RuntimeError("link lost")
+        return await self.request(payload, timeout)
+
 
 class CommandTests(unittest.TestCase):
     def test_info_queries_match_the_captured_bytes(self) -> None:
@@ -177,6 +188,37 @@ class PrinterFlowTests(unittest.TestCase):
         asyncio.run(run())
         self.assertEqual(self.link.writes.count(lp.enable_command("aiyin")), 2)
         self.assertEqual(self.link.writes.count(lp.stop_command("aiyin")), 2)
+
+    def test_keep_alive_polls_status_and_updates_paper(self) -> None:
+        import asyncio
+
+        self.link.replies[lp.REQUESTS["status"]] = b"\x06"   # cover open + out of paper
+
+        async def run() -> bool:
+            await self.printer.connect("C9:48:8A:00:00:01")
+            self.link.writes.clear()
+            alive = await self.printer.keep_alive()
+            return alive
+
+        self.assertTrue(asyncio.run(run()))
+        self.assertIn(lp.REQUESTS["status"], self.link.writes)
+        self.assertFalse(self.printer.paper.lid_closed)
+        self.assertFalse(self.printer.paper.paper_inserted)
+
+    def test_keep_alive_reports_a_dead_link(self) -> None:
+        import asyncio
+
+        async def run() -> bool:
+            await self.printer.connect("C9:48:8A:00:00:01")
+            self.link.writes.clear()
+
+            async def boom(payload, timeout=2.0):
+                raise RuntimeError("link lost")
+
+            self.link.request = boom  # type: ignore[assignment]
+            return await self.printer.keep_alive()
+
+        self.assertFalse(asyncio.run(run()))
 
     def test_geometry_override_wins(self) -> None:
         self.printer.set_geometry_override(203, 142)

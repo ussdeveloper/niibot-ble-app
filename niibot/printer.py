@@ -266,6 +266,20 @@ class NiimbotPrinter:
         return self.info
 
     # --------------------------------------------------------------- status
+    async def keep_alive(self) -> bool:
+        """Cheap ping that keeps the BLE link up and tells whether it is still there.
+
+        ``refresh()`` also reads the RFID tag, which is too heavy for a watchdog that
+        runs every few seconds.
+        """
+        if not self.link.connected:
+            return False
+        try:
+            await self.link.send(Cmd.HEARTBEAT, b"\x01", timeout=3.0)
+        except Exception:  # noqa: BLE001 - no answer means the link is gone
+            return False
+        return bool(self.link.connected)
+
     async def heartbeat(self) -> dict:
         frame = await self.link.send(Cmd.HEARTBEAT, b"\x04", timeout=3.0)
         if frame is None or frame.cmd == Resp.NOT_SUPPORTED:

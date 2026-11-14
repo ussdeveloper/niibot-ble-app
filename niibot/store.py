@@ -691,6 +691,13 @@ def remember_printer(entry: dict[str, Any]) -> None:
         )
 
 
+def printer_name(address: str) -> str | None:
+    """Advertised name remembered for an address (used to pick the protocol)."""
+    with connect() as db:
+        row = db.execute("SELECT name FROM printers WHERE address = ?", (address,)).fetchone()
+    return row["name"] if row else None
+
+
 def list_printers() -> list[dict[str, Any]]:
     with connect() as db:
         rows = db.execute("SELECT * FROM printers ORDER BY last_seen DESC").fetchall()
