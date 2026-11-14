@@ -4,6 +4,24 @@ All notable changes to **Niibot Studio** are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project uses [Semantic Versioning](https://semver.org/).
 
+## [0.13.13] — 2026-11-14
+
+### Added
+- **Fichero / Karsten (AiYin D11s, LuckPrinter SDK) support.** A second, independent driver:
+  `niibot/luckprinter.py` (command bytes, `GS v 0` raster, status/info parsing) and
+  `niibot/fichero.py` (BLE transport over the UART characteristic pairs plus a printer adapter that
+  matches `NiimbotPrinter`). Printing, density, paper type, battery, lid/paper status and the
+  Windows queue all work; the sequence is wake → enable → raster → form feed → stop, exactly as
+  captured from the vendor app.
+- **Protocol selector** in *Settings → Printer* (`Niimbot` / `LuckPrinter (Fichero / AiYin)`),
+  stored in the database and applied to auto-connect. Connecting from the device list picks the
+  protocol automatically from the advertised name (`FICHERO_…`, `D11s_…`).
+- `bitmap.encode_image()` now carries the 1-bit rows, so both protocols print the same render.
+
+### Verified
+- Against a real D11s: firmware `2.4.1`, serial `D263W000000000`, battery 81 %, lid closed, paper
+  present, and a 12 × 30 mm test label printed (`rows=240, cols=96, state=done`).
+
 ## [0.13.12] — 2026-11-14
 
 ### Added

@@ -17,6 +17,10 @@ class EncodedBitmap:
     cols: int
     packets: list[bytes]
     black_pixels: int
+    #: The 1-bit rows themselves (8 px per byte, MSB first, 1 = black). The LuckPrinter
+    #: family (Fichero) sends these verbatim inside a ``GS v 0`` raster transfer.
+    raw: bytes = b""
+    stride: int = 0
 
     @property
     def packet_count(self) -> int:
@@ -73,4 +77,11 @@ def encode_image(image: Image.Image) -> EncodedBitmap:
             packets.append(build_frame(Cmd.PRINT_BITMAP_ROW, header + data))
         row += run
 
-    return EncodedBitmap(rows=height, cols=cols, packets=packets, black_pixels=black_pixels)
+    return EncodedBitmap(
+        rows=height,
+        cols=cols,
+        packets=packets,
+        black_pixels=black_pixels,
+        raw=raw,
+        stride=stride,
+    )

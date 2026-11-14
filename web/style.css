@@ -986,6 +986,14 @@ textarea { resize: vertical; min-height: 58px; }
 .row + .row { margin-top: 7px; }
 .hint { color: var(--ink-muted); font-size: 11px; line-height: 1.45; }
 .hint.warn { color: #9a5b00; background: #fff6e5; border: 1px solid #f0d9a8; border-radius: 6px; padding: 6px 8px; }
+.protocol-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  margin-top: 10px;
+}
+.protocol-row > label { flex: 0 0 320px; }
+.protocol-row > .hint { flex: 1; padding-bottom: 6px; }
 .device-tag {
   display: inline-block;
   margin-left: 6px;

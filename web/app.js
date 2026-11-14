@@ -251,6 +251,7 @@ const state = {
   previewPending: false,
   catalog: [],
   lastDevices: null,
+  printerProtocol: 'niimbot',
   /* Calibration that was in use when the printer was last connected — kept on screen
      (with a warning) while the printer is away, because an offline printer reports no RFID. */
   lastProfile: null,
@@ -4968,9 +4969,32 @@ function renderSettingsTab() {
   content.innerHTML = (renderers[settingsTab] || renderAboutTab)();
   refreshIcons(content);
   bindSettingsActions(content);
+  if (settingsTab === 'printer') bindProtocolSelect(content);
   if (settingsTab === 'paper') bindPaperTabInputs(content);
   if (settingsTab === 'windows') loadFitInto(content);
   if (settingsTab === 'stats') loadStats(content);
+}
+
+/* The protocol select in Settings → Printer: the value is stored server-side so the
+   auto-connect and the Windows queue use the same driver. */
+function bindProtocolSelect(content) {
+  const select = $('#protocol-select', content);
+  if (!select) return;
+  select.onchange = async () => {
+    const protocol = select.value;
+    try {
+      const geometry = await api('/api/settings/device', 'POST', {
+        dpi: Number($('#geom-dpi', content)?.value || 0),
+        printhead_px: Number($('#geom-head', content)?.value || 0),
+        print_task: $('#geom-task', content)?.value || '',
+        protocol,
+      });
+      state.printerProtocol = geometry.protocol || protocol;
+      toast(`Protocol: ${PROTOCOL_LABELS[state.printerProtocol] || state.printerProtocol}`, 'ok');
+    } catch (error) {
+      toast(error.message, 'error');
+    }
+  };
 }
 
 function bindSettingsActions(content) {
@@ -4979,7 +5003,11 @@ function bindSettingsActions(content) {
     if (!action) return;
     try {
       if (action === 'scan') await scanDevices(event.target.closest('[data-action]'));
-      if (action === 'connect') await connect(event.target.closest('[data-address]').dataset.address);
+      if (action === 'connect') {
+        const button = event.target.closest('[data-address]');
+        const protocol = button?.dataset.protocol || state.printerProtocol || 'niimbot';
+        await connect(button.dataset.address, protocol);
+      }
       if (action === 'disconnect') await disconnectPrinter();
       if (action === 'refresh') await refreshPrinter();
       if (action === 'test-print') await testPrint();
@@ -5005,6 +5033,19 @@ function bindSettingsActions(content) {
       toast(error.message, 'error');
     }
   };
+}
+
+/* Two protocol families are supported: Niimbot's framed protocol and the plain
+   LuckPrinter bytes used by AiYin/Fichero/Karsten units (96 px head, 203 dpi). */
+const PROTOCOL_LABELS = {
+  niimbot: 'Niimbot',
+  luckprinter: 'LuckPrinter (Fichero / AiYin)',
+};
+const LUCK_PRINTER_HINTS = ['fichero', 'd11s', 'd12', 'aiyin', 'karsten', 'luckp', 'dp_d1'];
+
+function detectProtocol(name) {
+  const lower = String(name || '').toLowerCase();
+  return LUCK_PRINTER_HINTS.some((hint) => lower.includes(hint)) ? 'luckprinter' : 'niimbot';
 }
 
 /* Some printers (clones / OEM units) are not in the model library. When we cannot look the
@@ -5089,12 +5130,13 @@ function renderPrinterTab() {
         <div>
           <strong>${escapeHtml(device.name)}</strong>
           <span class="device-tag ${device.niimbot ? 'known' : 'other'}">${device.niimbot ? 'label printer' : 'BLE device'}</span>
+          ${detectProtocol(device.name) === 'luckprinter' ? '<span class="device-tag other">LuckPrinter</span>' : ''}
           ${device.address === connectedAddress ? '<span class="device-tag known">current</span>' : ''}
           <small>${escapeHtml(device.address)}${device.rssi ? ` · ${device.rssi} dBm` : ''}</small>
         </div>
         <div class="row" style="gap:6px">
           <button class="btn" data-action="diagnose" data-address="${escapeHtml(device.address)}" title="Inspect services and notification traffic"><i data-lucide="stethoscope"></i></button>
-          <button class="btn" data-action="connect" data-address="${escapeHtml(device.address)}" ${device.address === connectedAddress ? 'disabled' : ''}>Connect</button>
+          <button class="btn" data-action="connect" data-address="${escapeHtml(device.address)}" data-protocol="${detectProtocol(device.name)}" ${device.address === connectedAddress ? 'disabled' : ''}>Connect</button>
         </div>
       </div>`).join('');
   // A scan result stays visible while connected, so a second printer can be inspected.
@@ -5111,6 +5153,13 @@ function renderPrinterTab() {
         <button class="btn" data-action="refresh" ${state.connected ? '' : 'disabled'}><i data-lucide="refresh-cw"></i> Refresh</button>
         <button class="btn" data-action="test-print" ${state.connected ? '' : 'disabled'}><i data-lucide="scan-line"></i> Test print</button>
         <button class="btn danger" data-action="disconnect" ${state.connected ? '' : 'disabled'}><i data-lucide="power"></i> Disconnect</button>
+      </div>
+      <div class="protocol-row">
+        <label>Protocol<select id="protocol-select">
+          <option value="niimbot" ${state.printerProtocol === 'niimbot' ? 'selected' : ''}>Niimbot (B1, B1 Pro, …)</option>
+          <option value="luckprinter" ${state.printerProtocol === 'luckprinter' ? 'selected' : ''}>LuckPrinter (Fichero, Karsten, AiYin)</option>
+        </select></label>
+        <span class="hint" id="protocol-hint">Choosing a device from the list picks the protocol by its name.</span>
       </div>
       <div class="device-list" style="margin-top:10px">${list}</div>
       <div class="hint" style="margin-top:6px">Every Bluetooth LE device nearby is listed — printers that are not from the Niimbot family show up as
@@ -6101,8 +6150,8 @@ function pollJob() {
 }
 
 /* ================================================================= connect */
-async function connect(address) {
-  const payload = await api('/api/connect', 'POST', { address });
+async function connect(address, protocol) {
+  const payload = await api('/api/connect', 'POST', { address, protocol: protocol || state.printerProtocol || null });
   applyState(payload);
   toast(`Connected: ${payload.info.model_name}`, 'ok');
   const paper = payload.paper || {};
@@ -6147,6 +6196,7 @@ function applyState(payload) {
   const wasConnected = state.connected;
   state.printer = payload;
   state.connected = Boolean(payload.connected);
+  if (payload.protocol) state.printerProtocol = payload.protocol;
   /* A calibration always follows the database for the roll that is inserted. Only when the
      printer is away (no roll code at all) does the last-used one stay on screen, flagged. */
   const syncProfile = payload.profile || null;

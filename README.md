@@ -248,6 +248,29 @@ reports the roll code while it is connected.
 
 ---
 
+## Fichero / Karsten label printers (LuckPrinter family)
+
+The cheap label printers sold as **Fichero** (Action) and the **Karsten** house brand are
+AiYin D11s units built on the LuckPrinter SDK — a completely different protocol from
+Niimbot's framed one. `niibot/luckprinter.py` holds the command bytes and
+`niibot/fichero.py` the driver; both follow the reverse-engineered reference at
+[0xMH/fichero-printer](https://github.com/0xMH/fichero-printer).
+
+| | |
+| --- | --- |
+| Printhead | 96 px (≈ 12 mm at 203 dpi; 142 px on the wider variants) |
+| Transport | one UART characteristic pair — `2af1`/`2af0`, `ff02`/`ff01`, `bef8d6c9` or `49535343` |
+| Info | `10 FF 20 F0` model, `F1` firmware, `F2` serial, `10 FF 50 F1` battery, `10 FF 40` status |
+| Settings | `10 FF 10 00 nn` density (0 light … 2 thick), `10 FF 84 nn` paper type, `10 FF 12 HH LL` auto-off |
+| Print | wake (12 × `00`) → `10 FF FE 01` enable → `GS v 0` raster → `1D 0C` form feed → `10 FF FE 45` stop |
+
+Pick **LuckPrinter (Fichero / AiYin)** in *Settings → Printer → Protocol* — or just press
+*Connect* next to the device: the protocol is chosen from its name (`FICHERO_…`, `D11s_…`).
+Everything else works as usual; this family has no roll tag, so its calibration is stored under
+the fixed key `AIYIN` (make one with *Correct calibration*).
+
+---
+
 ## Device resolution (dpi) and unknown printers
 
 Every label decision needs two numbers: the printer's **resolution** and its **printhead width in

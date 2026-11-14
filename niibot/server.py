@@ -27,6 +27,7 @@ from . import sheet, spreadsheet, store, zones
 from .bitmap import encode_image
 from .ble import BleLink
 from .diagnostics import diagnose
+from .fichero import FicheroPrinter
 from .consumables import Consumable, builtin_formats, scan_vendor_catalog
 from .fit import FitOptions, fit_to_label
 from .models import model_for_id, MODELS, PAPER_PRESETS, PaperProfile, Region, ZoneShape
@@ -69,8 +70,24 @@ class Job:
         return asdict(self)
 
 
+def _apply_device_geometry() -> None:
+    """Give the active driver the geometry override saved in the settings."""
+    geometry = store.load_settings().get("device_geometry") or {}
+    state.printer.set_geometry_override(
+        geometry.get("dpi"), geometry.get("printhead_px"), geometry.get("print_task")
+    )
+
+
+def make_printer(protocol: str):
+    """Driver for the configured protocol (Niimbot framing or the LuckPrinter family)."""
+    if protocol == "luckprinter":
+        return FicheroPrinter()
+    return NiimbotPrinter(BleLink())
+
+
 class AppState:
     def __init__(self) -> None:
+        self.protocol = "niimbot"
         self.printer = NiimbotPrinter(BleLink())
         self.lock = asyncio.Lock()
         self.job: Job | None = None
@@ -82,6 +99,14 @@ class AppState:
     @property
     def connected(self) -> bool:
         return self.printer.connected
+
+    def use_protocol(self, protocol: str) -> None:
+        """Swap the driver before connecting; keeps the object identity that handlers use."""
+        protocol = protocol if protocol in {"niimbot", "luckprinter"} else "niimbot"
+        if protocol == self.protocol and self.printer is not None:
+            return
+        self.protocol = protocol
+        self.printer = make_printer(protocol)
 
 
 state = AppState()
@@ -131,6 +156,7 @@ class ScanRequest(BaseModel):
 
 class ConnectRequest(BaseModel):
     address: str
+    protocol: str | None = None
 
 
 class DiagnoseRequest(BaseModel):
@@ -326,6 +352,8 @@ def _state_payload() -> dict:
         "paper": paper,
         "profile": _current_profile(),
         "job": state.job.to_dict() if state.job else None,
+        "protocol": state.protocol,
+        "protocol_name": "LuckPrinter (Fichero / AiYin)" if state.protocol == "luckprinter" else "Niimbot",
         "last_address": settings.get("last_address"),
         "last_error": state.printer.last_error or state.printer.link.last_error,
     }
@@ -406,6 +434,8 @@ async def _auto_connect_loop() -> None:
                 if in_range:
                     state.auto_status = f"Connecting to {address}\u2026"
                     async with state.lock:
+                        state.use_protocol(settings.get("printer_protocol") or "niimbot")
+                        _apply_device_geometry()
                         await state.printer.connect(address)
                         store.save_settings({"last_address": address})
                         try:
@@ -494,6 +524,7 @@ async def api_device_settings() -> dict:
     geometry = store.load_settings().get("device_geometry") or {}
     info = state.printer.info
     return {
+        "protocol": state.protocol,
         "override": {
             "dpi": int(geometry.get("dpi") or 0),
             "printhead_px": int(geometry.get("printhead_px") or 0),
@@ -523,10 +554,17 @@ async def api_device_settings_set(request: Request) -> dict:
         raise HTTPException(status_code=400, detail="Printhead width must be between 32 and 2048 px.")
     if print_task and print_task not in {"b1", "v4"}:
         raise HTTPException(status_code=400, detail="Unknown print task.")
+    protocol = str(payload.get("protocol") or "").strip().lower()
+    if protocol and protocol not in {"niimbot", "luckprinter"}:
+        raise HTTPException(status_code=400, detail="Unknown printer protocol.")
     store.save_settings(
         {"device_geometry": {"dpi": dpi, "printhead_px": printhead_px, "print_task": print_task}}
     )
+    if protocol:
+        store.save_settings({"printer_protocol": protocol})
     async with state.lock:
+        if protocol and not state.connected:
+            state.use_protocol(protocol)
         state.printer.set_geometry_override(dpi or None, printhead_px or None, print_task or None)
         if state.connected:
             # Re-apply immediately so the canvas and printing pick the new geometry up.
@@ -558,10 +596,11 @@ async def api_device_diagnose(request: DiagnoseRequest) -> dict:
 @app.post("/api/connect")
 async def api_connect(request: ConnectRequest) -> dict:
     async with state.lock:
-        _over = store.load_settings().get("device_geometry") or {}
-        state.printer.set_geometry_override(
-            _over.get("dpi"), _over.get("printhead_px"), _over.get("print_task")
-        )
+        settings = store.load_settings()
+        protocol = request.protocol or settings.get("printer_protocol") or "niimbot"
+        state.use_protocol(protocol)
+        store.save_settings({"printer_protocol": state.protocol})
+        _apply_device_geometry()
         try:
             await state.printer.connect(request.address)
         except Exception as exc:
