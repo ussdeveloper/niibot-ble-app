@@ -825,7 +825,8 @@ def _state_payload() -> dict:
         ],
         "auto_connect": {
             "enabled": str(settings.get("auto_connect", "1")) not in {"0", "false", "False", ""},
-            "status": getattr(state, "auto_status", "idle"),
+            # Live count: a worker may have brought its link up since the last discovery pass.
+            "status": _link_summary() if state.connections else getattr(state, "auto_status", "idle"),
         },
         "last_error": state.printer.last_error or state.printer.link.last_error,
     }
@@ -845,7 +846,7 @@ async def api_health() -> dict:
         "uptime_s": round(time.monotonic() - STARTED_AT, 1),
         "connected": state.connected,
         "protocol": state.protocol,
-        "auto_connect": getattr(state, "auto_status", "idle"),
+        "auto_connect": _link_summary() if state.connections else getattr(state, "auto_status", "idle"),
     }
 
 
