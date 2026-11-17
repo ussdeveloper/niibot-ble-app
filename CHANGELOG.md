@@ -4,6 +4,20 @@ All notable changes to **Niibot Studio** are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project uses [Semantic Versioning](https://semver.org/).
 
+## [0.16.1] — 2026-11-17
+
+### Added
+- **The calibration screen shows where the printhead ends.** A 48 mm head cannot reach the outer
+  millimetres of a 50 mm roll, and the calibrator said nothing about it, so a page could be
+  measured across a strip that never prints. The canvas now hatches everything past the head,
+  labels the strip *beyond the head*, and the note under the page size spells it out
+  (“2 mm wider than the 48 mm printhead”) with a one-click **Fit the page to 48 mm**.
+- Item zones that cross the head line are drawn in amber, the summary counts them
+  (“1 item past the 48 mm head”), and the status bar repeats the overhang, so a zone that would
+  silently lose its right edge is visible before the check print.
+- Saving a calibration wider than the head raises a warning telling how many millimetres of the
+  page will stay blank.
+
 ## [0.16.0] — 2026-11-17
 
 ### Added

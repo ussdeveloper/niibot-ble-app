@@ -1478,6 +1478,11 @@ button.btn.wide { width: 100%; }
 }
 .cal-status-item b { font-weight: 600; color: var(--navy); font-size: 11px; }
 .cal-status-item.bad { color: var(--err); font-weight: 600; }
+/* The page is wider than the printhead: say by how much and offer the fix right here. */
+.cal-over { color: #a85b17; }
+.cal-fit-head {
+  margin-top: 5px; padding: 4px 9px; font-size: 11px;
+}
 
 /* ---------------------------------------------------------- roll calibrator */
 .calibrator {

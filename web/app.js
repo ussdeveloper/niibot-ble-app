@@ -1402,6 +1402,11 @@ function openRollSizeDialog(options = {}) {
     const serial = paperNow.serial || info.serial;
     if (serial) bits.push(`<span class="cal-status-item"><em>SN</em> <b>${escapeHtml(serial)}</b></span>`);
     bits.push(`<span class="cal-status-item">${stickerLabel()} · page ${round2(width)} × ${round2(height)} mm</span>`);
+    const headLimit = printheadWidthMm();
+    if (headLimit && width > headLimit + 0.05) {
+      bits.push(`<span class="cal-status-item bad" title="The printhead is ${round2(headLimit)} mm wide — the rest of the page stays blank when printing">
+        ${round2(width - headLimit)} mm past the head</span>`);
+    }
     if (!state.connected) bits.push('<span class="cal-status-item bad">printer off-line</span>');
     status.innerHTML = bits.join('');
   };
@@ -1424,6 +1429,27 @@ function openRollSizeDialog(options = {}) {
   let dpr = 1;
   let cssW = 480;
   let cssH = 420;
+  /* Diagonal hatch for the strip past the printhead — the area no dot can reach. */
+  let headHatchPattern = null;
+  const headHatch = () => {
+    if (headHatchPattern) return headHatchPattern;
+    const tile = document.createElement('canvas');
+    tile.width = 8;
+    tile.height = 8;
+    const paint = tile.getContext('2d');
+    paint.strokeStyle = 'rgba(209, 102, 58, 0.34)';
+    paint.lineWidth = 1.4;
+    paint.beginPath();
+    paint.moveTo(-2, 10);
+    paint.lineTo(10, -2);
+    paint.stroke();
+    paint.beginPath();
+    paint.moveTo(2, 14);
+    paint.lineTo(14, 2);
+    paint.stroke();
+    headHatchPattern = ctx.createPattern(tile, 'repeat');
+    return headHatchPattern;
+  };
 
   /* ------------------------------------------------------------- geometry */
   const zoneBounds = (zone) => {
@@ -1504,11 +1530,34 @@ function openRollSizeDialog(options = {}) {
     const note = $('#cal-page', body);
     if (!note) return;
     const headLimit = printheadWidthMm();
-    const over = headLimit && width > headLimit + 0.05
-      ? ` · <strong>${round2(width - headLimit)} mm wider than the printhead</strong>` : '';
-    const grid = cols * rows === 1 ? 'one sticker'
-      : `${cols} across × ${rows} down`;
-    note.innerHTML = `Print page: <strong>${round2(width)} × ${round2(height)} mm</strong> (${grid})${over}`;
+    const over = headLimit && width > headLimit + 0.05;
+    const grid = cols * rows === 1 ? 'one sticker' : `${cols} across × ${rows} down`;
+    /* The printhead is a hard limit: a page wider than it keeps the outer millimetres blank, so
+       the note names the head, the blank strip and offers the one-click fix while calibrating. */
+    const headBit = !headLimit ? ''
+      : over
+        ? ` · <strong class="cal-over">${round2(width - headLimit)} mm wider than the ${round2(headLimit)} mm printhead</strong>`
+        : ` · head ${round2(headLimit)} mm ✓`;
+    note.innerHTML = `Print page: <strong>${round2(width)} × ${round2(height)} mm</strong> (${grid})${headBit}`;
+    if (over) {
+      const fix = document.createElement('button');
+      fix.type = 'button';
+      fix.className = 'btn cal-fit-head';
+      fix.innerHTML = `<i data-lucide="maximize"></i> Fit the page to ${round2(headLimit)} mm`;
+      fix.onclick = () => {
+        const usable = headLimit - (cols - 1) * colSpace;
+        stickerW = Math.max(2, Math.floor((usable / cols) * 10) / 10);
+        const input = $('[data-key="cal-width"]', body);
+        if (input) input.value = round2(stickerW);
+        pageSize();
+        renderPageNote();
+        renderCalStatus();
+        draw();
+      };
+      note.appendChild(document.createElement('br'));
+      note.appendChild(fix);
+      refreshIcons(note);
+    }
   };
 
   /* -------------------------------------------------------------- history */
@@ -1938,22 +1987,49 @@ function openRollSizeDialog(options = {}) {
       drawGuide(value, false, isCentre, activeGuides.y !== null && Math.abs(activeGuides.y - value) < 1e-6);
     });
 
-    // printhead limit
+    // printhead limit — the same promise the design canvas makes: what the head cannot reach is hatched
     const headLimit = printheadWidthMm();
     if (headLimit && width > headLimit + 0.05) {
+      const stripX = cssX(headLimit);
+      const stripW = Math.max(1, (width - headLimit) * view.scale);
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(stripX, cssY(0), stripW, height * view.scale);
+      ctx.clip();
+      ctx.fillStyle = headHatch();
+      ctx.fillRect(stripX, cssY(0), stripW, height * view.scale);
+      const tag = 'beyond the head';
+      if (stripW > 15) {
+        ctx.fillStyle = COLOUR.warn;
+        ctx.font = '600 10px "Segoe UI", system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.save();
+        ctx.translate(stripX + stripW / 2, cssY(height / 2));
+        ctx.rotate(-Math.PI / 2);
+        ctx.fillText(tag, 0, 0);
+        ctx.restore();
+        ctx.textAlign = 'start';
+        ctx.textBaseline = 'alphabetic';
+      }
+      ctx.restore();
       ctx.save();
       ctx.setLineDash([5, 4]);
       ctx.strokeStyle = COLOUR.warn;
+      ctx.lineWidth = 1.5;
       ctx.beginPath();
-      ctx.moveTo(cssX(headLimit), cssY(0));
-      ctx.lineTo(cssX(headLimit), cssY(height));
+      ctx.moveTo(stripX, cssY(0));
+      ctx.lineTo(stripX, cssY(height));
       ctx.stroke();
       ctx.restore();
     }
 
     zones.forEach((zone, index) => {
       const selected = selection.has(index);
-      const colour = selected ? COLOUR.violet : COLOUR.teal;
+      const box = zoneBounds(zone);
+      /* An outline that reaches past the head would be printed clipped — say so in the colour. */
+      const spills = headLimit && box.x + box.w > headLimit + 0.05;
+      const colour = spills ? COLOUR.warn : selected ? COLOUR.violet : COLOUR.teal;
       zoneRing(zone.shapes, colour, Math.max(0.15, Number(zone.thickness) || 0.3));
       identity(ctx);
       ctx.globalAlpha = selected ? 0.16 : 0.09;
@@ -1962,7 +2038,6 @@ function openRollSizeDialog(options = {}) {
       ctx.drawImage(bandCanvas, 0, 0);
       cssTransform(ctx);
 
-      const box = zoneBounds(zone);
       ctx.fillStyle = colour;
       ctx.font = '600 11px "Segoe UI", system-ui, sans-serif';
       const label = String(index + 1);
@@ -2033,10 +2108,16 @@ function openRollSizeDialog(options = {}) {
 
   const renderSummary = () => {
     const outlines = zones.reduce((sum, zone) => sum + zone.shapes.length, 0);
+    const headLimit = printheadWidthMm();
+    const spills = headLimit
+      ? zones.filter((zone) => zoneBounds(zone).x + zoneBounds(zone).w > headLimit + 0.05).length
+      : 0;
     summary.textContent = `sticker ${stickerLabel()}`
       + ` · page ${round2(width)} × ${round2(height)} mm`
       + ` · ${zones.length} item${zones.length === 1 ? '' : 's'}`
-      + ` · ${outlines} outline${outlines === 1 ? '' : 's'}`;
+      + ` · ${outlines} outline${outlines === 1 ? '' : 's'}`
+      + (spills ? ` · ${spills} item${spills === 1 ? '' : 's'} past the ${round2(headLimit)} mm head` : '');
+    summary.classList.toggle('warn-text', spills > 0);
     renderCalStatus();
   };
 
@@ -2930,6 +3011,11 @@ function openRollSizeDialog(options = {}) {
       } catch (_) { /* the list refreshes with the settings tab */ }
       toast(`${savedName} — sticker ${stickerLabel()}, print page ${round2(width)} × ${round2(height)} mm,`
         + ` ${zones.length} item${zones.length === 1 ? '' : 's'} remembered`, 'ok');
+      const headLimit = printheadWidthMm();
+      if (headLimit && width > headLimit + 0.05) {
+        toast(`Heads up: the page is ${round2(width - headLimit)} mm wider than the ${round2(headLimit)} mm`
+          + ' printhead, so that strip stays blank. Use “Fit the page” in the calibrator to fix it.', 'info', 8000);
+      }
       renderPaperRegions();
       schedulePreview();
       if (isModalOpen('settings')) renderSettingsTab();

@@ -291,6 +291,10 @@ The first chip in the label bar names the roll (or shows the label size when the
 
 In the calibrator the **main size is one sticker**; the print page is derived from it and the grid
 (2 across × 1 down = 42 × 21 mm) and the calibrator warns when it exceeds the printhead.
+Everything right of the head line — the B1 Pro reaches 48 mm, so a 50 mm roll keeps 2 mm of paper
+blank — is hatched and labelled *beyond the head*; the note under the size says how many
+millimetres are lost and **Fit the page to 48 mm** trims it in one click. Zones crossing that line
+turn amber and are counted in the summary.
 Dragging and resizing snap to 0.5 mm (hold Alt for 0.1 mm), and the grid matches that step; the
 label centre and quarter lines are drawn behind the zones and catch a dragged edge or centre.
 
