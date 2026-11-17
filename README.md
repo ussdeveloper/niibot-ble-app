@@ -156,8 +156,9 @@ canvas; *fit* also resets the pan. The zoom level is remembered in the database.
 tall sticker can be edited lying down, then 180°, 270° and back (double-click resets). Nothing about
 the label changes — the size, the calibration template with its item zones and the bitmap the
 printer receives are exactly the same, the canvas is just drawn turned. Picking, dragging, resizing
-and zoom-around-the-cursor keep working, and the angle is remembered. The gap strip under the label
-is hidden while the view is turned because it would point sideways.
+and zoom-around-the-cursor keep working, and the angle is remembered. The gap strip between the
+stickers travels with the label — zoomed off-centre or panned, it stays glued to the label edge —
+turns above the label at 180°, and is hidden at 90° and 270° where it would point sideways.
 
 **Hovering shows what a click would grab**: the element under the pointer gets a dashed frame and
 a name chip, so it is clear what will move before pressing. Picking follows what the element

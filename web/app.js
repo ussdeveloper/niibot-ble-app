@@ -984,9 +984,15 @@ function layoutStage() {
     gapEl.classList.remove('hidden');
     gapEl.style.height = `${gapPx}px`;
     gapEl.style.width = `${width}px`;
+    // Turned 180° the sheet is upside down, so the strip between the stickers is above the label.
+    const flipped = rotation === 180;
+    gapEl.classList.toggle('above', flipped);
+    gapEl.style.order = flipped ? '-1' : '';
     $('#gap-preview-label').textContent = `gap ${round2(gapMm)} mm`;
   } else {
     gapEl.classList.add('hidden');
+    gapEl.classList.remove('above');
+    gapEl.style.order = '';
   }
 
   /* A label wider than the printhead is not printed edge to edge: the bitmap stops where the
@@ -4456,8 +4462,15 @@ function applyStagePan() {
   if (!stage) return;
   const pan = state.pan || { x: 0, y: 0 };
   const rotation = normalisedViewRotation();
+  /* The pan moves the whole sheet, not just the label: the gap strip lives under the frame, so
+     shifting only the label would slide the strip away from it as soon as the view is zoomed
+     off-centre or dragged. */
+  const column = $('#paper-column');
+  if (column) {
+    column.style.transform = pan.x || pan.y
+      ? `translate(${Math.round(pan.x)}px, ${Math.round(pan.y)}px)` : '';
+  }
   const parts = [];
-  if (pan.x || pan.y) parts.push(`translate(${Math.round(pan.x)}px, ${Math.round(pan.y)}px)`);
   // The turn comes last so panning keeps moving the view by screen pixels, not by label axes.
   if (rotation) parts.push(`rotate(${rotation}deg)`);
   stage.style.transform = parts.join(' ');

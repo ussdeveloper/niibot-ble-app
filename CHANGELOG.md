@@ -4,6 +4,16 @@ All notable changes to **Niibot Studio** are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project uses [Semantic Versioning](https://semver.org/).
 
+## [0.16.2] — 2026-11-17
+
+### Fixed
+- **The gap strip no longer slides away from the label.** Panning (and zooming around the cursor,
+  which pans as a side effect) moved the label alone — the strip between the stickers stayed where
+  it was, so it drifted off the sheet and made the whole preview look misaligned. The pan now
+  belongs to the sheet: the label and the strip move together, at every zoom level.
+- Turned 180° the sheet reads upside down, so the gap strip is now drawn **above** the label
+  instead of under it; at 90° and 270° it stays hidden, as the strip would point sideways.
+
 ## [0.16.1] — 2026-11-17
 
 ### Added
