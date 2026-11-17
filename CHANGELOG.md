@@ -4,6 +4,42 @@ All notable changes to **Niibot Studio** are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project uses [Semantic Versioning](https://semver.org/).
 
+## [0.16.0] — 2026-11-17
+
+### Added
+- **A picture has its own editor.** *Crop image…* in Properties (or a double-click on the picture
+  in the canvas) opens it: the frame keeps the element's own shape, the artwork is zoomed with the
+  wheel or the slider and dragged inside that frame, *Fill box* / *Centre* / *Whole picture* reset
+  the crop. The geometry mirrors the renderer one-to-one, so the frame shows exactly what the
+  printer gets, and the tile next to it shows the real one-bit bitmap.
+- **Brightness for pictures** (`image_brightness`, −100…+100 %): the picture is lifted before the
+  printer decides dot or no dot, so a dark photo keeps its details instead of printing as a black
+  patch. It works with and without dithering, live while the slider moves.
+- **A picture may bleed off the label.** Images are no longer clamped to the page: they can be
+  dragged or stretched past the edge and the printer crops them, while everything else still snaps
+  inside. The element keeps its centre on the page, so it can always be grabbed again.
+
+### Changed
+- **The top bar reflects a calibration the moment it is saved**, off-line included. Two things
+  fought it: the 4-second state poll copied the raw printer state over the calibration on screen
+  (off-line that state carries no roll code, so it wiped the chips), and a save made without a
+  connected printer was stored but never remembered, so the bar kept the previous roll. The save
+  now returns the stored calibration and the poll keeps it.
+- **A label wider than the printhead is drawn at its real width.** The canvas used to stretch the
+  cropped bitmap (a 50 mm design on a 48 mm head) across the whole page, which misplaced every
+  element against the print; the strip the head cannot reach is now hatched and the chip says how
+  many millimetres stay blank.
+
+### Fixed
+- **Off-line geometry came from a fresh driver, not from the model.** A B1 Pro previewed at
+  203 dpi / 384 px instead of 300 dpi / 567 px, so the preview bitmap differed from the print and
+  the printhead limits were hidden while the printer was asleep. The remembered model now decides
+  the resolution and head width, for the canvas and for the printer alike.
+- Saving a calibration off-line could address the roll by a mangled key (`niimbot:B1|bc:…`
+  instead of the bare barcode), creating a second, hidden calibration entry.
+- The "fit the label to the roll" chip now respects the printhead width off-line too, instead of
+  offering a size the printer cannot reach.
+
 ## [0.15.4] — 2026-11-14
 
 ### Changed

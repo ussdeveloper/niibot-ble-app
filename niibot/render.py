@@ -567,6 +567,24 @@ def _halftone(image: Image.Image) -> Image.Image:
     return mono.point(lambda value: 0 if value else 255)
 
 
+def _tone(image: Image.Image, brightness: float) -> Image.Image:
+    """Shift the picture's luminance before it reaches the 1-bit threshold.
+
+    Thermal paper only knows "dot" and "no dot", so a photo is decided by where the threshold
+    falls. Lifting the whole picture (keeping its alpha) prints it lighter, which is what a dark
+    photo needs to stay readable — the same slider serves dithering and hard thresholding.
+    """
+    amount = max(-100.0, min(100.0, float(brightness or 0.0)))
+    if abs(amount) < 0.5:
+        return image
+    offset = amount * 2.55
+    alpha = image.getchannel("A")
+    gray = image.convert("L").point(lambda value: max(0, min(255, int(round(value + offset)))))
+    toned = Image.merge("RGB", (gray, gray, gray))
+    toned.putalpha(alpha)
+    return toned
+
+
 def _draw_image(
     layer: Image.Image,
     element: Element,
@@ -586,8 +604,10 @@ def _draw_image(
     source = source.convert("RGBA")
     width, height = layer.size
     fit = element.image_fit if element.image_fit in ("cover", "contain", "stretch") else "contain"
+    brightness = float(element.image_brightness or 0.0)
 
     def place(picture: Image.Image, x: float, y: float) -> None:
+        picture = _tone(picture, brightness)
         if element.image_dither:
             _paste_clipped_mask(layer, _halftone(picture), int(round(x)), int(round(y)))
         else:

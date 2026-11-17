@@ -49,6 +49,7 @@ _NONE_FALLBACKS: dict[str, object] = {
     "image_offset_x": 0.0,
     "image_offset_y": 0.0,
     "image_dither": False,
+    "image_brightness": 0.0,
 }
 
 
@@ -100,6 +101,9 @@ class Element(BaseModel):
     image_offset_y: float = 0.0
     #: Halftone the picture instead of hard-thresholding it — keeps gradients readable.
     image_dither: bool = False
+    #: Shift the picture's luminance before the 1-bit threshold, in percent (−100 … +100).
+    #: Positive values print lighter: a dark photo needs fewer dots on thermal paper.
+    image_brightness: float = 0.0
 
     @field_validator("*", mode="before")
     @classmethod
@@ -168,6 +172,17 @@ class Element(BaseModel):
         except (TypeError, ValueError):
             return 0.5
         return max(0.05, number)
+
+    @field_validator("image_brightness", mode="before")
+    @classmethod
+    def _check_brightness(cls, value) -> float:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return 0.0
+        if number != number:  # NaN
+            return 0.0
+        return min(100.0, max(-100.0, number))
 
 
 class SheetColumn(BaseModel):

@@ -31,7 +31,7 @@ from .diagnostics import diagnose
 from .fichero import FicheroPrinter
 from .consumables import Consumable, builtin_formats, scan_vendor_catalog
 from .fit import FitOptions, fit_to_label
-from .models import model_for_id, MODELS, PAPER_PRESETS, PaperProfile, Region, ZoneShape
+from .models import model_for_id, model_for_key, MODELS, PAPER_PRESETS, PaperProfile, Region, ZoneShape
 from .paths import resource_dir
 from .printer import NiimbotPrinter
 from .protocol import LABEL_TYPE_NAMES, ProtocolError
@@ -735,18 +735,12 @@ class FitRequest(BaseModel):
 
 
 # --------------------------------------------------------------------- state
-def _current_profile() -> dict | None:
-    paper = state.printer.paper
-    key = store.profile_key(paper.barcode, paper.uuid, device_scope())
-    if not key:
-        return None
-    profile = store.get_profile(key)
-    if not profile:
-        return None
+def _decorate_profile(profile: dict, key: str, barcode: str | None = None) -> dict:
+    """Add the fields the UI reads (key, grid, sticker size) to a stored calibration."""
     profile = dict(profile)
     profile["key"] = key
     # The grid is stored with the calibration; older records fall back to the catalogue entry.
-    entry = store.get_catalog_entry(paper.barcode) or {}
+    entry = store.get_catalog_entry(barcode) or {}
     cols = max(1, int(profile.get("cols") or entry.get("cols") or 1))
     rows = max(1, int(profile.get("rows") or entry.get("rows") or 1))
     profile["rows"], profile["cols"] = rows, cols
@@ -756,6 +750,18 @@ def _current_profile() -> dict | None:
     if not profile.get("sticker_h_mm"):
         profile["sticker_h_mm"] = round(float(profile["height_mm"]) / rows, 3)
     return profile
+
+
+def _current_profile() -> dict | None:
+    paper = state.printer.paper
+    key = store.profile_key(paper.barcode, paper.uuid, device_scope())
+    if not key:
+        return None
+    profile = store.get_profile(key)
+    if not profile:
+        return None
+    return _decorate_profile(profile, key, paper.barcode)
+
 
 
 def _state_payload() -> dict:
@@ -777,23 +783,17 @@ def _state_payload() -> dict:
     if not state.connected:
         # Off-line show the printer that will be used next (the saved one), not whatever
         # driver handed over the last connection.
-        remembered = next(
-            (row for row in store.list_printers() if row["address"] == settings.get("last_address")),
-            None,
-        )
+        remembered = _last_printer_row()
         if remembered:
             info["model_name"] = remembered.get("model_name") or info.get("model_name")
             info["model_key"] = remembered.get("model_key") or info.get("model_key")
             offline_protocol = remembered.get("protocol") or state.protocol
-            if offline_protocol == "luckprinter":
-                # Keep the reported geometry consistent with that family's printhead.
-                info["dpi"], info["printhead_px"] = 203, 96
-            elif remembered.get("model_key") == "B1":
-                info["dpi"], info["printhead_px"] = 203, 384
         else:
             offline_protocol = state.protocol
     else:
         offline_protocol = state.protocol
+    # One source of truth for the geometry: the payload must report the same head the renderer uses.
+    info["dpi"], info["printhead_px"] = _geometry()
     return {
         "connected": state.connected,
         "link": {
@@ -1769,8 +1769,28 @@ async def api_log(limit: int = 200) -> dict:
 
 
 # ------------------------------------------------------------------- labels
+def _last_printer_row() -> dict | None:
+    """The stored row of the printer the settings point at — the one that will be used next."""
+    address = str(store.load_settings().get("last_address") or "").strip()
+    if not address:
+        return None
+    return next(
+        (row for row in store.list_printers() if str(row["address"]).lower() == address.lower()),
+        None,
+    )
+
+
 def _geometry() -> tuple[int, int]:
+    """Print resolution and head width — the model's own off-line, the driver's while connected."""
     info = state.printer.info
+    if not state.connected and not info.geometry_override:
+        remembered = _last_printer_row()
+        if remembered:
+            if (remembered.get("protocol") or state.protocol) == "luckprinter":
+                return 203, 96
+            model = model_for_key(remembered.get("model_key"))
+            if model is not None:
+                return model.dpi, model.printhead_px
     return info.dpi or 203, info.printhead_px or 384
 
 
@@ -2078,7 +2098,14 @@ async def api_roll_format(request: RollFormatRequest) -> dict:
         request.rows,
         len(regions),
     )
-    return _state_payload()
+    payload = _state_payload()
+    # Hand the calibration back even when the printer is away: with no roll code on the wire the
+    # polled state cannot resolve a profile, and the top bar would keep showing the old one.
+    if profile_key_value:
+        saved = store.get_profile(profile_key_value)
+        if saved:
+            payload["profile"] = _decorate_profile(saved, profile_key_value, request.barcode)
+    return payload
 
 
 @app.post("/api/roll-format/outline")

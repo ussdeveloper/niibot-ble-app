@@ -493,8 +493,15 @@ svg.lucide { width: 16px; height: 16px; stroke-width: 1.7; }
 }
 .head-cut {
   position: absolute;
-  background: repeating-linear-gradient(45deg, rgba(207, 75, 75, 0.28) 0 6px, rgba(207, 75, 75, 0.1) 6px 12px);
+  top: 0; bottom: 0; width: 0;
   border-left: 2px solid rgba(207, 75, 75, 0.85);
+}
+/* The strip of the label that sits past the end of the printhead — the head simply cannot reach it. */
+.head-blank {
+  position: absolute;
+  top: 0; bottom: 0; right: 0;
+  background: repeating-linear-gradient(45deg, rgba(207, 75, 75, 0.13) 0 5px, transparent 5px 10px);
+  pointer-events: none;
 }
 .gap-preview {
   display: flex; align-items: center; justify-content: center;
@@ -1409,6 +1416,46 @@ button.btn.wide { width: 100%; }
 .crop-actions { gap: 6px; margin-top: 8px; }
 .crop-actions .btn { flex: 1; padding: 5px 8px; font-size: 11px; }
 .warn-text { color: #a85b17; }
+
+/* slider with its live value — tuned by eye, so it needs no typing */
+.range-row { display: flex; align-items: center; gap: 8px; }
+.range-row input[type="range"] {
+  flex: 1; min-width: 0; height: 16px; accent-color: var(--teal-deep); cursor: pointer;
+}
+.range-row output {
+  min-width: 44px; text-align: right; font-size: 11px; font-variant-numeric: tabular-nums;
+  color: var(--ink-muted);
+}
+
+/* --------------------------------------------------------- crop image dialog */
+.crop-dialog { display: flex; flex-direction: column; gap: 10px; }
+.crop-grid { display: flex; gap: 16px; align-items: flex-start; }
+.crop-left { display: flex; flex-direction: column; gap: 8px; }
+.crop-right { display: flex; flex-direction: column; gap: 6px; width: 210px; flex: 0 0 210px; }
+/* The frame *is* the element box: its shape is fixed and everything outside is what the printer
+   throws away, so the picture is clipped exactly like the print will clip it. */
+.crop-stage {
+  position: relative;
+  overflow: hidden;
+  border-radius: 4px;
+  background: repeating-conic-gradient(rgba(0, 26, 77, 0.06) 0% 25%, transparent 0% 50%) 50% / 12px 12px;
+  outline: 1px solid rgba(0, 26, 77, 0.22);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+.crop-stage.panning { cursor: grabbing; }
+.crop-stage img { position: absolute; display: block; max-width: none; pointer-events: none; }
+.crop-stage img.grabbing { cursor: grab; }
+.crop-frame-note { font-size: 11px; }
+.crop-row { display: flex; align-items: center; gap: 8px; }
+.crop-label { font-size: 11px; color: var(--ink-muted); min-width: 62px; }
+.crop-tile {
+  min-height: 108px; display: flex; align-items: center; justify-content: center;
+  padding: 6px; border: 1px solid var(--line); border-radius: 8px; background: #fff;
+}
+.crop-tile img { max-width: 100%; max-height: 130px; image-rendering: pixelated; }
+.crop-tile span { font-size: 11px; color: var(--ink-muted); }
 
 /* extra buttons in a modal title bar (calibrator: preview + print) */
 .modal-actions { display: flex; align-items: center; gap: 2px; margin-right: 2px; }

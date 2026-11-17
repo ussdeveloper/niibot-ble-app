@@ -167,6 +167,27 @@ border. Everything those boxes surround stays clickable. When several elements o
 counts the stack (`1/3`) and **Ctrl+click** (Cmd on macOS) steps one element deeper, with the hover
 frame following, so artwork hidden under a big block can still be picked.
 
+### Pictures
+
+An image fills its box: *Contain* keeps the whole picture, *Cover* crops it to the box, *Stretch*
+squashes it. For anything more precise, **Crop image…** (Properties, or a double-click on the
+picture) opens the picture in its own editor:
+
+* the frame keeps the element's shape — the ratio is locked, so the artwork can only be zoomed and
+  moved inside it, exactly like the printer will crop it,
+* the **wheel** zooms around the pointer, **dragging** moves the picture, the slider repeats the
+  zoom, and *Fill box* / *Centre* / *Whole picture* reset the crop in one click,
+* the tile beside the frame shows the real **one-bit bitmap** the printer will get, not a smooth
+  preview, so a crop that loses the detail shows up before printing,
+* **Brightness** lifts the picture before the threshold — positive values print lighter, which is
+  what a dark photo needs to survive the thermal head — and **Dither** keeps gradients instead of
+  hard edges.
+
+Unlike other elements, a picture is **not clamped to the page**: it can be dragged or stretched
+past the label edge and the printer simply crops it, which is what a logo running off the sticker
+needs. It keeps its centre on the label, so it can always be grabbed again. The editor's *Crop X/Y*
+fields take the same offsets as the dialog for exact placement.
+
 ### Items and the printer queue
 
 The right panel lists every element as an **item**: eye to hide/show it, thumbnail, click to select,
@@ -280,7 +301,8 @@ Every connection re-reads the calibration for the inserted roll code. A roll wit
 calibration opens the **calibration library** — cards with a preview of the zones, the sticker size
 and the print page, so an existing layout can be reused (`Use`), edited or replaced. Off-line the
 last calibration stays on screen with an `⚠ offline calibration` badge, because the printer only
-reports the roll code while it is connected.
+reports the roll code while it is connected; saving a calibration refreshes that badge and the
+chips above the canvas immediately, printer or no printer, and the choice survives a reload.
 
 ---
 
@@ -466,6 +488,16 @@ A printer that is not in the table reports `unknown`, and the model panel says s
 pixels and, if needed, the print task (`Auto`, `B1 / legacy`, `V4`). The override is stored in
 SQLite, applied to the live connection at once and survives restarts; clearing both numbers
 returns to automatic detection.
+
+The table is also used **off-line**: the saved printer's model decides the resolution and the head
+width while the printer is asleep, so the canvas, the preview bitmap and the "fit to the printhead"
+limit are the same as they will be when it wakes up.
+
+**A label can be wider than the printhead.** The B1 Pro, for example, prints 48 mm across its 567
+dots but is sold with 50 mm rolls, so the outermost millimetres cannot be printed. The editor does
+not hide that: the canvas shows the label at its real size, the bitmap stops where the head stops,
+the strip beyond it is hatched and the label bar says `head 48.0 mm — 2.0 mm blank`. Size the label
+to the printable width (*fit* on the roll chip does that for you) rather than to the paper width.
 
 Printers that speak a different protocol entirely (for example Finchero units, which have no
 public Niimbot-compatible command set) still need a protocol implementation — the override only

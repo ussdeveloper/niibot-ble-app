@@ -665,6 +665,12 @@ const ELEMENT_DEFAULTS = {
   fill: false,
   thickness_mm: 0.3,
   image_id: null,
+  image_fit: 'contain',
+  image_zoom: 1,
+  image_offset_x: 0,
+  image_offset_y: 0,
+  image_dither: false,
+  image_brightness: 0,
 };
 
 /** Numbers arrive as null/undefined/NaN from old drafts and half-filled inputs; the server accepts
@@ -759,7 +765,9 @@ function syncSpec() {
 /* ===================================================== size / paper geometry */
 function printheadWidthMm() {
   const info = state.printer?.info;
-  if (state.connected && info && info.printhead_px && info.dpi) {
+  // The remembered model carries its own head width off-line, so a design cannot be made wider
+  // than the printer that will print it just because the printer is asleep.
+  if (info && info.printhead_px && info.dpi) {
     return Math.floor(((info.printhead_px * 25.4) / info.dpi) * 2) / 2;
   }
   return null;
@@ -785,6 +793,19 @@ function clampElements() {
   const { width_mm: width, height_mm: height } = state.spec;
   let moved = 0;
   for (const element of state.spec.elements) {
+    /* An image may run off the label — a photo or a logo that bleeds past the edge is cropped by
+       the printer, which is the whole point of enlarging it. It only has to keep its centre on the
+       page, otherwise it could be dragged somewhere it can no longer be grabbed. */
+    if (element.type === 'image') {
+      const halfW = element.w / 2;
+      const halfH = element.h / 2;
+      const x = Math.min(Math.max(-halfW, element.x), Math.max(-halfW, width - halfW));
+      const y = Math.min(Math.max(-halfH, element.y), Math.max(-halfH, height - halfH));
+      if (x !== element.x || y !== element.y) moved += 1;
+      element.x = x;
+      element.y = y;
+      continue;
+    }
     const x = Math.min(Math.max(0, element.x), Math.max(0, width - 1));
     const y = Math.min(Math.max(0, element.y), Math.max(0, height - 1));
     const w = Math.min(element.w, Math.max(1, width - x));
@@ -797,6 +818,12 @@ function clampElements() {
   }
   if (moved) toast(`Fitted ${moved} element(s) to the new format.`);
 }
+
+/** How far an element may reach outside the label. Pictures bleed, everything else stays on paper. */
+function bleedLimit(element, span) {
+  return element.type === 'image' ? Math.max(span * 2, element.w, element.h) : span;
+}
+
 
 /* Load the workspace that belongs to the printer that just connected. */
 function switchToDeviceScope(payload) {
@@ -858,7 +885,8 @@ function paperGeometry() {
   const info = state.printer?.info || {};
   const catalog = paper.catalog || null;
   const rows = Math.max(1, Number(catalog?.rows || 1));
-  const headMm = state.connected && info.dpi && info.printhead_px ? (info.printhead_px * 25.4) / info.dpi : null;
+  // The head width is a property of the model, not of the link: keep warning about it off-line too.
+  const headMm = info.dpi && info.printhead_px ? (info.printhead_px * 25.4) / info.dpi : null;
   return { rows, catalog, typeName: paper.label_type_name || null, gapMm: gapInfoMm(), headMm };
 }
 
@@ -959,6 +987,18 @@ function layoutStage() {
     $('#gap-preview-label').textContent = `gap ${round2(gapMm)} mm`;
   } else {
     gapEl.classList.add('hidden');
+  }
+
+  /* A label wider than the printhead is not printed edge to edge: the bitmap stops where the
+     head stops, so it is drawn at its real width and the strip that stays blank is hatched.
+     Stretching it across the whole page would misplace every element against the print. */
+  const previewEl = $('#preview');
+  if (previewEl) {
+    const printedMm = Number(state.preview?.printed_width_mm);
+    const labelMm = Number(state.spec.width_mm) || 0;
+    const share = printedMm > 0 && labelMm > 0 && printedMm < labelMm - 0.05 ? printedMm / labelMm : 1;
+    previewEl.style.width = `${(share * 100).toFixed(3)}%`;
+    previewEl.style.height = '100%';
   }
 
   renderPaperRegions();
@@ -1075,7 +1115,12 @@ function renderStageMeta() {
   </button>`);
   if (geo.headMm) {
     const fits = spec.width_mm <= geo.headMm + 0.05;
-    chips.push(`<span class="meta-chip ${fits ? 'ok' : 'bad'}">head ${geo.headMm.toFixed(1)} mm ${fits ? '✓ printable' : '— clipped'}</span>`);
+    const blank = round2(Math.max(0, spec.width_mm - geo.headMm));
+    chips.push(`<span class="meta-chip ${fits ? 'ok' : 'bad'}"
+      title="${fits
+        ? `This model prints up to ${geo.headMm.toFixed(1)} mm — the whole label is reachable`
+        : `The label is wider than the ${geo.headMm.toFixed(1)} mm printhead — the right ${blank} mm stays blank`}">
+      head ${geo.headMm.toFixed(1)} mm ${fits ? '✓ printable' : `— ${blank} mm blank`}</span>`);
   }
   meta.innerHTML = chips.join('');
   refreshIcons(meta);
@@ -1107,8 +1152,13 @@ function openRollSizeDialog(options = {}) {
   const rollName = paper.sku || paper.catalog?.name || paper.barcode || 'this roll';
   /* ``options.profile`` edits a calibration picked from the library (a copy for this roll). */
   const profile = options.profile || state.printer?.profile || null;
-  const currentBarcode = () => state.printer?.paper?.barcode
-    || String(profile?.key || '').replace(/^bc:/, '') || '';
+  /* Off-line there is no RFID on the wire, so the roll code comes from the stored key —
+     which carries its printer scope: ``niimbot:B1|bc:10262260``. */
+  const keyBarcode = () => {
+    const tail = String(profile?.key || '').split('|').pop() || '';
+    return tail.startsWith('bc:') ? tail.slice(3) : '';
+  };
+  const currentBarcode = () => state.printer?.paper?.barcode || keyBarcode();
   /* A friendly name for this roll (the barcode is a poor label everywhere in the UI). */
   const codeOnly = (value) => !value || /^\d+$/.test(String(value).trim());
   const rollLabel = options.profile
@@ -3111,6 +3161,11 @@ function renderPaperRegions() {
     }
   }
   if (geo.headMm && spec.width_mm > geo.headMm + 0.05) {
+    const blank = document.createElement('div');
+    blank.className = 'head-blank';
+    blank.style.left = `${(geo.headMm / spec.width_mm) * 100}%`;
+    blank.title = `Beyond the ${geo.headMm.toFixed(1)} mm printhead — this strip stays blank`;
+    layer.appendChild(blank);
     const cut = document.createElement('div');
     cut.className = 'head-cut';
     cut.style.left = `${(geo.headMm / spec.width_mm) * 100}%`;
@@ -3251,6 +3306,8 @@ function elementSignature(element) {
     element.align, element.valign, element.line_spacing, element.auto_fit, element.rotation,
     element.w, element.h, element.fill, element.thickness_mm, element.barcode_format,
     element.show_text, element.ec_level, element.image_id, element.visible,
+    element.image_fit, element.image_zoom, element.image_offset_x, element.image_offset_y,
+    element.image_dither, element.image_brightness,
   ];
   return `${element.id}:${fields.map((value) => (value === undefined || value === null ? '' : String(value))).join('|')}`;
 }
@@ -3527,6 +3584,15 @@ function checkInput(key, label, checked) {
   return `<label class="check"><input type="checkbox" data-key="${key}" ${checked ? 'checked' : ''}> ${label}</label>`;
 }
 
+/** Slider with its live value next to it — for values that are tuned by eye, not typed. */
+function rangeInput(key, value, min, max, step, suffix = '') {
+  const current = Number(value ?? 0);
+  return `<div class="range-row">
+    <input type="range" data-key="${key}" min="${min}" max="${max}" step="${step}" value="${current}">
+    <output data-for="${key}" data-suffix="${suffix}">${round2(current)}${suffix}</output>
+  </div>`;
+}
+
 /* ------------------------------------------------------------ image cropping */
 const imageMetaCache = new Map();
 
@@ -3589,6 +3655,303 @@ async function renderCropQuality(element) {
       : 'soft — the picture is upscaled';
   target.textContent = `Source ${meta.width_px} × ${meta.height_px} px · ~${rounded} dpi in this box (printer ${printerDpi} dpi) — ${verdict}`;
   target.classList.toggle('warn-text', rounded < printerDpi);
+}
+
+/* ================================================== image crop editor */
+/** The picture in its own editor: the box keeps its shape and the artwork is zoomed and dragged
+ *  inside it. The geometry below mirrors ``render.py`` one-to-one, so the frame shows exactly the
+ *  crop the printer gets; the tile on the right shows the 1-bit bitmap it turns into. */
+function openCropDialog(element) {
+  if (!element || element.type !== 'image' || !element.image_id) return;
+  const boxW = Math.max(1, Number(element.w) || 1);
+  const boxH = Math.max(1, Number(element.h) || 1);
+  const aspect = boxW / boxH;
+  const MAX_W = 520;
+  const MAX_H = 300;
+  let frameW = MAX_W;
+  let frameH = frameW / aspect;
+  if (frameH > MAX_H) {
+    frameH = MAX_H;
+    frameW = frameH * aspect;
+  }
+  frameW = Math.max(120, Math.round(frameW));
+  frameH = Math.max(60, Math.round(frameH));
+  const pxPerMm = frameW / boxW;
+  const original = {
+    fit: element.image_fit,
+    zoom: element.image_zoom,
+    offsetX: element.image_offset_x,
+    offsetY: element.image_offset_y,
+    brightness: element.image_brightness,
+    dither: element.image_dither,
+  };
+  const draft = {
+    fit: ['cover', 'contain', 'stretch'].includes(element.image_fit) ? element.image_fit : 'contain',
+    zoom: Math.max(0.1, Number(element.image_zoom) || 1),
+    offsetX: Number(element.image_offset_x) || 0,
+    offsetY: Number(element.image_offset_y) || 0,
+    brightness: Number(element.image_brightness) || 0,
+    dither: !!element.image_dither,
+  };
+  const ZOOM_MIN = 0.1;
+  const ZOOM_MAX = 8;
+  /* The slider is logarithmic so 1:1 sits in the middle — a linear 0.1…8 track put it at 11 %. */
+  const zoomToSlider = (zoom) => Math.max(-150, Math.min(150, Math.round(50 * Math.log2(Math.max(ZOOM_MIN, zoom)))));
+  const sliderToZoom = (value) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, 2 ** (Number(value) / 50)));
+
+  const body = document.createElement('div');
+  body.className = 'print-dialog crop-dialog';
+  body.innerHTML = `
+    <div class="crop-grid">
+      <div class="crop-left">
+        <div class="crop-stage" id="crop-stage" style="width:${frameW}px;height:${frameH}px"
+             title="Wheel zooms the picture · drag moves it inside the box">
+          <img id="crop-image" alt="picture" draggable="false">
+        </div>
+        <div class="hint crop-frame-note">
+          <b>${round2(boxW)} × ${round2(boxH)} mm</b> · ratio locked at <b>${aspect.toFixed(2)}:1</b>
+          — anything outside this frame is cropped away by the printer.
+        </div>
+        <div class="crop-row">
+          <span class="crop-label">Zoom</span>
+          ${rangeInput('crop-zoom', zoomToSlider(draft.zoom), -150, 150, 1, '')}
+        </div>
+        <div class="row crop-actions">
+          <button type="button" class="btn" data-crop-act="fill">Fill box</button>
+          <button type="button" class="btn" data-crop-act="centre">Centre</button>
+          <button type="button" class="btn" data-crop-act="reset">Whole picture</button>
+        </div>
+      </div>
+      <div class="crop-right">
+        <div class="crop-tile"><img id="crop-tile" alt="print preview" hidden><span id="crop-tile-empty">…</span></div>
+        <div class="hint">What the printer really gets — one bit per dot.</div>
+        <div class="crop-row">
+          <span class="crop-label">Brightness</span>
+          ${rangeInput('crop-brightness', draft.brightness, -100, 100, 5, '%')}
+        </div>
+        <div class="row">${checkInput('crop-dither', 'Dither the photo', draft.dither)}</div>
+        <div class="hint">Positive values print lighter: a dark photo keeps its details instead of
+          turning into a black patch.</div>
+      </div>
+    </div>
+  `;
+  const footer = document.createElement('div');
+  footer.className = 'row';
+  footer.style.cssText = 'justify-content:flex-end;gap:8px';
+  footer.innerHTML = `<button class="btn" data-crop-cancel>Cancel</button>
+    <button class="btn primary" data-crop-ok>Apply</button>`;
+
+  const stage = $('#crop-stage', body);
+  const picture = $('#crop-image', body);
+  const tile = $('#crop-tile', body);
+  const tileEmpty = $('#crop-tile-empty', body);
+  let tileTimer = null;
+
+  const geometry = () => {
+    const natural = { w: picture.naturalWidth || 1, h: picture.naturalHeight || 1 };
+    if (draft.fit === 'stretch') {
+      return { left: 0, top: 0, w: frameW, h: frameH };
+    }
+    const base = draft.fit === 'cover'
+      ? Math.max(frameW / natural.w, frameH / natural.h)
+      : Math.min(frameW / natural.w, frameH / natural.h);
+    const scale = base * draft.zoom;
+    const w = natural.w * scale;
+    const h = natural.h * scale;
+    let left = (frameW - w) / 2 + draft.offsetX * pxPerMm;
+    let top = (frameH - h) / 2 + draft.offsetY * pxPerMm;
+    if (draft.fit === 'cover') {
+      left = Math.min(0, Math.max(frameW - w, left));
+      top = Math.min(0, Math.max(frameH - h, top));
+    }
+    return { left, top, w, h };
+  };
+
+  const paint = () => {
+    const geo = geometry();
+    picture.style.left = `${geo.left}px`;
+    picture.style.top = `${geo.top}px`;
+    picture.style.width = `${geo.w}px`;
+    picture.style.height = `${geo.h}px`;
+    const zoomOut = body.querySelector('input[data-key="crop-zoom"]');
+    if (zoomOut) {
+      if (document.activeElement !== zoomOut) zoomOut.value = String(zoomToSlider(draft.zoom));
+      zoomOut.disabled = draft.fit === 'stretch';
+    }
+    const zoomLabel = body.querySelector('output[data-for="crop-zoom"]');
+    if (zoomLabel) zoomLabel.textContent = `${draft.zoom.toFixed(2)}×`;
+    picture.classList.toggle('grabbing', draft.fit === 'stretch');
+  };
+
+  const applyDraft = () => {
+    element.image_fit = draft.fit;
+    element.image_zoom = Number(draft.zoom.toFixed(3));
+    element.image_offset_x = Number(draft.offsetX.toFixed(2));
+    element.image_offset_y = Number(draft.offsetY.toFixed(2));
+    element.image_brightness = Math.round(draft.brightness);
+    element.image_dither = draft.dither;
+    renderOverlay();
+    schedulePreview();
+    clearTimeout(tileTimer);
+    tileTimer = setTimeout(refreshTile, 160);
+  };
+
+  function refreshTile() {
+    if (!document.body.contains(tile)) return;
+    api('/api/element-preview', 'POST', { spec: state.spec, element_id: element.id })
+      .then((result) => {
+        if (!document.body.contains(tile)) return;
+        tile.src = `data:image/png;base64,${result.png}`;
+        tile.hidden = false;
+        if (tileEmpty) tileEmpty.hidden = true;
+      })
+      .catch(() => { /* the tile is only a hint */ });
+  }
+
+  const modal = openModal({
+    id: 'crop-image',
+    title: 'Crop image',
+    icon: 'crop',
+    width: 800,
+    height: 470,
+    body,
+    footer,
+  });
+  fitModalToContent(modal, { min: 380, max: 560 });
+
+  picture.onload = () => {
+    paint();
+    applyDraft();
+  };
+  // A cached file may already be decoded, in which case `onload` never fires.
+  picture.src = `/api/uploads/${element.image_id}`;
+  if (picture.complete && picture.naturalWidth) picture.onload();
+  else paint();
+
+  paint();
+  refreshTile();
+  pushHistory();
+
+  let pan = null;
+  stage.addEventListener('pointerdown', (event) => {
+    if (event.button !== 0 || draft.fit === 'stretch') return;
+    pan = { x: event.clientX, y: event.clientY, offsetX: draft.offsetX, offsetY: draft.offsetY, id: event.pointerId };
+    stage.classList.add('panning');
+    try { stage.setPointerCapture(event.pointerId); } catch (_) { /* ignore */ }
+    event.preventDefault();
+  });
+  stage.addEventListener('pointermove', (event) => {
+    if (!pan) return;
+    draft.offsetX = pan.offsetX + (event.clientX - pan.x) / pxPerMm;
+    draft.offsetY = pan.offsetY + (event.clientY - pan.y) / pxPerMm;
+    paint();
+    applyDraft();
+  });
+  const endPan = (event) => {
+    if (!pan) return;
+    pan = null;
+    stage.classList.remove('panning');
+    try { stage.releasePointerCapture(event.pointerId); } catch (_) { /* ignore */ }
+  };
+  stage.addEventListener('pointerup', endPan);
+  stage.addEventListener('pointercancel', endPan);
+
+  stage.addEventListener('wheel', (event) => {
+    if (draft.fit === 'stretch') return;
+    event.preventDefault();
+    const rect = stage.getBoundingClientRect();
+    const cursorX = event.clientX - rect.left;
+    const cursorY = event.clientY - rect.top;
+    const before = geometry();
+    const factor = Math.exp(-event.deltaY * 0.0015);
+    const next = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, draft.zoom * factor));
+    if (Math.abs(next - draft.zoom) < 0.0005) return;
+    /* Keep the picture point under the cursor where it is — the crop frame stays, the picture
+       grows or shrinks beneath it. */
+    const anchorX = (cursorX - before.left) / before.w;
+    const anchorY = (cursorY - before.top) / before.h;
+    draft.zoom = next;
+    const natural = { w: picture.naturalWidth || 1, h: picture.naturalHeight || 1 };
+    const base = draft.fit === 'cover'
+      ? Math.max(frameW / natural.w, frameH / natural.h)
+      : Math.min(frameW / natural.w, frameH / natural.h);
+    const scale = base * draft.zoom;
+    const w = natural.w * scale;
+    const h = natural.h * scale;
+    draft.offsetX = (cursorX - anchorX * w - (frameW - w) / 2) / pxPerMm;
+    draft.offsetY = (cursorY - anchorY * h - (frameH - h) / 2) / pxPerMm;
+    paint();
+    applyDraft();
+  }, { passive: false });
+
+  $$('[data-crop-act]', body).forEach((button) => {
+    button.onclick = () => {
+      const action = button.dataset.cropAct;
+      if (action === 'fill') {
+        draft.fit = 'cover';
+        draft.zoom = 1;
+        draft.offsetX = 0;
+        draft.offsetY = 0;
+      } else if (action === 'centre') {
+        draft.offsetX = 0;
+        draft.offsetY = 0;
+      } else {
+        draft.fit = 'contain';
+        draft.zoom = 1;
+        draft.offsetX = 0;
+        draft.offsetY = 0;
+      }
+      paint();
+      applyDraft();
+    };
+  });
+
+  const zoomSlider = body.querySelector('input[data-key="crop-zoom"]');
+  if (zoomSlider) {
+    zoomSlider.oninput = () => {
+      draft.zoom = sliderToZoom(zoomSlider.value);
+      paint();
+      applyDraft();
+    };
+  }
+  const brightnessSlider = body.querySelector('input[data-key="crop-brightness"]');
+  if (brightnessSlider) {
+    brightnessSlider.oninput = () => {
+      draft.brightness = Number(brightnessSlider.value) || 0;
+      const label = body.querySelector('output[data-for="crop-brightness"]');
+      if (label) label.textContent = `${Math.round(draft.brightness)}%`;
+      applyDraft();
+    };
+  }
+  const ditherBox = body.querySelector('input[data-key="crop-dither"]');
+  if (ditherBox) {
+    ditherBox.onchange = () => {
+      draft.dither = ditherBox.checked;
+      applyDraft();
+    };
+  }
+
+  $('[data-crop-ok]', footer).onclick = () => {
+    closeModal('crop-image');
+    scheduleAutosave();
+    buildInspector();
+    toast('Picture cropped', 'ok');
+  };
+  $('[data-crop-cancel]', footer).onclick = () => {
+    Object.assign(element, {
+      image_fit: original.fit,
+      image_zoom: original.zoom,
+      image_offset_x: original.offsetX,
+      image_offset_y: original.offsetY,
+      image_brightness: original.brightness,
+      image_dither: original.dither,
+    });
+    closeModal('crop-image');
+    renderOverlay();
+    schedulePreview();
+    scheduleAutosave();
+    buildInspector();
+  };
 }
 
 function buildInspector() {
@@ -3660,6 +4023,11 @@ function buildInspector() {
     parts.push(field('Image', `<button id="btn-pick-image" class="btn wide">${element.image_id ? 'Change image' : 'Pick image'}</button>`));
     if (element.image_id) {
       parts.push(`<div class="crop-preview"><img class="thumb" src="/api/uploads/${element.image_id}" alt="image"></div>`);
+      parts.push(`<button type="button" class="btn wide primary" id="btn-crop-image">
+        <i data-lucide="crop"></i> Crop image…
+      </button>
+      <div class="hint">Opens the picture in its own editor: the box keeps its shape, the artwork
+        is zoomed and moved inside it (or double-click the picture on the label).</div>`);
       parts.push(field('Fill mode', selectInput('image_fit', element.image_fit, [
         ['cover', 'Cover — crop to the box'],
         ['contain', 'Contain — whole picture'],
@@ -3675,6 +4043,9 @@ function buildInspector() {
         <button type="button" class="btn" data-crop="centre">Centre</button>
         <button type="button" class="btn" data-crop="reset">Reset</button>
       </div>`);
+      parts.push(field('Brightness', rangeInput('image_brightness', element.image_brightness ?? 0, -100, 100, 5, '%')));
+      parts.push(`<div class="hint">Lifts the picture before the printer decides dot or no dot — a dark
+        photo prints lighter instead of turning into a black slab.</div>`);
       parts.push(`<div class="row" style="margin-top:8px">${checkInput('image_dither', 'Dither photo', element.image_dither)}</div>
         <div class="hint">Dithering keeps shades and gradients; leave it off for logos and line art.</div>`);
       parts.push(`<div class="hint" id="crop-quality" data-image-id="${escapeHtml(element.image_id)}">Checking the source resolution…</div>`);
@@ -3690,6 +4061,9 @@ function buildInspector() {
       $('#file-input').click();
     };
   }
+
+  const cropButton = $('#btn-crop-image', card);
+  if (cropButton) cropButton.onclick = () => openCropDialog(element);
 
   if (element.type === 'image' && element.image_id) {
     $$('[data-crop]', card).forEach((button) => {
@@ -3722,15 +4096,18 @@ function onInspectorInput(event) {
   const element = selectedElement();
   if (!element) return;
   let value = event.target.type === 'checkbox' ? event.target.checked : event.target.value;
-  if (event.target.type === 'number' || key === 'rotation' || key === 'font_size_pt') {
+  if (event.target.type === 'number' || event.target.type === 'range'
+    || key === 'rotation' || key === 'font_size_pt') {
     // A cleared or half-typed field must not become NaN — JSON turns that into `null`, which the
     // server rejects and every keystroke after it fails.
     const number = Number(value);
     if (value === '' || !Number.isFinite(number)) return;
     value = number;
   }
+  const output = event.target.parentElement?.querySelector(`output[data-for="${key}"]`);
+  if (output) output.textContent = `${round2(Number(value))}${output.dataset.suffix || ''}`;
   element[key] = value;
-  if (key === 'y' || key === 'h') {
+  if ((key === 'y' || key === 'h') && element.type !== 'image') {
     // Mirror prints only the first region — do not let the fields push the element into a generated one.
     const band = editBand();
     element.h = Math.max(2, Math.min(element.h, band.height));
@@ -4652,8 +5029,15 @@ function onPointerMove(event) {
     horizontal = nearestGuide([{ value: y }, { value: y + element.h / 2 }, { value: y + element.h }], drag.targets.ys, tolerance);
     if (vertical && state.snapToGrid && !free) x += vertical.delta;
     if (horizontal && state.snapToGrid && !free) y += horizontal.delta;
-    element.x = round2(Math.min(labelWidth - element.w, Math.max(0, x)));
-    element.y = round2(Math.min(Math.max(0, band.height - element.h), Math.max(0, y)));
+    const halfW = element.w / 2;
+    const halfH = element.h / 2;
+    // A picture keeps its centre on the label so it can always be grabbed again.
+    const minX = element.type === 'image' ? -halfW : 0;
+    const maxX = element.type === 'image' ? labelWidth - halfW : labelWidth - element.w;
+    const minY = element.type === 'image' ? -halfH : 0;
+    const maxY = element.type === 'image' ? band.height - halfH : band.height - element.h;
+    element.x = round2(Math.min(Math.max(minX, x), Math.max(minX, maxX)));
+    element.y = round2(Math.min(Math.max(minY, y), Math.max(minY, maxY)));
   } else {
     let w = Math.max(2, snapToStep(drag.origin.w + dx, free));
     let h = Math.max(2, snapToStep(drag.origin.h + dy, free));
@@ -4670,8 +5054,8 @@ function onPointerMove(event) {
     } else if (drag.limitHit) {
       drag.limitHit = false;
     }
-    element.w = round2(Math.max(2, Math.min(labelWidth - element.x, w)));
-    element.h = round2(Math.max(2, Math.min(band.height - element.y, h)));
+    element.w = round2(Math.max(2, Math.min(bleedLimit(element, labelWidth - element.x), w)));
+    element.h = round2(Math.max(2, Math.min(bleedLimit(element, band.height - element.y), h)));
     paintCodeLimitHint(element);
   }
 
@@ -7481,13 +7865,14 @@ function applyState(payload) {
   /* A calibration always follows the database for the roll that is inserted. Only when the
      printer is away (no roll code at all) does the last-used one stay on screen, flagged. */
   const syncProfile = payload.profile || null;
-  if (state.connected) {
-    // Never show another roll's calibration: an uncalibrated roll simply has none.
+  if (syncProfile) {
+    // A save, a roll swap or a re-connect: this is the calibration of the roll in the printer.
     state.printer.profile = syncProfile;
-    if (syncProfile) {
-      state.lastProfile = syncProfile;
-      rememberLastProfile(syncProfile);
-    }
+    state.lastProfile = syncProfile;
+    rememberLastProfile(syncProfile);
+  } else if (state.connected) {
+    // Never show another roll's calibration: an uncalibrated roll simply has none.
+    state.printer.profile = null;
   } else if (state.lastProfile) {
     state.printer.profile = state.lastProfile;
   }
@@ -7629,12 +8014,20 @@ function startWatchTimer() {
     if (state.connected) return;
     try {
       const payload = await api('/api/state');
-      state.printer = payload;
-      updateConnectionChip(payload);
       if (payload.connected) {
         applyState(payload);
         toast('Printer connected automatically', 'ok');
+        return;
       }
+      /* Off-line the state carries no roll code, so it cannot name a calibration. Copying it
+         straight into `state.printer` used to wipe the one on screen a few seconds after it was
+         saved — the top bar then fell back to "Calibrate this roll". */
+      state.printer = payload;
+      state.printer.profile = state.lastProfile || payload.profile || null;
+      state.calibrationOffline = !!state.printer.profile;
+      updateConnectionChip(payload);
+      renderStageMeta();
+      renderPaperRegions();
     } catch (_) { /* ignore */ }
   }, 4000);
 }
@@ -7744,6 +8137,15 @@ function bindControls() {
   $('#stage')?.addEventListener('pointerleave', () => setHover(null));
   document.addEventListener('pointerup', onPointerUp);
   document.addEventListener('pointercancel', onPointerUp);
+  // A picture has a second, precise editor: open it by double-clicking the picture itself.
+  $('#stage')?.addEventListener('dblclick', (event) => {
+    const box = event.target.closest('.element-box');
+    const element = box ? state.spec?.elements.find((item) => item.id === box.dataset.id) : null;
+    if (element && element.type === 'image' && element.image_id) {
+      event.preventDefault();
+      openCropDialog(element);
+    }
+  });
 
   document.addEventListener('keydown', (event) => {
     const tag = (event.target.tagName || '').toLowerCase();

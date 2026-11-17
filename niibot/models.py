@@ -122,6 +122,14 @@ def model_for_id(model_id: int | None) -> PrinterModel:
     return MODEL_BY_ID.get(int(model_id), UNKNOWN_MODEL)
 
 
+def model_for_key(key: str | None) -> PrinterModel | None:
+    """The model table entry for a stored ``model_key`` (``None`` when it is not ours)."""
+    if not key:
+        return None
+    wanted = str(key).upper()
+    return next((model for model in MODELS if model.key == wanted), None)
+
+
 def model_with_dpi(dpi: int, printhead_px: int) -> PrinterModel:
     """A stand-in model for a printer we do not know but whose geometry was set by hand."""
     return PrinterModel("CUSTOM", f"custom {dpi} dpi", (), int(dpi), int(printhead_px), None)
