@@ -313,6 +313,14 @@ svg.lucide { width: 16px; height: 16px; stroke-width: 1.7; }
 .meta-chip.ok { border-color: rgba(0, 194, 194, 0.5); color: var(--teal-deep); background: rgba(0, 194, 194, 0.08); }
 .meta-chip.bad { border-color: rgba(207, 75, 75, 0.5); color: var(--err); background: rgba(207, 75, 75, 0.08); }
 .meta-chip.type { border-color: rgba(138, 111, 230, 0.45); color: var(--violet-deep); background: rgba(138, 111, 230, 0.08); }
+/* Ink: the dot carries the colour, so the chip reads at a glance. */
+.meta-chip.ink { border-color: rgba(0, 26, 77, 0.22); }
+.meta-chip.ink .ink-dot {
+  width: 8px; height: 8px; border-radius: 50%; background: var(--navy);
+  box-shadow: inset 0 0 0 1px rgba(0, 26, 77, 0.25);
+}
+.meta-chip.ink.is-red { border-color: rgba(198, 32, 38, 0.45); color: #b3272d; background: rgba(198, 32, 38, 0.08); }
+.meta-chip.ink.is-red .ink-dot { background: #c62026; }
 /* the calibration on screen is the last one used, not read from the printer */
 .meta-chip.warn {
   border-color: rgba(232, 122, 42, 0.55); color: #b45a1c; background: rgba(232, 122, 42, 0.12);

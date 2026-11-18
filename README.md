@@ -201,6 +201,30 @@ Right-click an element for **Duplicate / Move up / Move down / Hide / Delete**; 
 connection chip in the status bar to switch printers. `Delete` is the only key that removes an
 element — `Backspace` stays a text-editing key.
 
+### Red and black on one label
+
+Some rolls carry two inks, and the B1 Pro / B21 Pro / B2 Pro can develop both in a single pass.
+**Properties → Ink** sets the ink of one item, so a red heading can sit above a black barcode on
+the same label; the bar under the canvas counts what is red (`3 red items`) and the preview and the
+print bitmap are drawn in paper colours from the very first click.
+
+How it prints: a label with no red item goes out exactly as before (plain `0x85`/`0x84` rows, one
+ink). As soon as one item is red the page colour becomes *two-colour* and every row says which ink
+it carries; a row that holds both inks is sent once, with a presence mask plus one colour bit per
+dot, instead of being printed twice.
+
+What to know before trying it:
+
+* **The stock decides.** Red only develops on red/black two-colour labels. On an ordinary black roll
+  the same dots come out grey — there is no error, the head simply has nothing red to develop.
+* **The printer cannot tell you which roll is in it.** A two-colour roll reports itself as ordinary
+  gap labels over RFID, so the choice is yours: nothing in the app guesses it.
+* **Sparse red dots do not develop.** Thin hairlines and lone dots stay white; solid shapes and
+  reasonably heavy text are what the red ink is for.
+* Only Niimbot printers have the second ink. On Fichero/Karsten a red item is refused with a clear
+  message instead of quietly printing black, and printing a document from Windows with red in it
+  behaves the same way.
+
 ### Sheet view
 
 The **Sheet** tab treats the label as data:
@@ -572,6 +596,10 @@ python -m niibot panel                # web UI
   otherwise it accepts commands but never prints.
 * Print job: `PrintStart`, `PageStart 0x03`, `SetPageSize 0x13`, rows as `0x84`/`0x85`
   packets, then poll `0xA3` until the page counter reaches the copy count and send `0xF3`.
+* A two-colour page is announced by the last byte of `PrintStart` (`PageColor.DOUBLE`) and its
+  rows travel in the `0x8A` wrapper: `<mode> <inner cmd> <row> <repeats> <payload>`, where mode is
+  empty/red/black/mixed. Single-ink rows keep the `0x85` inner command, a mixed row has no inner
+  command and instead sends a presence mask plus one colour bit per set dot.
 * The B1 drops rows at full speed — the transport paces writes (10 ms) and bundles frames.
 
 ---

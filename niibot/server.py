@@ -25,17 +25,26 @@ from pydantic import BaseModel, Field
 
 from . import ipp as ipp_mod
 from . import sheet, spreadsheet, store, zones
-from .bitmap import encode_image
+from .bitmap import encode_planes
 from .ble import BleLink, normalise_device_name
 from .diagnostics import diagnose
 from .fichero import FicheroPrinter
 from .consumables import Consumable, builtin_formats, scan_vendor_catalog
 from .fit import FitOptions, fit_to_label
-from .models import model_for_id, model_for_key, MODELS, PAPER_PRESETS, PaperProfile, Region, ZoneShape
+from .models import (
+    MODELS,
+    PAPER_PRESETS,
+    TWO_COLOUR_MODELS,
+    PaperProfile,
+    Region,
+    ZoneShape,
+    model_for_id,
+    model_for_key,
+)
 from .paths import resource_dir
 from .printer import NiimbotPrinter
-from .protocol import LABEL_TYPE_NAMES, ProtocolError
-from .render import available_fonts, font_catalog, preview_payload, render_label
+from .protocol import LABEL_TYPE_NAMES, PageColor, ProtocolError
+from .render import available_fonts, colourise, font_catalog, preview_payload, render_label, separate_inks
 from .codes import minimum_size
 from .spec import BARCODE_FORMATS, ELEMENT_TYPES, TEMPLATES, Element, LabelSpec, default_spec
 from .version import APP_NAME, APP_TAGLINE, __version__
@@ -1808,13 +1817,46 @@ def _with_mirror(spec: LabelSpec, mirror: MirrorRequest | None) -> LabelSpec:
     return sheet.apply_mirror(spec, mirror.regions, mirror.flip)
 
 
+def _ink_supported() -> bool:
+    """Red is a Niimbot page mode; the LuckPrinter family has one ink and no colour field."""
+    return state.protocol == "niimbot"
+
+
+def _printer_model_key() -> str:
+    """Which model is printing — the live one, or the remembered one while it is asleep."""
+    key = state.printer.info.model_key or ""
+    if state.connected and key and key != "UNKNOWN":
+        return key
+    remembered = _last_printer_row()
+    return str((remembered or {}).get("model_key") or key or "")
+
+
+def _ink_warnings(spec: LabelSpec) -> list[str]:
+    if not spec.uses_red:
+        return []
+    if not _ink_supported():
+        return ["This printer family prints one colour — the red items will print in black."]
+    key = _printer_model_key()
+    if key in TWO_COLOUR_MODELS:
+        return []
+    model = model_for_key(key)
+    name = model.name if model is not None else (state.printer.info.model_name or "this model")
+    return [
+        f"Red ink needs red/black two-colour stock and a head that develops it (B1 Pro, B21 Pro,"
+        f" B2 Pro). {name} is not one of them, so red may come out grey or black."
+    ]
+
+
 @app.post("/api/preview")
 async def api_preview(request: PreviewRequest) -> dict:
     dpi, printhead = _geometry()
+    spec = _with_mirror(request.spec, request.mirror)
     try:
-        return preview_payload(_with_mirror(request.spec, request.mirror), dpi, printhead, store.upload_path)
+        payload = preview_payload(spec, dpi, printhead, store.upload_path)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    payload["warnings"] = list(payload.get("warnings") or []) + _ink_warnings(spec)
+    return payload
 
 
 @app.post("/api/code-size")
@@ -1845,12 +1887,15 @@ async def api_spec_preview(request: SpecPreviewRequest) -> dict:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     image = rendered.image.convert("L")
     limit = max(80, min(720, request.max_width))
+    colour = colourise(rendered.black, rendered.red)
     if image.width > limit:
         ratio = limit / image.width
-        image = image.resize((limit, max(1, int(image.height * ratio))), Image.LANCZOS)
+        size = (limit, max(1, int(image.height * ratio)))
+        image = image.resize(size, Image.LANCZOS)
+        colour = colour.resize(size, Image.LANCZOS)
     buffer = io.BytesIO()
-    image.save(buffer, format="PNG")
-    return {"png": base64.b64encode(buffer.getvalue()).decode("ascii"), "width_px": image.width, "height_px": image.height}
+    colour.save(buffer, format="PNG")
+    return {"png": base64.b64encode(buffer.getvalue()).decode("ascii"), "width_px": colour.width, "height_px": colour.height}
 
 
 @app.post("/api/element-preview")
@@ -1873,6 +1918,7 @@ async def api_element_preview(request: ElementPreviewRequest) -> dict:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     image = rendered.image.convert("L")
+    colour = colourise(rendered.black, rendered.red)
     inverted = ImageOps.invert(image)
     box = inverted.getbbox()
     # Where the element itself sits inside the returned PNG (after trimming), so a drag
@@ -1886,14 +1932,15 @@ async def api_element_preview(request: ElementPreviewRequest) -> dict:
     }
     if box:
         image = image.crop(box)
+        colour = colour.crop(box)
         element_box["x"] -= box[0]
         element_box["y"] -= box[1]
     buffer = io.BytesIO()
-    image.save(buffer, format="PNG")
+    colour.save(buffer, format="PNG")
     return {
         "png": base64.b64encode(buffer.getvalue()).decode("ascii"),
-        "width_px": image.width,
-        "height_px": image.height,
+        "width_px": colour.width,
+        "height_px": colour.height,
         "element_box": element_box,
     }
 
@@ -1901,12 +1948,13 @@ async def api_element_preview(request: ElementPreviewRequest) -> dict:
 @app.post("/api/render.png")
 async def api_render_png(request: PreviewRequest) -> Response:
     dpi, printhead = _geometry()
+    spec = _with_mirror(request.spec, request.mirror)
     try:
-        rendered = render_label(_with_mirror(request.spec, request.mirror), dpi, printhead, store.upload_path)
+        rendered = render_label(spec, dpi, printhead, store.upload_path)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     buffer = io.BytesIO()
-    rendered.image.convert("L").save(buffer, format="PNG")
+    colourise(rendered.black, rendered.red).save(buffer, format="PNG")
     return Response(content=buffer.getvalue(), media_type="image/png")
 
 
@@ -2312,6 +2360,7 @@ async def api_print(request: PrintRequest) -> dict:
     if state.job and state.job.state == "running":
         raise HTTPException(status_code=409, detail="A print job is already running — wait or cancel it.")
     spec = _with_mirror(request.spec, request.mirror)
+    _check_ink(spec)
     copies = request.copies if request.copies is not None else spec.copies
     density = request.density if request.density is not None else spec.density
     label_type = request.label_type
@@ -2331,6 +2380,7 @@ async def api_print_sheet(request: SheetPrintRequest) -> dict:
         raise HTTPException(status_code=409, detail="A print job is already running — wait or cancel it.")
 
     columns = sheet.sync_columns(request.spec)
+    _check_ink(request.spec)
     specs = sheet.build_sheet_specs(
         request.spec,
         columns,
@@ -2356,6 +2406,16 @@ def _check_ready() -> None:
         raise HTTPException(status_code=409, detail="The printer lid is open.")
     if paper.paper_inserted is False:
         raise HTTPException(status_code=409, detail="There is no paper in the printer.")
+
+
+def _check_ink(spec: LabelSpec) -> None:
+    """Refuse a red job on a printer that cannot develop it — printing black would be a surprise."""
+    if not spec.uses_red or _ink_supported():
+        return
+    raise HTTPException(
+        status_code=409,
+        detail="This printer family prints one colour — switch the red items back to black to print this label.",
+    )
 
 
 async def _start_job(
@@ -2392,7 +2452,7 @@ async def _run_print(job: Job, spec: LabelSpec, copies: int, density: int | None
     try:
         dpi, printhead = _geometry()
         rendered = render_label(spec, dpi, printhead, store.upload_path)
-        encoded = encode_image(rendered.image)
+        encoded = encode_planes(rendered.black, rendered.red)
         job.rows = encoded.rows
         job.cols = encoded.cols
         job.packets = encoded.packet_count
@@ -2471,7 +2531,7 @@ async def _run_sheet(job: Job, specs: list[LabelSpec], copies: int, density: int
         async with state.lock:
             for index, spec in enumerate(specs, start=1):
                 rendered = render_label(spec, dpi, printhead, store.upload_path)
-                encoded = encode_image(rendered.image)
+                encoded = encode_planes(rendered.black, rendered.red)
                 job.rows = encoded.rows
                 job.cols = encoded.cols
                 job.packets = encoded.packet_count
@@ -2737,8 +2797,16 @@ async def _print_ipp_document(payload: bytes, mime: str, copies: int) -> tuple[b
         return False, f"unsupported document format ({mime or 'none'})"
 
     width_mm, height_mm, dpi, head_px, width_px, height_px = _label_geometry()
-    bitmap = fit_to_label(image, width_px, height_px, dpi, _fit_options())
-    encoded = encode_image(bitmap)
+    options = _fit_options()
+    black_layer, red_layer = separate_inks(image)
+    black_bitmap = fit_to_label(black_layer, width_px, height_px, dpi, options)
+    red_bitmap = fit_to_label(red_layer, width_px, height_px, dpi, options)
+    encoded = encode_planes(black_bitmap, red_bitmap)
+    if encoded.page_color == int(PageColor.DOUBLE) and not _ink_supported():
+        raise HTTPException(
+            status_code=409,
+            detail="This printer family prints one colour — the document has red in it.",
+        )
     paper = state.printer.paper
     catalog = store.get_catalog_entry(paper.barcode) or {}
     job = Job(

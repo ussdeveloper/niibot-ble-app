@@ -17,6 +17,7 @@ from .protocol import (
     Frame,
     InfoType,
     LABEL_TYPE_NAMES,
+    PageColor,
     ProtocolError,
     Resp,
     build_connect_frame,
@@ -512,6 +513,9 @@ class NiimbotPrinter:
         copies = max(1, min(999, int(copies)))
         task = self.info.print_task
         self.link.write_delay = 0.01 if task == "b1" else 0.0
+        # The page colour tells the firmware to develop the rows at the red temperature; the rows
+        # themselves already carry their own colour.
+        page_color = int(getattr(bitmap, "page_color", PageColor.SINGLE))
 
         if density is not None:
             await self.set_density(density)
@@ -520,12 +524,16 @@ class NiimbotPrinter:
 
         if task == "b1":
             # 7 byte PrintStart - no speed byte.
-            await self._expect(Cmd.PRINT_START, struct.pack(">HBBBBB", copies, 0, 0, 0, 0, 0), timeout=6.0)
+            await self._expect(
+                Cmd.PRINT_START, struct.pack(">HBBBBB", copies, 0, 0, 0, 0, page_color), timeout=6.0
+            )
             await self._expect(Cmd.PAGE_START, b"\x01", timeout=6.0)
             await self._expect(Cmd.SET_PAGE_SIZE, struct.pack(">HHH", bitmap.rows, bitmap.cols, copies), timeout=6.0)
         else:
             # 9 byte PrintStart (protocol v4+): pages, 4x0, colour, speed, flag.
-            await self._expect(Cmd.PRINT_START, struct.pack(">HBBBBBBB", copies, 0, 0, 0, 0, 0, 1, 0), timeout=6.0)
+            await self._expect(
+                Cmd.PRINT_START, struct.pack(">HBBBBBBB", copies, 0, 0, 0, 0, page_color, 1, 0), timeout=6.0
+            )
             await self.link.send(Cmd.PRINT_STATUS, b"\x01", wait=False)
             await asyncio.sleep(0.03)
             await self._expect(

@@ -35,6 +35,8 @@ class Cmd(IntEnum):
     PRINT_BITMAP_ROW_INDEXED = 0x83
     PRINT_EMPTY_ROW = 0x84
     PRINT_BITMAP_ROW = 0x85
+    #: Wrapper for one row on two-colour stock: ``<colour mode> <inner command> <payload…>``.
+    PRINT_BITMAP_ROW_DOUBLE_COLOR = 0x8A
     LABEL_POSITIONING_CALIBRATION = 0x8E
     PRINT_STATUS = 0xA3
     PRINTER_STATUS_DATA = 0xA5
@@ -163,6 +165,25 @@ LABEL_TYPE_NAMES: dict[int, str] = {
     10: "gap + black mark",
     11: "heat-shrink tube",
 }
+
+
+class PageColor(IntEnum):
+    """Colour space of a page — the last byte of the ``PRINT_START`` payload."""
+
+    SINGLE = 0
+    #: Black and red on two-colour stock; red is the low-energy dot.
+    DOUBLE = 1
+    SINGLE_ALT = 2
+    GRAYSCALE = 3
+
+
+class BitmapColorMode(IntEnum):
+    """Colour slot of the inner row inside a ``PRINT_BITMAP_ROW_DOUBLE_COLOR`` wrapper."""
+
+    EMPTY = 0
+    RED = 1
+    BLACK = 2
+    MIXED = 3
 
 PRINTER_ERRORS: dict[int, str] = {
     0x01: "lid open",

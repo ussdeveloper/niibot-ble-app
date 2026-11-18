@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Callable
 
 import qrcode
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageChops, ImageDraw, ImageFont, ImageOps
 from qrcode.constants import ERROR_CORRECT_H, ERROR_CORRECT_L, ERROR_CORRECT_M, ERROR_CORRECT_Q
 
 from .spec import Element, LabelSpec
@@ -22,6 +22,23 @@ from .codes import minimum_size
 
 MM_PER_INCH = 25.4
 EPS = 1e-6
+
+#: How each ink is drawn and shown. Red is the printer's second, lower-energy dot: the artwork is
+#: drawn in this colour so the preview matches the paper, and the renderer splits the two inks
+#: from the colour of each dot before sending anything.
+INK_RGB: dict[str, tuple[int, int, int]] = {
+    "black": (0, 0, 0),
+    "red": (198, 32, 38),
+}
+
+#: How dark each ink reads on white paper; a dot is half-covered at half this value.
+INK_LUMINANCE: dict[str, int] = {
+    ink: (299 * red + 587 * green + 114 * blue) // 1000 for ink, (red, green, blue) in INK_RGB.items()
+}
+
+#: A dot is red when the red channel beats both others by this much. Anti-aliased edges of red
+#: glyphs stay red instead of drifting towards grey.
+RED_DOMINANCE = 40
 
 #: family -> (regular, bold, italic, bold-italic) file names
 FONT_FILES: dict[str, tuple[str, ...]] = {
@@ -252,16 +269,27 @@ def mm_to_px(mm: float, dpi: int) -> int:
 class RenderedLabel:
     """A rendered label: 1-bit image plus the geometry needed for printing."""
 
+    #: Every dot, whichever ink — the shape a printer that has one colour can send.
     image: Image.Image
     width_px: int
     height_px: int
     source_width_px: int
     warnings: list[str] = field(default_factory=list)
+    #: The same dots split by ink. ``image`` is their union, so mono output is unchanged.
+    black: Image.Image | None = None
+    red: Image.Image | None = None
 
     @property
     def cols(self) -> int:
         """Width rounded up to a whole byte, as required by the printer."""
         return (self.width_px + 7) // 8 * 8
+
+    @property
+    def uses_red(self) -> bool:
+        """True when any dot is red — only then does the page need the two-colour mode."""
+        if self.red is None:
+            return False
+        return self.red.getextrema()[0] == 0
 
 
 # --------------------------------------------------------------------- helpers
@@ -670,6 +698,73 @@ def _blend(canvas: Image.Image, layer: Image.Image, x: int, y: int) -> None:
     canvas.alpha_composite(layer.crop((left, top, right, bottom)), dest=(x + left, y + top))
 
 
+def _in_red(layer: Image.Image) -> Image.Image:
+    """Repaint a black-on-transparent layer in the second ink, keeping its alpha."""
+    alpha = layer.getchannel("A")
+    tinted = ImageOps.colorize(layer.convert("L"), black=INK_RGB["red"], white=(255, 255, 255)).convert("RGBA")
+    tinted.putalpha(alpha)
+    return tinted
+
+
+def _split_inks(canvas: Image.Image) -> tuple[Image.Image, Image.Image]:
+    """Split a coloured canvas into its black and red dot planes (``0`` = a dot).
+
+    The darkness threshold is half of each ink's own darkness, so a half-covered pixel of either
+    ink is a dot: switching an item to red keeps every dot and only changes the colour it
+    develops. Red is a lighter ink on paper, which is why it cannot reuse the black threshold.
+    """
+    rgb = canvas.convert("RGB")
+    red_channel, green_channel, blue_channel = rgb.split()
+    luminance = rgb.convert("L")
+    dark = ImageOps.invert(luminance)
+    warmer = ImageChops.multiply(
+        ImageChops.subtract(red_channel, green_channel).point(lambda value: 255 if value > RED_DOMINANCE else 0),
+        ImageChops.subtract(red_channel, blue_channel).point(lambda value: 255 if value > RED_DOMINANCE else 0),
+    )
+    threshold = Image.composite(
+        Image.new("L", rgb.size, (255 - INK_LUMINANCE["red"]) // 2),
+        Image.new("L", rgb.size, (255 - INK_LUMINANCE["black"]) // 2),
+        warmer,
+    )
+    dots = ImageChops.subtract(dark, threshold).point(lambda value: 255 if value > 0 else 0)
+    red_dots = ImageChops.multiply(dots, warmer)
+    black_dots = ImageChops.subtract(dots, red_dots)
+    return (
+        ImageOps.invert(black_dots).convert("1", dither=Image.NONE),
+        ImageOps.invert(red_dots).convert("1", dither=Image.NONE),
+    )
+
+
+def colourise(black: Image.Image | None, red: Image.Image | None) -> Image.Image:
+    """Draw the two ink planes in paper colours — the bitmap the screen should show."""
+    size = (black or red).size
+    out = Image.new("RGB", size, (255, 255, 255))
+    for plane, ink in ((black, "black"), (red, "red")):
+        if plane is None:
+            continue
+        dots = ImageOps.invert(plane.convert("L"))
+        out.paste(Image.new("RGB", size, INK_RGB[ink]), (0, 0), dots)
+    return out
+
+
+def separate_inks(image: Image.Image) -> tuple[Image.Image, Image.Image]:
+    """Grey copies of a picture, one per ink, with the other ink erased to white.
+
+    Used where the artwork arrives as a finished image rather than as elements: each copy is
+    placed with the same fit, so the two inks stay in register.
+    """
+    rgb = image.convert("RGB")
+    red_channel, green_channel, blue_channel = rgb.split()
+    grey = rgb.convert("L")
+    warmer = ImageChops.multiply(
+        ImageChops.subtract(red_channel, green_channel).point(lambda value: 255 if value > RED_DOMINANCE else 0),
+        ImageChops.subtract(red_channel, blue_channel).point(lambda value: 255 if value > RED_DOMINANCE else 0),
+    )
+    black_only = Image.composite(Image.new("L", grey.size, 255), grey, warmer)
+    red_only = Image.composite(grey, Image.new("L", grey.size, 255), warmer)
+    return black_only, red_only
+
+
 def _draw_element(
     canvas: Image.Image,
     element: Element,
@@ -704,6 +799,9 @@ def _draw_element(
 
     if rotation:
         layer = layer.rotate(-rotation, expand=True, resample=Image.BICUBIC)
+
+    if element.ink == "red":
+        layer = _in_red(layer)
 
     _blend(canvas, layer, mm_to_px(element.x, dpi), mm_to_px(element.y, dpi))
 
@@ -741,11 +839,18 @@ def render_label(
     image_loader: Callable[[str], Path | None] | None = None,
 ) -> RenderedLabel:
     canvas, warnings, source_width, width, height = _render_canvas(spec, dpi, printhead_px, image_loader)
-    gray = canvas.convert("L")
     if width != source_width:
-        gray = gray.crop((0, 0, width, height))
-    bitmap = gray.point(lambda value: 0 if value < 128 else 255, mode="L").convert("1", dither=Image.NONE)
-    return RenderedLabel(image=bitmap, width_px=width, height_px=height, source_width_px=source_width, warnings=warnings)
+        canvas = canvas.crop((0, 0, width, height))
+    black, red = _split_inks(canvas)
+    return RenderedLabel(
+        image=ImageChops.darker(black, red),
+        width_px=width,
+        height_px=height,
+        source_width_px=source_width,
+        warnings=warnings,
+        black=black,
+        red=red,
+    )
 
 
 def preview_payload(
@@ -755,11 +860,11 @@ def preview_payload(
     image_loader: Callable[[str], Path | None] | None = None,
     scale: int = 3,
 ) -> dict:
-    """Screen preview plus the exact 1-bit print bitmap.
+    """Screen preview plus the exact print bitmap, both in the label's inks.
 
-    The preview is rendered natively at ``scale`` × the print resolution and left in
-    greyscale, so the browser can show smooth glyphs instead of the stair-stepped 1-bit
-    bitmap blown up 2-3 times.
+    The preview is rendered natively at ``scale`` × the print resolution, so the browser can
+    show smooth glyphs instead of the stair-stepped 1-bit bitmap blown up 2-3 times; the print
+    bitmap is the same picture after the threshold, coloured like the paper.
     """
     rendered = render_label(spec, dpi, printhead_px, image_loader)
     canvas, warnings, source_width, width, height = _render_canvas(
@@ -767,11 +872,11 @@ def preview_payload(
     )
     if width != source_width:
         canvas = canvas.crop((0, 0, width, height))
-    preview = canvas.convert("L")
+    preview = canvas.convert("RGB")
     buffer = io.BytesIO()
     preview.save(buffer, format="PNG")
     print_buffer = io.BytesIO()
-    rendered.image.save(print_buffer, format="PNG")
+    colourise(rendered.black, rendered.red).save(print_buffer, format="PNG")
     payload = {
         "png": base64.b64encode(buffer.getvalue()).decode("ascii"),
         "png_print": base64.b64encode(print_buffer.getvalue()).decode("ascii"),
@@ -784,6 +889,7 @@ def preview_payload(
         "dpi": dpi,
         "printed_width_mm": round(rendered.width_px * MM_PER_INCH / dpi, 1),
         "printed_height_mm": round(rendered.height_px * MM_PER_INCH / dpi, 1),
+        "uses_red": rendered.uses_red,
         "warnings": warnings or rendered.warnings,
     }
     return payload

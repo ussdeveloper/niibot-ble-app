@@ -354,7 +354,7 @@ class FicheroPrinter:
         label_type: int | None = None,
         on_progress=None,  # noqa: ANN001 - same callback as NiimbotPrinter
     ) -> None:
-        """Send 1-bit rows to the printer (``encoded`` comes from ``bitmap.encode_image``)."""
+        """Send 1-bit rows to the printer (``encoded`` comes from ``bitmap.encode_planes``)."""
         height = int(encoded.rows)
         width_px = int(encoded.cols)
         raw = getattr(encoded, "raw", b"")

@@ -4,6 +4,33 @@ All notable changes to **Niibot Studio** are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project uses [Semantic Versioning](https://semver.org/).
 
+## [0.17.0] — 2026-11-17
+
+### Added
+- **Red is now a property of an item, not of the label.** *Properties → Ink* switches a single
+  element to the second ink, so a red heading and a black barcode share one label. The bar under
+  the canvas counts the red items (`3 red items`), the preview and the print bitmap are drawn in
+  paper colours, and the print dialog repeats how much of the job is red.
+- **Real two-colour printing.** A label holding any red dot is announced as a two-colour page
+  (last byte of `PrintStart`) and every row goes out in the `0x8A` wrapper naming its ink. A row
+  that holds both inks is sent once — presence mask plus one colour bit per dot — instead of twice,
+  so mixed artwork keeps a single pass. A label with no red item produces byte-identical packets to
+  before, so black-only jobs are untouched.
+- Red works the same way for labels printed from Windows: the document is split into two inks and
+  each plane is fitted with the same geometry, so the two stay in register.
+
+### Changed
+- Switching an item to red keeps every dot: the dot/no-dot threshold is scaled to each ink's own
+  darkness, so red text has the same weight on paper as the black original instead of a thinner one.
+
+### Notes
+- Red needs red/black two-colour stock and a head that develops it (B1 Pro, B21 Pro, B2 Pro). On an
+  ordinary black roll the dots come out grey. Sparse red dots never develop, so solid shapes and
+  heavy text print best, and the app cannot detect the roll — RFID reports a two-colour roll as
+  ordinary gap labels, so the choice stays manual.
+- Fichero/Karsten printers have one ink, so a red item is refused with a message instead of being
+  silently printed in black.
+
 ## [0.16.2] — 2026-11-17
 
 ### Fixed

@@ -13,6 +13,9 @@ BARCODE_FORMATS = ("code128", "code39", "ean13", "ean8", "upca", "itf")
 #: How an inserted picture is fitted into its box.
 IMAGE_FITS = ("cover", "contain", "stretch")
 
+#: Ink an item prints in. ``red`` needs red/black two-colour stock.
+INK_COLOURS = ("black", "red")
+
 
 def new_id() -> str:
     return uuid.uuid4().hex[:8]
@@ -50,6 +53,7 @@ _NONE_FALLBACKS: dict[str, object] = {
     "image_offset_y": 0.0,
     "image_dither": False,
     "image_brightness": 0.0,
+    "ink": "black",
 }
 
 
@@ -67,6 +71,9 @@ class Element(BaseModel):
     visible: bool = True
     #: Optional custom layer name; falls back to the element content.
     label: str | None = None
+    #: Ink this item prints in. ``red`` is the printer's second, lower-energy dot, so it only
+    #: develops on red/black two-colour stock — the page colour follows whatever the label holds.
+    ink: str = "black"
 
     # text
     text: str = ""
@@ -184,6 +191,12 @@ class Element(BaseModel):
             return 0.0
         return min(100.0, max(-100.0, number))
 
+    @field_validator("ink", mode="before")
+    @classmethod
+    def _check_ink(cls, value) -> str:
+        text = str(value or "").strip().lower()
+        return text if text in INK_COLOURS else "black"
+
 
 class SheetColumn(BaseModel):
     """A sheet column bound to one element of the label."""
@@ -222,6 +235,11 @@ class LabelSpec(BaseModel):
     elements: list[Element] = Field(default_factory=list)
     #: optional data sheet (columns + print rows) shipped with the label
     sheet: SheetData | None = None
+
+    @property
+    def uses_red(self) -> bool:
+        """Does anything on this label ask for the second ink?"""
+        return any((element.ink == "red") and element.visible is not False for element in self.elements)
 
 
 def default_spec() -> LabelSpec:

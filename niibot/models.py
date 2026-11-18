@@ -140,6 +140,11 @@ INVERTED_LID_MODELS = frozenset({512, 513, 514, 272, 273, 274, 1792, 2304, 2560,
 #: Models whose ``GetPaperInfo`` total height already includes the gap.
 TOTAL_HEIGHT_INCLUDES_GAP = frozenset({785})
 
+#: Models the vendor sells for black/red two-colour stock. The roll's RFID tag reports ordinary
+#: gap labels, so the stock cannot be detected — but a model outside this set has no red at all,
+#: and asking it to print red would give grey or black.
+TWO_COLOUR_MODELS = frozenset({"B1_PRO", "B21_PRO", "B2_PRO"})
+
 
 def model_for_id(model_id: int | None) -> PrinterModel:
     if model_id is None:

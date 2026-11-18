@@ -650,6 +650,9 @@ const ELEMENT_DEFAULTS = {
   x: 0, y: 0, w: 30, h: 8,
   rotation: 0,
   visible: true,
+  /* Ink the element prints in. ``red`` is a page mode of the printer, not a pixel colour: it
+     needs red/black two-colour stock. */
+  ink: 'black',
   text: '',
   font: 'Arial',
   font_size_pt: 9,
@@ -688,6 +691,7 @@ function makeElement(partial = {}) {
   element.rotation = Math.round(finiteNumber(element.rotation, 0)) % 360;
   if (element.rotation < 0) element.rotation += 360;
   element.font = String(element.font ?? '').trim() || 'Arial';
+  element.ink = element.ink === 'red' ? 'red' : 'black';
   element.font_size_pt = finiteNumber(element.font_size_pt, 9, 1, 200);
   element.line_spacing = finiteNumber(element.line_spacing, 1.15, 0.6, 3);
   element.thickness_mm = finiteNumber(element.thickness_mm, 0.3, 0.05, 5);
@@ -1115,6 +1119,14 @@ function renderStageMeta() {
     </button>`);
   }
   if (geo.gapMm > 0 && hasGapPaper()) chips.push(`<span class="meta-chip">gap ${round2(geo.gapMm)} mm</span>`);
+  /* Ink is set per item in Properties; the bar only says how much of the label is red. */
+  const redItems = (spec.elements || []).filter((element) => element.ink === 'red' && element.visible !== false).length;
+  if (redItems) {
+    chips.push(`<span class="meta-chip ink is-red"
+      title="These items print in red — red/black two-colour stock is needed for that. Change the ink per item in Properties.">
+      <span class="ink-dot"></span> ${redItems} red item${redItems === 1 ? '' : 's'}
+    </span>`);
+  }
   chips.push(`<button type="button" class="meta-chip" id="meta-orient"
     title="Change the orientation — turn the design with the label or just swap the canvas">
     <i data-lucide="rotate-cw"></i> Orientation
@@ -3399,7 +3411,7 @@ function elementSignature(element) {
     element.w, element.h, element.fill, element.thickness_mm, element.barcode_format,
     element.show_text, element.ec_level, element.image_id, element.visible,
     element.image_fit, element.image_zoom, element.image_offset_x, element.image_offset_y,
-    element.image_dither, element.image_brightness,
+    element.image_dither, element.image_brightness, element.ink,
   ];
   return `${element.id}:${fields.map((value) => (value === undefined || value === null ? '' : String(value))).join('|')}`;
 }
@@ -4063,6 +4075,16 @@ function buildInspector() {
   parts.push(field('Rotation', selectInput('rotation', String(element.rotation), [
     ['0', '0°'], ['90', '90°'], ['180', '180°'], ['270', '270°'],
   ])));
+  /* Ink belongs to the item: a red heading over a black barcode on the same label is normal.
+     The printer develops red from the same head at a lower temperature, so this only works on
+     red/black two-colour stock — the roll's tag cannot tell the two apart. */
+  parts.push(field('Ink', selectInput('ink', element.ink === 'red' ? 'red' : 'black', [
+    ['black', 'Black'], ['red', 'Red — two-colour stock'],
+  ])));
+  if (element.ink === 'red') {
+    parts.push(`<div class="hint">Red needs red/black two-colour labels; on ordinary labels it
+      comes out grey. Sparse red dots do not develop, so solid shapes and text print best.</div>`);
+  }
 
   if (element.type === 'text') {
     parts.push(field('Text', `<textarea data-key="text">${escapeHtml(element.text || '')}</textarea>`));
@@ -4218,6 +4240,7 @@ function onInspectorInput(event) {
     // A longer payload needs more modules, hence a bigger box.
     scheduleCodeLimitSync(element);
   }
+  if (key === 'ink') buildInspector();
   renderOverlay();
   schedulePreview();
 }
@@ -5861,8 +5884,7 @@ function mirrorRequest() {
 }
 
 /* With calibrated cells the user can design in cell 1 only and let the rest be filled. */
-function toggleCellsMirror() {
-  if (!state.spec) return;
+function toggleCellsMirror() {  if (!state.spec) return;
   const sheet = state.spec.sheet || (state.spec.sheet = { columns: [], rows: [], mirror: false, mirror_flip: false });
   sheet.cells_mirror = !sheet.cells_mirror;
   pushHistory();
@@ -7613,6 +7635,8 @@ function openPrintDialog({ fromSheet = false } = {}) {
       `density ${density}`,
     ];
     if (mirrorOn) parts.push('mirror fills the extra regions');
+    const redItems = (state.spec.elements || []).filter((element) => element.ink === 'red' && element.visible !== false).length;
+    if (redItems) parts.push(`${redItems} item${redItems === 1 ? '' : 's'} in red`);
     summary.textContent = parts.join(' · ');
   };
   copiesInput.addEventListener('input', paint);

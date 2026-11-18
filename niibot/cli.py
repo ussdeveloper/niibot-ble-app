@@ -14,7 +14,7 @@ import time
 import webbrowser
 from pathlib import Path as _Path
 
-from .bitmap import encode_image
+from .bitmap import encode_planes
 from .printer import NiimbotPrinter
 from .render import render_label
 from .spec import Element, LabelSpec
@@ -53,6 +53,12 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     printer.add_argument("--label-type", type=int, default=1)
     printer.add_argument("--barcode", default=None, help="add a CODE128 barcode")
     printer.add_argument("--qr", default=None, help="add a QR code with the given text")
+    printer.add_argument(
+        "--ink",
+        choices=("black", "red"),
+        default="black",
+        help="print in black, or in red on red/black two-colour stock",
+    )
 
     return parser.parse_args(argv)
 
@@ -134,6 +140,8 @@ async def _cmd_print(args: argparse.Namespace) -> int:
         elements.append(
             Element(type="qr", x=(args.width_mm - 14) / 2, y=args.height_mm - 15, w=14, h=14, text=args.qr)
         )
+    if args.ink != "black":
+        elements = [element.model_copy(update={"ink": args.ink}, deep=True) for element in elements]
     spec = LabelSpec(
         name="CLI",
         width_mm=args.width_mm,
@@ -152,7 +160,7 @@ async def _cmd_print(args: argparse.Namespace) -> int:
         rendered = render_label(spec, info.dpi, info.printhead_px)
         for warning in rendered.warnings:
             print(f"warning: {warning}", file=sys.stderr)
-        encoded = encode_image(rendered.image)
+        encoded = encode_planes(rendered.black, rendered.red)
         print(f"Print: {encoded.rows} rows, {encoded.cols} px wide, {encoded.packet_count} packets")
         await printer.print_bitmap(
             encoded,
